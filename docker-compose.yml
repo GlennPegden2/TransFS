@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  transfs:
+    build: .
+    container_name: transfs
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    ports:
+      - "4445:445"    
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ./config:/app/config        # Your config files (e.g. transfs.yml)
+      - ./plugins:/app/plugins      # Plugin directory
+      - ./content:/mnt/filestorefs   # Mount point on the host
+    environment:
+      - PYTHONUNBUFFERED=1
+    entrypoint: >
+      bash -c "
+        mkdir -p /mnt/filestorefs &&
+        service smbd start &&
+        python3 transfs.py  &&
+        tail -f /dev/null
+      "

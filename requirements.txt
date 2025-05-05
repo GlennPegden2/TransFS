@@ -1,0 +1,4 @@
+fusepy
+internetarchive
+requests
+pyyaml

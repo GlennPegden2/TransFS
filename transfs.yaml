@@ -1,0 +1,44 @@
+mountpoint: /mnt/transfs
+
+clients:
+  - name: MiSTer
+    default_target_path: "{name}/{system_name}/{maps}"
+    systems:
+      - name: Amiga
+        local_base_path: Commodore/Amiga
+        maps:
+          - KICK.ROM:
+              source_filename: BIOS/kick.rom
+          - HDs:
+              source_dir: HDDs
+          - FDs:
+              source_dir: FDs
+      - name: BBCMicro
+        local_base_path: Acorn/BBC_B
+        maps:
+          - BEEB.MMB:
+              default_source:
+                source_filename: higgy_mmbeeb-v1.2.zip
+                files:
+                  BEEB.zip:
+                    zip: unzip
+                  BEEB2.zip:
+                    zip: unzip
+                  higgy_mmbeeb-v1.2.zip:
+                    zip: unzip
+  - name: Mame
+  - name: RetroBat
+  - name: RetroPie                  
+
+archive_sources:
+  - name: tosec_roms
+    url: https://archive.org/download/tosec-2023-03-03
+    platform: amiga
+    format: zip
+    translate: true
+
+  - name: bios_collection
+    url: https://archive.org/download/mame-merged-bios
+    platform: generic
+    format: raw
+    translate: false
