@@ -2,14 +2,13 @@
 from __future__ import with_statement
 
 import os
-import sys
 import errno
 from fuse import FUSE, FuseOSError, Operations, fuse_get_context
 
 
 class Passthrough(Operations):
-    def __init__(self, root):
-        self.root = root
+    def __init__(self, root_path):
+        self.root = root_path
 
     # Helpers
     # =======
@@ -23,24 +22,28 @@ class Passthrough(Operations):
     # Filesystem methods
     # ==================
 
-    def access(self, path, mode):
+    def access(self, path, amode):
         full_path = self._full_path(path)
-        if not os.access(full_path, mode):
+        if not os.access(full_path, amode):
             raise FuseOSError(errno.EACCES)
+        return 0
 
     def chmod(self, path, mode):
         full_path = self._full_path(path)
-        return os.chmod(full_path, mode)
+        os.chmod(full_path, mode)
 
     def chown(self, path, uid, gid):
         full_path = self._full_path(path)
-        return os.chown(full_path, uid, gid)
+        if hasattr(os, 'chown'):
+            return os.chown(full_path, uid, gid)
+        else:
+            raise NotImplementedError("os.chown is not available on this platform")
 
     def getattr(self, path, fh=None):
         full_path = self._full_path(path)
         st = os.lstat(full_path)
-        return dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
-                                                        'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+        return dict((key, int(getattr(st, key))) for key in ('st_atime', 'st_ctime',
+                                                             'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
 
     def readdir(self, path, fh):
         full_path = self._full_path(path)
@@ -60,7 +63,10 @@ class Passthrough(Operations):
             return pathname
 
     def mknod(self, path, mode, dev):
-        return os.mknod(self._full_path(path), mode, dev)
+        if hasattr(os, 'mknod'):
+            return os.mknod(self._full_path(path), mode, dev)
+        else:
+            raise NotImplementedError("os.mknod is not available on this platform")
 
     def rmdir(self, path):
         full_path = self._full_path(path)
@@ -71,10 +77,13 @@ class Passthrough(Operations):
 
     def statfs(self, path):
         full_path = self._full_path(path)
-        stv = os.statvfs(full_path)
-        return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
-                                                         'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
-                                                         'f_frsize', 'f_namemax'))
+        if hasattr(os, 'statvfs'):
+            stv = os.statvfs(full_path)
+            return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
+                                                             'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
+                                                             'f_frsize', 'f_namemax'))
+        else:
+            raise NotImplementedError("os.statvfs is not available on this platform")
 
     def unlink(self, path):
         return os.unlink(self._full_path(path))
@@ -102,7 +111,10 @@ class Passthrough(Operations):
         uid, gid, pid = fuse_get_context()
         full_path = self._full_path(path)
         fd = os.open(full_path, os.O_WRONLY | os.O_CREAT, mode)
-        os.chown(full_path, uid, gid)  # chown to context uid & gid
+        try:
+            os.chown(full_path, uid, gid)  # chown to context uid & gid
+        except AttributeError:
+            os.system(f'chown {uid}:{gid} "{full_path}"')  # Fallback to system call
         return fd
 
     def read(self, path, length, offset, fh):
@@ -129,7 +141,7 @@ class Passthrough(Operations):
 
 
 def main(mountpoint, root):
-    FUSE(Passthrough(root), mountpoint, nothreads=True,
+    FUSE(Passthrough(root_path=root), mountpoint, nothreads=True,
          foreground=True, allow_other=True)
 
 

@@ -9,19 +9,29 @@ services:
     devices:
       - /dev/fuse
     ports:
-      - "4445:445"    
+      - "3445:445"
+      - "4139:139"
+      - "5678:5678"  # Expose debug port
+      - "8000:8000"  # Expose FastAPI web service
     security_opt:
       - apparmor:unconfined
     volumes:
-      - ./config:/app/config        # Your config files (e.g. transfs.yml)
-      - ./plugins:/app/plugins      # Plugin directory
       - ./content:/mnt/filestorefs   # Mount point on the host
+      - ./app:/app                      # Mount project root for code and static/templates
     environment:
       - PYTHONUNBUFFERED=1
     entrypoint: >
       bash -c "
         mkdir -p /mnt/filestorefs &&
         service smbd start &&
-        python3 transfs.py  &&
+        if [ \"$DEBUG_MODE\" = \"1\" ]; then
+          echo 'Starting in debug mode...';
+          python3 -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/transfs.py &
+        else
+          echo 'Starting in normal mode...';
+          python3 /app/transfs.py &
+        fi &&
+        echo 'Starting FastAPI web service...' &&
+        uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&
         tail -f /dev/null
       "

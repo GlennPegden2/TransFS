@@ -1,0 +1,79 @@
+mountpoint: /mnt/transfs
+filestore: /mnt/filestorefs
+
+clients:
+  - name: MiSTer
+    default_target_path: "{name}/{system_name}/{maps}"
+    systems:
+      - name: AcornAtom
+        manufacturer: Acorn
+        cananonical_system_name: Atom
+        local_base_path: Acorn/Atom
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: Software/HDs/hoglet.vhd
+          - HDs:
+              source_dir: Software/HDs
+      - name: AcornElectron
+        manufacturer: Acorn
+        cananonical_system_name: Electron
+        local_base_path: Acorn/Electron
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: Software/HDs/rayharper.mmb
+          - HDs:
+              source_dir: Software/HDs
+      - name: Amiga
+        manufacturer: Commodore
+        cananonical_system_name: Amiga
+        local_base_path: Commodore/Amiga
+        maps:
+          - KICK.ROM:
+              source_filename: BIOS/kick.rom
+          - HDs:
+              source_dir: HDDs
+          - FDs:
+              source_dir: FDs
+      - name: BBCMicro
+        manufacturer: Acorn
+        cananonical_system_name: BBC Micro
+        local_base_path: Acorn/BBC_B
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: higgy_mmbeeb-v1.2.zip
+                files:
+                  boot.vhd:
+                    zip: unzip
+                  BEEB2.zip:
+                    zip: unzip
+                  higgy_mmbeeb-v1.2.zip:
+                    zip: unzip
+  - name: Mame
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroBat
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroPie                  
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+
+archive_sources:
+  "Acorn":
+    "Atom":
+      base_path: Acorn/Atom/Software
+      sources:
+      - name: hoglet67
+        type: ddl
+        url: https://github.com/hoglet67/AtomSoftwareArchive/releases/download/V13_00/AtomSoftwareArchive_20240505_1129_V13.00.zip
+        platform: Collections/hoglet67/main
+      - name: blankvhd
+        type: ddl
+        url: https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
+        platform: Utils
+    "Electron":
+      base_path: Acorn/Electron/Software
+      sources:
+      - name: RayHarper
+        type: ddl
+        url: https://rayharper.co.uk/stardot/ElkBEEB.zip

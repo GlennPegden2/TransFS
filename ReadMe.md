@@ -42,6 +42,17 @@ cd transfs
 docker-compose up -d
 ```
 
+### Notes on Windows (either running locally or as Host OS for containers)
+
+If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB server can't run (and SMB doesn't play nicely with many clients when run on other ports).
+
+Possible solutions are
+
+- Don't run this on Windows (or a linux/Mac system whene you are already running and SMB server)
+- Run it inside WSL (either as a container or not)
+- Erm, yeah, I can test locally ny running it on 4443 as recent insider builds of windows allow you to map shares to other ports, but there are still loads of things out there that assume it's on 443.
+
+
 ### Project Name
 
 This name TransFS was chosen because it translates between one expected dir structure and another

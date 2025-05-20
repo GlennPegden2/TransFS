@@ -1,0 +1,10 @@
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6fa; color: #222; }
+h1 { text-align: center; }
+.columns { display: flex; gap: 2em; justify-content: center; }
+.columns > div { background: #fff; padding: 1em 2em; border-radius: 8px; box-shadow: 0 2px 8px #0001; }
+button { margin: 1em; padding: 0.5em 2em; border-radius: 5px; border: none; background: #0078d7; color: #fff; font-size: 1em; cursor: pointer; }
+button:hover { background: #005fa3; }
+label { display: block; margin: 0.2em 0; }
+#log {
+  white-space: pre;
+}

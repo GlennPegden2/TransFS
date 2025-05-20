@@ -2,3 +2,8 @@ fusepy
 internetarchive
 requests
 pyyaml
+fastapi
+uvicorn
+jinja2
+fastapi
+uvicorn

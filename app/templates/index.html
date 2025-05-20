@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TransFS Web UI</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>TransFS Dashboard</h1>
+    <form id="selectionForm">
+        <div class="columns">
+            <div>
+                <h2>Clients</h2>
+                <div id="clients"></div>
+            </div>
+            <div>
+                <h2>Systems</h2>
+                <div id="systems"></div>
+            </div>
+        </div>
+        <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:100px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
+        <button type="button" onclick="submitDownload()">Download</button>
+        <button type="button" onclick="submitBuild()">Build</button>
+    </form>
+    <script>
+        let manufacturerSystemMap = {};
+
+        async function loadData() {
+            // Load clients
+            const clients = await fetch('/api/clients').then(r => r.json());
+            document.getElementById('clients').innerHTML = clients.map(c =>
+                `<label><input type="checkbox" name="clients" value="${c}"> ${c}</label><br>`
+            ).join('');
+            // Load systems meta (now grouped by manufacturer)
+            const meta = await fetch('/api/systems/meta').then(r => r.json());
+            manufacturerSystemMap = meta; // Save for later use
+            let html = '';
+            for (const manufacturer in meta) {
+                html += `<strong>${manufacturer}</strong><br>`;
+                html += meta[manufacturer].map(s =>
+                    `<label style="margin-left:1em"><input type="checkbox" name="systems" value="${manufacturer}|||${s}"> ${s}</label><br>`
+                ).join('');
+            }
+            document.getElementById('systems').innerHTML = html;
+        }
+        loadData();
+
+        function appendLog(msg) {
+            const logDiv = document.getElementById('log');
+            logDiv.textContent += msg;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function submitDownload() {
+            const checked = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
+            if (checked.length === 0) {
+                appendLog("Please select at least one system to download.");
+                return;
+            }
+            for (const box of checked) {
+                const [manufacturer, system] = box.value.split('|||');
+                const response = await fetch('/api/download/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ manufacturer, system })
+                });
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let { value, done } = await reader.read();
+                while (!done) {
+                    appendLog(decoder.decode(value));
+                    ({ value, done } = await reader.read());
+                }
+            }
+        }
+
+        // Build handler
+        async function submitBuild() {
+            const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
+            const checkedClients = Array.from(document.querySelectorAll('input[name="clients"]:checked'));
+            if (checkedSystems.length === 0 || checkedClients.length === 0) {
+                appendLog("Please select at least one system and one client to build.");
+                return;
+            }
+            const builds = checkedSystems.map(box => {
+                const [manufacturer, system] = box.value.split('|||');
+                return { manufacturer, system };
+            });
+            const clients = checkedClients.map(box => box.value);
+
+            const response = await fetch('/api/build/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ builds, clients })
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let { value, done } = await reader.read();
+            while (!done) {
+                appendLog(decoder.decode(value));
+                ({ value, done } = await reader.read());
+            }
+        }
+    </script>
+</body>
+</html>
