@@ -27,88 +27,58 @@ class TransFS(Passthrough):
         return any(client.get("name") == name_to_check for client in self.config.get("clients", []))
 
     def _parse_trans_path(self, full_path):
-
+        """
+        Return directory entries for the given virtual path, using get_source_path for translation.
+        """
         path = Path(full_path)
         lev = len(path.parts) - len(Path(self.root).parts)
-
         dirents = []
 
+        # Top level: list clients
         if lev == 0:
-            # It's the top level, return Client List
-
             for client in self.config['clients']:
-                dirents.extend({client['name']})
-        else:
-            # Part 1 should contain the client, so lets look for that and get the remaining parth
+                dirents.append(client['name'])
+            return dirents
 
-            for client in self.config['clients']:
+        # Client level: list systems
+        client_name = path.parts[len(Path(self.root).parts)]
+        client = next((c for c in self.config['clients'] if c['name'] == client_name), None)
+        if not client:
+            return dirents
 
-                if path.parts[len(Path(self.root).parts)] == client["name"]:
+        if lev == 1:
+            for system in client['systems']:
+                dirents.append(system['name'])
+            return dirents
 
-                    system_name = ""
+        # System level: list maps
+        system_name = path.parts[len(Path(self.root).parts) + 1]
+        system = next((s for s in client['systems'] if s['name'] == system_name), None)
+        if not system:
+            return dirents
 
-                    path_str = client['default_target_path']
-                    
-                    if lev <= len(Path(path_str).parts)-1:
-                        final_dir = Path(path_str).parts[lev]
-                    else:
-                        final_dir = ""
-                        
-                    if "{system_name}" in final_dir:
-                        for systemtype in client['systems']:
-                            output_dir = final_dir.replace(
-                                "{system_name}", systemtype['name'])
-                            dirents.extend({output_dir})
-                    elif "{system_name}" in path_str:
-                        first_match = next(((i, s) for i, s in enumerate(
-                            Path(path_str).parts) if "{system_name}" in s), None)
-                        if first_match:
-                            system_name = Path(
-                                full_path).parts[first_match[0]+len(Path(self.root).parts)]
-                        else:
-                            system_name = f"Unknown {system_name}"
-                    if "{maps}" in path_str:
-                        if system_name:       
-                            for system_info in client['systems']:
-                                if system_name == system_info['name']:
-                                    local_base_path = system_info['local_base_path']
-                                    mapinfo = system_info['maps']
-                                    keys = [list(d.keys())[0] for d in mapinfo]
+        if lev == 2:
+            for map_entry in system['maps']:
+                map_name = list(map_entry.keys())[0]
+                # Build the virtual path for this map
+                map_virtual_path = os.path.join(full_path, map_name)
+                source_path = self.get_source_path(map_virtual_path)
+                if source_path:
+                    if os.path.isdir(source_path):
+                        dirents.append(map_name)
+                    elif os.path.isfile(source_path):
+                        dirents.append(map_name)
+            return dirents
 
-                                    if "{maps}" in final_dir:
-
-                                        for mapfilename in keys:
-                                            outputfilename = os.path.basename(mapfilename)
-                                            output_dir = final_dir.replace(
-                                                "{maps}", outputfilename)
-                                            dirents.extend({output_dir})
-                                    else: 
-                                        end_path = os.path.join(*path.parts[len(Path(path_str).parts)+len(Path(self.config['mountpoint']).parts)-1:])
-
-                                        for parts in Path(end_path).parts:
-                                            maplist = next((m for m in mapinfo if parts == list(m.keys())[0]), None)
-                                            if maplist is not None:
-                                                maplist = maplist[parts]
-
-                                                if "source_dir" in maplist:
-                                                    end_path = end_path.replace(parts, maplist["source_dir"])
-                                                elif "source_filename" in maplist:
-                                                    end_path = end_path.replace(parts, maplist["source_filename"])
-
-                                        local_path = self.config['filestore']+"/"+local_base_path+"/" +end_path
-
-                                        if Path(local_path).is_dir():
-
-                                            for files in os.listdir(local_path):
-                                                dirents.extend({files})
-
-                                        print(f"local_base_path: {local_path}")
-
-
+        # Map level: list files in the mapped directory, if any
+        map_name = path.parts[len(Path(self.root).parts) + 2]
+        map_virtual_path = str(full_path)
+        source_path = self.get_source_path(map_virtual_path)
+        if source_path and os.path.isdir(source_path):
+            for entry in os.listdir(source_path):
+                dirents.append(entry)
         return dirents
 
-    # Helpers
-    # =======
     def _full_path(self, partial):
         print(f"full path is {partial}")
 
@@ -116,6 +86,10 @@ class TransFS(Passthrough):
             partial = partial[1:]
         path = os.path.join(self.root, partial)
         return path
+
+
+    # Public Helpers
+    # ==============
 
     def readdir(self, path, fh):
         full_path = self._full_path(path)

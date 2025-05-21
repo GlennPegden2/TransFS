@@ -23,8 +23,13 @@ clients:
           - boot.vhd:
               default_source:
                 source_filename: Software/HDs/rayharper.mmb
-          - HDs:
+          - xHDs:
               source_dir: Software/HDs
+          - ...SoftwareArchives...:    
+              source_dir: Software
+              filetypes:
+              - Tape: UEF
+              - HD: MMB,VHD
       - name: Amiga
         manufacturer: Commodore
         cananonical_system_name: Amiga
@@ -72,8 +77,26 @@ archive_sources:
         url: https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
         platform: Utils
     "Electron":
-      base_path: Acorn/Electron/Software
+      base_path: Acorn/Electron/Software/
       sources:
-      - name: RayHarper
+      - name: ElkBBEB
         type: ddl
         url: https://rayharper.co.uk/stardot/ElkBEEB.zip
+        platform: Collections/
+      - name: RayHarper-ADF
+        type: ddl
+        url: https://rayharper.co.uk/stardot/Elk-PubGameADF.zip
+        platform: Collections/
+      - name: RayHarper-HFE
+        type: ddl
+        url: https://rayharper.co.uk/stardot/Elk-PubGameHFE.zip        
+        platform: Collections/
+      - name: RayHarper-DFS
+        type: ddl
+        url: https://rayharper.co.uk/stardot/Elk-PubGameDFS.zip        
+        platform: Collections/
+      - name: TOSEC_2012_04_23
+        type: ddl
+        url: https://archive.org/download/Acorn_Electronic_TOSEC_2012_04_23/Acorn_Electronic_TOSEC_2012_04_23.zip       
+        platform: Collections/
+
