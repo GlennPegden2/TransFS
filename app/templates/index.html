@@ -21,6 +21,7 @@
         <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:100px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
         <button type="button" onclick="submitDownload()">Download</button>
         <button type="button" onclick="submitBuild()">Build</button>
+        <button type="button" onclick="document.getElementById('log').textContent = ''" style="background:#888;">Clear Log</button>
     </form>
     <script>
         let manufacturerSystemMap = {};
@@ -36,10 +37,24 @@
             manufacturerSystemMap = meta; // Save for later use
             let html = '';
             for (const manufacturer in meta) {
-                html += `<strong>${manufacturer}</strong><br>`;
+                html += `
+                  <div class="manufacturer-group">
+                    <div class="manufacturer-header">
+                      <img class="manufacturer-logo" src="/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png" alt="${manufacturer} logo" onerror="this.style.display='none'">
+                      <span>${manufacturer}</span>
+                    </div>
+                    <div class="system-grid">
+                `;
                 html += meta[manufacturer].map(s =>
-                    `<label style="margin-left:1em"><input type="checkbox" name="systems" value="${manufacturer}|||${s}"> ${s}</label><br>`
+                    `<div class="system-card">
+                        <label>
+                            <input type="checkbox" name="systems" value="${manufacturer}|||${s}">
+                            <img class="system-logo" src="/static/logos/systems/${s.toLowerCase().replace(/\s+/g, '')}.png" alt="${s} logo" onerror="this.style.display='none'">
+                            <span>${s}</span>
+                        </label>
+                    </div>`
                 ).join('');
+                html += `</div></div>`;
             }
             document.getElementById('systems').innerHTML = html;
         }
@@ -59,7 +74,7 @@
             }
             for (const box of checked) {
                 const [manufacturer, system] = box.value.split('|||');
-                const response = await fetch('/api/download/stream', {
+                const response = await fetch('/api/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ manufacturer, system })
@@ -88,7 +103,7 @@
             });
             const clients = checkedClients.map(box => box.value);
 
-            const response = await fetch('/api/build/stream', {
+            const response = await fetch('/api/build', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ builds, clients })

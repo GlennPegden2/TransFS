@@ -1,38 +1,65 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
-import yaml
+""" API Wrapper """
 import os
-import requests
 import subprocess
 import math
 import asyncio
-from config import get_clients, get_systems_for_client, get_manufacturers_and_canonical_names
+import re
+import requests
+import internetarchive
+from pydantic import BaseModel
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from config import (
+    get_clients,
+    get_systems_for_client,
+    get_manufacturers_and_canonical_names,
+)
 
 app = FastAPI()
 
+
 class DownloadRequest(BaseModel):
+    """Request model for download endpoints."""
     manufacturer: str
     system: str
 
+
 class BuildRequest(BaseModel):
+    """Request model for build endpoints."""
     builds: list  # List of dicts: {"manufacturer": ..., "system": ...}
-    clients: list # List of client names
+    clients: list  # List of client names
+
 
 @app.get("/clients")
 def api_get_clients():
+    """Return a list of all configured clients."""
     return get_clients()
+
 
 @app.get("/clients/{client_name}/systems")
 def api_get_systems(client_name: str):
+    """Return a list of systems for a given client."""
     return get_systems_for_client(client_name)
+
 
 @app.get("/systems/meta")
 def api_get_manufacturers_and_canonical_names():
+    """Return manufacturers and canonical system names metadata."""
     return get_manufacturers_and_canonical_names()
 
+
 def estimate_download_time(url, speed_mbps=10):
-    """Estimate download time in seconds for a given URL and speed in Mbps."""
+    """
+    Estimate download time in seconds for a given URL and speed in Mbps.
+
+    Args:
+        url (str): The URL of the file to estimate.
+        speed_mbps (int): Download speed in megabits per second.
+
+    Returns:
+        int or None: Estimated download time in seconds, or None if unknown.
+    """
     try:
         head = requests.head(url, allow_redirects=True, timeout=10)
         size = int(head.headers.get("Content-Length", 0))
@@ -41,128 +68,35 @@ def estimate_download_time(url, speed_mbps=10):
         speed_bps = speed_mbps * 1024 * 1024 / 8  # Convert Mbps to bytes/sec
         seconds = math.ceil(size / speed_bps)
         return seconds
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         return None
 
-@app.post("/download")
-async def api_download(req: DownloadRequest):
-    # Load config
-    with open("transfs.yaml", "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    archive_sources = config.get("archive_sources", {})
-    filestore = config.get("filestore", "filestore")
-
-    # Find the correct archive source
-    manufacturer_sources = archive_sources.get(req.manufacturer)
-    if not manufacturer_sources:
-        raise HTTPException(status_code=404, detail="Manufacturer not found")
-    system_sources = manufacturer_sources.get(req.system)
-    if not system_sources:
-        raise HTTPException(status_code=404, detail="System not found")
-
-    # Download all DDL type sources for this system
-    downloaded = []
-    estimates = []
-    for entry in system_sources:
-        if entry.get("type") == "ddl":
-            url = entry.get("url")
-            platform = entry.get("platform", "")
-            filename = os.path.basename(url)
-            dest_dir = os.path.join(filestore, platform)
-            os.makedirs(dest_dir, exist_ok=True)
-            dest_path = os.path.join(dest_dir, filename)
-            # Estimate download time
-            est_sec = estimate_download_time(url)
-            if est_sec is not None:
-                est_msg = f"Estimated download time for {filename}: ~{est_sec//60}m {est_sec%60}s at 10Mbps"
-            else:
-                est_msg = f"Could not estimate download time for {filename}"
-            estimates.append(est_msg)
-            try:
-                resp = requests.get(url, stream=True)
-                resp.raise_for_status()
-                with open(dest_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                downloaded.append({"url": url, "dest": dest_path})
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to download {url}: {e}")
-
-    if not downloaded:
-        raise HTTPException(status_code=404, detail="No DDL sources found for this system")
-
-    return {
-        "status": "success",
-        "downloaded": downloaded,
-        "estimates": estimates
-    }
 
 @app.post("/build")
-async def api_build(req: BuildRequest):
-    results = []
-    for build in req.builds:
-        manufacturer = build.get("manufacturer")
-        system = build.get("system")
-        for client in req.clients:
-            script_path = os.path.join(
-                "build_scripts", client, manufacturer, system, "build.sh"
-            )
-            if os.path.isfile(script_path):
-                try:
-                    # Run the script and capture output
-                    completed = subprocess.run(
-                        ["bash", script_path],
-                        capture_output=True,
-                        text=True,
-                        check=True
-                    )
-                    results.append({
-                        "client": client,
-                        "manufacturer": manufacturer,
-                        "system": system,
-                        "script": script_path,
-                        "status": "success",
-                        "stdout": completed.stdout,
-                        "stderr": completed.stderr
-                    })
-                except subprocess.CalledProcessError as e:
-                    results.append({
-                        "client": client,
-                        "manufacturer": manufacturer,
-                        "system": system,
-                        "script": script_path,
-                        "status": "error",
-                        "stdout": e.stdout,
-                        "stderr": e.stderr,
-                        "returncode": e.returncode
-                    })
-            else:
-                results.append({
-                    "client": client,
-                    "manufacturer": manufacturer,
-                    "system": system,
-                    "script": script_path,
-                    "status": "not found"
-                })
-    return {"results": results}
-
-@app.post("/build/stream")
 async def api_build_stream(req: BuildRequest):
-    # Load config
+    """
+    Stream output from running build scripts for the specified builds and clients.
+
+    Args:
+        req (BuildRequest): The build request.
+
+    Returns:
+        StreamingResponse: Streaming output of build script execution.
+    """
     with open("transfs.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     filestore = config.get("filestore", "filestore")
     archive_sources = config.get("archive_sources", {})
 
     async def run_and_stream():
+        """Async generator to run build scripts and yield output lines."""
         for build in req.builds:
             manufacturer = build.get("manufacturer")
             system = build.get("system")
             manufacturer_sources = archive_sources.get(manufacturer, {})
             system_entry = manufacturer_sources.get(system, {})
             base_path_rel = system_entry.get("base_path", "")
-            base_path = os.path.join(filestore, base_path_rel)
+            base_path = os.path.join(filestore, "Native" , base_path_rel)
             for client in req.clients:
                 script_path = os.path.join(
                     "build_scripts", client, manufacturer, system, "build.sh"
@@ -170,7 +104,8 @@ async def api_build_stream(req: BuildRequest):
                 if os.path.isfile(script_path):
                     yield f"Running {script_path} with BASE_PATH={base_path}...\n"
                     process = await asyncio.create_subprocess_exec(
-                        "bash", script_path,
+                        "bash",
+                        script_path,
                         env={**os.environ, "BASE_PATH": base_path},
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
@@ -182,21 +117,27 @@ async def api_build_stream(req: BuildRequest):
                                 break
                             yield line.decode(errors="replace")
                     await process.wait()
-                    yield f"Completed {script_path} (exit code {process.returncode})\n"
+                    yield (
+                        f"Completed {script_path} (exit code {process.returncode})\n"
+                    )
                 else:
                     yield f"Script not found: {script_path}\n"
+
     return StreamingResponse(run_and_stream(), media_type="text/plain")
 
-@app.post("/download/stream")
-async def api_download_stream(req: DownloadRequest):
-    import time
 
-    # Load config
+@app.post("/download")
+async def api_download_stream(req: DownloadRequest):
+    """
+    Stream download progress for DDL and IA-COL sources for a given manufacturer/system.
+    Only downloads filetypes specified in the maps for the selected client/system.
+    """
     with open("transfs.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     archive_sources = config.get("archive_sources", {})
     filestore = config.get("filestore", "filestore")
+    clients = config.get("clients", [])
 
     async def run_and_stream():
         manufacturer_sources = archive_sources.get(req.manufacturer)
@@ -209,8 +150,31 @@ async def api_download_stream(req: DownloadRequest):
             return
 
         base_path_rel = system_entry.get("base_path", "")
-        base_path = os.path.join(filestore, base_path_rel)
+        base_path = os.path.join(filestore, "Native" , base_path_rel)
         sources = system_entry.get("sources", [])
+
+        # --- Find filetypes for this client/system ---
+        filetypes = None
+        # Find the client config
+        for client in clients:
+            for system in client.get("systems", []):
+                if (
+                    system.get("manufacturer") == req.manufacturer
+                    and system.get("cananonical_system_name") == req.system
+                ):
+                    # Look for ...SoftwareArchives... map
+                    for map_entry in system.get("maps", []):
+                        if "...SoftwareArchives..." in map_entry:
+                            ft = []
+                            for ft_entry in map_entry["...SoftwareArchives..."].get("filetypes", []):
+                                # filetypes can be dicts like {'Tape': 'UEF'} or {'HD': 'MMB,VHD'}
+                                if isinstance(ft_entry, dict):
+                                    for v in ft_entry.values():
+                                        ft.extend([x.strip() for x in v.split(",")])
+                                elif isinstance(ft_entry, str):
+                                    ft.extend([x.strip() for x in ft_entry.split(",")])
+                            filetypes = list(set(ft))
+        # --- End filetype extraction ---
 
         found = False
         for entry in sources:
@@ -230,7 +194,7 @@ async def api_download_stream(req: DownloadRequest):
                     est_msg = f"Could not estimate download time for {filename}\n"
                 yield est_msg
                 try:
-                    resp = requests.get(url, stream=True)
+                    resp = requests.get(url, stream=True, timeout=30)
                     resp.raise_for_status()
                     total = int(resp.headers.get("Content-Length", 0))
                     downloaded_bytes = 0
@@ -246,9 +210,80 @@ async def api_download_stream(req: DownloadRequest):
                     yield f"Downloaded for {req.manufacturer} / {req.system}: {dest_path}\n"
                 except Exception as e:
                     yield f"Failed to download {url}: {e}\n"
+            elif entry.get("type") == "IA-COL":
+                found = True
+                url = entry.get("url")
+                platform = entry.get("platform", "")
+                print(f"Downloading IA-COL {url} to {base_path} for {req.manufacturer} / {req.system}")
+                try:
+                    for msg in download_ia_collection(url, base_path, platform, filetypes=filetypes):
+                        yield msg
+                    yield (
+                        f"Downloaded IA-COL for {req.manufacturer} / "
+                        f"{req.system}: {os.path.join(base_path, platform)}\n"
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    yield f"Failed to download IA-COL {url}: {exc}\n"
         if not found:
             yield "No DDL sources found for this system\n"
         else:
             yield f"Done downloading for {req.manufacturer} / {req.system}.\n"
 
     return StreamingResponse(run_and_stream(), media_type="text/plain")
+
+
+def download_ia_collection(url, base_path, platform, filetypes=None):
+    """
+    Download all files from an Internet Archive collection to the correct platform directory.
+    Optionally filter by file extension.
+
+    Args:
+        url (str): The Internet Archive collection URL.
+        base_path (str): The base directory (from YAML).
+        platform (str): The platform subdirectory (from YAML).
+        filetypes (str or list, optional): Comma-separated string or list of file extensions.
+
+    Yields:
+        str: Progress messages for each item downloaded.
+    """
+    dest_dir = os.path.join(base_path, platform)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    match = re.search(r'/details/([^/?#]+)', url)
+    if not match:
+        yield f"Could not extract collection name from URL: {url}\n"
+        return
+
+    if filetypes:
+        if isinstance(filetypes, str):
+            filetypes_set = set(ft.strip().lower() for ft in filetypes.split(","))
+        else:
+            filetypes_set = set(ft.strip().lower() for ft in filetypes)
+    else:
+        filetypes_set = None
+
+    collection_name = match.group(1)
+    yield f"Fetching Internet Archive collection: {collection_name}\n"
+
+    for item in internetarchive.search_items(f'collection:{collection_name}'):
+        item_id = item['identifier']
+#        yield f"Processing item: {item_id}\n"
+        ia_item = internetarchive.get_item(item_id)
+        ia_files = ia_item.files
+        files_to_download = []
+        for f in ia_files:
+            ext = f['name'].split('.')[-1].lower() if '.' in f['name'] else ''
+            if not filetypes_set or ext in filetypes_set:
+                files_to_download.append(f['name'])
+        if files_to_download:
+            yield f"Downloading {len(files_to_download)} file(s) from item: {item_id}\n"
+            ia_item.download(
+                destdir=dest_dir,
+                files=files_to_download,
+                verbose=False,
+                checksum=True,
+                no_directory=True
+            )
+ #           yield f"Downloaded item: {item_id}\n"
+        else:
+            yield f"No matching files in item: {item_id}\n"

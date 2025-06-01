@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Acorn Atom"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Acorn/Atom/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Acorn/Atom/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"

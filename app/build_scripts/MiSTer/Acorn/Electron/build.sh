@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Acorn Electron"
 
 # Use BASE_PATH from environment, fallback to default if not set
-BASE_DIR="${BASE_PATH:-/mnt/filestorefs/Acorn/Electron/}"
+BASE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Acorn/Electron/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 SOFTWARE_DIR="${BASE_DIR}/Collections"
