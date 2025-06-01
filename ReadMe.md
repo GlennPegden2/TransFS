@@ -38,6 +38,9 @@
 - `fuse3` / `libfuse` 
 - Samba
 - uvicorn
+- tar
+- unzip
+- guestfish
 
 ### Quick Start (Dockerised SMB Mode)
 
