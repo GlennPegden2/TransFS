@@ -1,0 +1,25 @@
+#!/bin/bash
+[ "$EUID" -ne 0 ] && echo "Please run as root (try using sudo)." && exit 1
+
+python3 -m venv venv
+source ./venv/bin/activate
+pip install --upgrade pip
+pip install -rq requirements.txt
+
+# (you will need sudo for FUSE)
+# sudo python3 multizip_fs.py /mnt/transfs
+
+mkdir -p /mnt/transfs
+mkdir -p /mnt/filerstorefs
+
+[ ! -f /etc/samba/smb.conf.bak ] && {
+[ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.transfs_bak
+cp ./smb.conf /etc/samba/smb.conf
+}
+
+cd app
+service smbd start &&
+python3 transfs.py &
+
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&
+tail -f /dev/null
