@@ -31,4 +31,4 @@ WORKDIR /app
 #COPY ./app /app
 
 # Start Samba and the FUSE filesystem
-CMD service smbd start && python3 /app/transfs.py && tail -f /dev/null
+CMD service smbd start && python3 transfs.py && tail -f /dev/null

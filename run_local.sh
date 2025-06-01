@@ -4,13 +4,17 @@
 python3 -m venv venv
 source ./venv/bin/activate
 pip install --upgrade pip
-pip install -rq requirements.txt
+pip install -q -r requirements.txt
 
 # (you will need sudo for FUSE)
 # sudo python3 multizip_fs.py /mnt/transfs
 
-mkdir -p /mnt/transfs
-mkdir -p /mnt/filerstorefs
+# Add user_allow_other to fuse.conf
+echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+
+# Create mount points with proper permissions
+sudo mkdir -p /mnt/transfs /mnt/filestorefs
+sudo chmod 777 /mnt/transfs /mnt/filestorefs
 
 [ ! -f /etc/samba/smb.conf.bak ] && {
 [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.transfs_bak

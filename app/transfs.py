@@ -18,7 +18,7 @@ class TransFS(Passthrough):
         super().__init__(root_path)
         print("Starting TransFS")
         self.root = root_path
-        with open("./app/transfs.yaml", "r", encoding="UTF-8") as f:
+        with open("transfs.yaml", "r", encoding="UTF-8") as f:
             self.config = yaml.safe_load(f)
 
     # --- Filetype mapping helpers ---

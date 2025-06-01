@@ -8,11 +8,10 @@
 ## 🔍 Key Features
 
 - **FUSE-powered virtual filesystem** – Present data download from archive.org in the format expected by various apps (e.g. emulators).
-- **Zero modification** – Original archive content remains untouched; translations occur in-memory.
+- **On copy of the contents** – Original archive content remains untouched; translations occur in-memory.
 - **Smart naming & structure** – Automatically adapts files/folders to the conventions of target emulators/platforms.
-- **ROMset and BIOS handling** – Merge split ROMs, unzip on-demand, or reshape sets for compatibility.
+- **ROMset and BIOS handling** – Merge split ROMs, unzip on-demand, or reshape sets for compatibility. (Planned)
 - **Dockerised deployment** – Fully containerised SMB server for network-based sharing with retro devices and VMs.
-- **Extensible plugin system** – Support additional emulators, platforms, or structural conventions.
 
 ---
 
@@ -29,10 +28,16 @@
 
 ### Requirements
 
-- Linux (FUSE support)
-- Docker (if using containerised mode)
-- Python 3.9+ (for non-containerised dev mode)
-- `fuse3` / `libfuse` installed
+ #### Conatiner-ised
+
+ Docker on linux (see below why a windows host isn't likely to work)
+
+ #### Natively
+- Linux (for FUSE support)
+- Python 3.9+ (for non-containerised dev mode) - Inc venv and pip.
+- `fuse3` / `libfuse` 
+- Samba
+- uvicorn
 
 ### Quick Start (Dockerised SMB Mode)
 
@@ -44,13 +49,8 @@ docker-compose up -d
 
 ### Notes on Windows (either running locally or as Host OS for containers)
 
-If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB server can't run (and SMB doesn't play nicely with many clients when run on other ports).
+If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB server can't run (and SMB doesn't play nicely with many clients when run on other ports). This stops SMB sharing working either natively, under Windows Hosted Docker or under WSL. A linux VM under Hyper-V should be fine. It also won't run natively in windows as FUSE isn't available.
 
-Possible solutions are
-
-- Don't run this on Windows (or a linux/Mac system whene you are already running and SMB server)
-- Run it inside WSL (either as a container or not)
-- Erm, yeah, I can test locally ny running it on 4443 as recent insider builds of windows allow you to map shares to other ports, but there are still loads of things out there that assume it's on 443.
 
 
 ### Project Name

@@ -81,4 +81,9 @@
 - Only files with mapped extensions are shown in virtual folders.
 - Only zip files in mapped extension directories are handled as described.
 
+
+### 10. Environment 
+
+- Runs on both linux bare metal and as a docker container (wont' run natively on Windows because of reliance on FUSE and wanting to create an SMB server on 445). Samba sharing may not work in Windows-Hosted docker.
+
 ---
