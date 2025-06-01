@@ -48,19 +48,6 @@ clients:
       # --- Amstrad ---
       - name: Amstrad
         manufacturer: Amstrad
-        cananonical_system_name: CPC
-        local_base_path: Amstrad/PCW
-        maps:
-          - ...SoftwareArchives...: 
-              supports_zip: false   
-              source_dir: Software
-              filetypes:
-              - FDs: DSK
-          - boot.rom:
-              default_source:
-                source_filename: BIOS/boot.rom
-      - name: Amstrad-PCW
-        manufacturer: Amstrad
         cananonical_system_name: PCW
         local_base_path: Amstrad/PCW
         maps:
@@ -79,16 +66,9 @@ clients:
               source_dir: Software
               filetypes:
               - Disks: "DSK"
-      - name: AmstradPCW
-        manufacturer: Amstrad
-        cananonical_system_name: PCW
-        local_base_path: Amstrad/PCW
-        maps:
-          - ...SoftwareArchives...:
-              supports_zip: false
-              source_dir: Software
-              filetypes:
-              - Disks: "DSK"
+          - boot.rom:
+              default_source:
+                source_filename: Software/BIOS/boot.rom
       # --- Apple ---
       - name: AppleII
         manufacturer: Apple
