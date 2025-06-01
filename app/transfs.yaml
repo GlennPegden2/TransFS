@@ -56,6 +56,9 @@ clients:
               source_dir: Software
               filetypes:
               - FDs: DSK
+            boot.rom:
+              default_source:
+                source_filename: BIOS/boot.rom
       - name: Amstrad-PCW
         manufacturer: Amstrad
         cananonical_system_name: PCW
@@ -443,6 +446,11 @@ archive_sources:
   "Amstrad":
     "CPC":
       base_path: Amstrad/CPC/Software
+      sources:
+      - name: BIOS (MiSTer)
+        type: ddl
+        url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/boot.rom
+        platform: BIOS
       sources:
       - name: TOSEC Amstrad CPC Collection
         type: ddl
