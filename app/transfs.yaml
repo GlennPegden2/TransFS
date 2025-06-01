@@ -46,7 +46,7 @@ clients:
                   higgy_mmbeeb-v1.2.zip:
                     zip: unzip
       # --- Amstrad ---
-      - name: Amstrad
+      - name: Amstrad PCW
         manufacturer: Amstrad
         cananonical_system_name: PCW
         local_base_path: Amstrad/PCW
@@ -56,7 +56,7 @@ clients:
               source_dir: Software
               filetypes:
               - FDs: DSK
-      - name: AmstradCPC
+      - name: Amstrad
         manufacturer: Amstrad
         cananonical_system_name: CPC
         local_base_path: Amstrad/CPC

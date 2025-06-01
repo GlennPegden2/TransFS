@@ -54,7 +54,44 @@ docker-compose up -d
 
 If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB server can't run (and SMB doesn't play nicely with many clients when run on other ports). This stops SMB sharing working either natively, under Windows Hosted Docker or under WSL. A linux VM under Hyper-V should be fine. It also won't run natively in windows as FUSE isn't available.
 
+# System Compatibility Table
 
+| System             | MiSTer | Mame | RetroPie | RetroBat | Notes |
+|--------------------|--------|------|----------|----------|-------|
+| Acorn Atom         | ✅     |      |          |          |       |
+| Acorn Electron     | ✅     |      |          |          |       |
+| BBCMicro           |        |      |          |          |       |
+| Amstrad PCW        | ⚠️     |      |          |          |       |
+| Amstrad CPC        | ⚠️     |      |          |          |       |
+| AppleII            |        |      |          |          |       |
+| Atari2600          |        |      |          |          |       |
+| Atari5200          |        |      |          |          |       |
+| Atari7800          |        |      |          |          |       |
+| Atari800           |        |      |          |          |       |
+| Atari Lynx         |        |      |          |          |       |
+| ColecoVision       |        |      |          |          |       |
+| Amiga              |        |      |          |          |       |
+| Commodore128       |        |      |          |          |       |
+| Commodore64        |        |      |          |          |       |
+| CommodorePET       |        |      |          |          |       |
+| CommodorePlus4     |        |      |          |          |       |
+| Vectrex            |        |      |          |          |       |
+| Intellivision      |        |      |          |          |       |
+| MSX                |        |      |          |          |       |
+| Altair8800         |        |      |          |          |       |
+| PC-Engine          |        |      |          |          |       |
+| TurboGrafx16       |        |      |          |          |       |
+| GameBoy            |        |      |          |          |       |
+| GameBoyAdvance     |        |      |          |          |       |
+| GameBoyColor       |        |      |          |          |       |
+| NES                |        |      |          |          |       |
+| SNES               |        |      |          |          |       |
+| SegaGameGear       |        |      |          |          |       |
+| SegaGenesis        |        |      |          |          |       |
+| SegaMasterSystem   |        |      |          |          |       |
+| ZX Spectrum        |        |      |          |          |       |
+| NeoGeo             |        |      |          |          |       |
+| AliceMC10          |        |      |          |          |       |
 
 ### Project Name
 
