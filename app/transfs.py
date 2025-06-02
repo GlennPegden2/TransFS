@@ -9,6 +9,8 @@ from typing import Any, Optional, Tuple, Literal
 import yaml
 from fuse import FUSE
 from passthroughfs import Passthrough
+import errno
+from fuse import FuseOSError
 
 
 
@@ -557,6 +559,38 @@ class TransFS(Passthrough):
                 temp.close()
                 return os.open(temp.name, flags)
         return os.open(trans_path, flags)
+
+    def _is_system_root(self, path):
+        # e.g. /MiSTer/ARCHIE or /MiSTer/AcornAtom
+        parts = path.strip("/").split("/")
+        return len(parts) == 2  # ["MiSTer", "ARCHIE"]
+
+    def _map_virtual_to_real(self, path):
+        # Only allow writes in /MiSTer/<system>
+        if not self._is_system_root(path):
+            return None
+        # Map to real storage, e.g. /mnt/filestorefs/Native/Acorn/Archimedes
+        # You may need to look this up from your YAML config
+        # Example:
+        client, system = path.strip("/").split("/")
+        # Lookup real path from config here...
+        # For demo, just join filestore root:
+        return os.path.join("/mnt/filestorefs", client, system)
+
+    def create(self, path, mode, fi=None):
+        real_dir = self._map_virtual_to_real(os.path.dirname(path))
+        if real_dir is None:
+            raise FuseOSError(errno.EROFS)  # Read-only filesystem
+        os.makedirs(real_dir, exist_ok=True)
+        real_path = os.path.join(real_dir, os.path.basename(path))
+        return os.open(real_path, os.O_WRONLY | os.O_CREAT, mode)
+
+    def mkdir(self, path, mode):
+        real_dir = self._map_virtual_to_real(path)
+        if real_dir is None:
+            raise FuseOSError(errno.EROFS)
+        os.makedirs(real_dir, mode=mode, exist_ok=True)
+        return 0
 
 
 def main(mount_path: str, root_path: str):
