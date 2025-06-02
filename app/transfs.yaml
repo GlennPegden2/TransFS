@@ -69,6 +69,9 @@ clients:
           - boot.rom:
               default_source:
                 source_filename: Software/BIOS/boot.rom
+          - cpc464nd.eZ0:
+              default_source:
+                source_filename: Software/BIOS/cpc464nd.eZ0
       # --- Apple ---
       - name: AppleII
         manufacturer: Apple
@@ -430,6 +433,10 @@ archive_sources:
       - name: BIOS (MiSTer)
         type: ddl
         url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/boot.rom
+        platform: BIOS
+      - name: BIOS No Boot (MiSTer)
+        type: ddl
+        url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/cpc464nd.eZ0
         platform: BIOS
       - name: TOSEC Amstrad CPC Collection
         type: ddl
