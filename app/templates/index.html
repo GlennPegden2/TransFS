@@ -150,7 +150,7 @@
         async function refreshFuseLog() {
             const fuseLogDiv = document.getElementById('fuse-log');
             try {
-                const resp = await fetch('/logs');
+                const resp = await fetch('/api/logs');
                 if (resp.ok) {
                     const text = await resp.text();
                     fuseLogDiv.textContent = text;
