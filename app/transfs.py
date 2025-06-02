@@ -12,6 +12,8 @@ from passthroughfs import Passthrough
 import errno
 from fuse import FuseOSError
 
+import sys
+
 
 
 class TransFS(Passthrough):
@@ -23,6 +25,10 @@ class TransFS(Passthrough):
         self.root = root_path
         with open("transfs.yaml", "r", encoding="UTF-8") as f:
             self.config = yaml.safe_load(f)
+
+        logfile = "/tmp/transfs.log"
+        sys.stdout = open(logfile, "a", buffering=1, encoding="utf-8")
+        sys.stderr = sys.stdout
 
     # --- Filetype mapping helpers ---
 
