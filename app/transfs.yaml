@@ -16,7 +16,7 @@ clients:
                 source_filename: Software/HDs/hoglet.vhd
           - HDs:
               source_dir: Software/HDs
-      - name: Archie
+      - name: ARCHIE
         manufacturer: Acorn
         cananonical_system_name: Archimedes
         local_base_path: Acorn/Archimedes
