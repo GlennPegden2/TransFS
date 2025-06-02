@@ -46,17 +46,7 @@ clients:
                   higgy_mmbeeb-v1.2.zip:
                     zip: unzip
       # --- Amstrad ---
-      - name: Amstrad
-        manufacturer: Amstrad
-        cananonical_system_name: CPC
-        local_base_path: Amstrad/PCW
-        maps:
-          - ...SoftwareArchives...: 
-              supports_zip: false   
-              source_dir: Software
-              filetypes:
-              - FDs: DSK
-      - name: Amstrad-PCW
+      - name: Amstrad PCW
         manufacturer: Amstrad
         cananonical_system_name: PCW
         local_base_path: Amstrad/PCW
@@ -66,7 +56,7 @@ clients:
               source_dir: Software
               filetypes:
               - FDs: DSK
-      - name: AmstradCPC
+      - name: Amstrad
         manufacturer: Amstrad
         cananonical_system_name: CPC
         local_base_path: Amstrad/CPC
@@ -76,16 +66,12 @@ clients:
               source_dir: Software
               filetypes:
               - Disks: "DSK"
-      - name: AmstradPCW
-        manufacturer: Amstrad
-        cananonical_system_name: PCW
-        local_base_path: Amstrad/PCW
-        maps:
-          - ...SoftwareArchives...:
-              supports_zip: false
-              source_dir: Software
-              filetypes:
-              - Disks: "DSK"
+          - boot.rom:
+              default_source:
+                source_filename: Software/BIOS/boot.rom
+          - cpc464nd.eZ0:
+              default_source:
+                source_filename: Software/BIOS/cpc464nd.eZ0
       # --- Apple ---
       - name: AppleII
         manufacturer: Apple
@@ -444,6 +430,14 @@ archive_sources:
     "CPC":
       base_path: Amstrad/CPC/Software
       sources:
+      - name: BIOS (MiSTer)
+        type: ddl
+        url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/boot.rom
+        platform: BIOS
+      - name: BIOS No Boot (MiSTer)
+        type: ddl
+        url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/cpc464nd.eZ0
+        platform: BIOS
       - name: TOSEC Amstrad CPC Collection
         type: ddl
         url: https://archive.org/download/Amstrad_CPC_TOSEC_2012_04_23/Amstrad_CPC_TOSEC_2012_04_23.zip
