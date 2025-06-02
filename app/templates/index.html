@@ -23,6 +23,15 @@
         <button type="button" onclick="submitBuild()">Build</button>
         <button type="button" onclick="document.getElementById('log').textContent = ''" style="background:#888;">Clear Log</button>
     </form>
+
+    <!-- FUSE log window -->
+    <div style="margin-top:2em;">
+        <h2>FUSE log</h2>
+        <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
+        <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
+        <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
+    </div>
+
     <script>
         let manufacturerSystemMap = {};
 
@@ -136,6 +145,26 @@
                 ({ value, done } = await reader.read());
             }
         }
+
+        // FUSE log fetch and display
+        async function refreshFuseLog() {
+            const fuseLogDiv = document.getElementById('fuse-log');
+            try {
+                const resp = await fetch('/logs');
+                if (resp.ok) {
+                    const text = await resp.text();
+                    fuseLogDiv.textContent = text;
+                    fuseLogDiv.scrollTop = fuseLogDiv.scrollHeight;
+                } else {
+                    fuseLogDiv.textContent = "Failed to fetch FUSE log.";
+                }
+            } catch (e) {
+                fuseLogDiv.textContent = "Error fetching FUSE log: " + e;
+            }
+        }
+
+        // Optionally, auto-refresh FUSE log every 10 seconds:
+        // setInterval(refreshFuseLog, 10000);
     </script>
 </body>
 </html>

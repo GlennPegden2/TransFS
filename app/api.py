@@ -11,7 +11,7 @@ import time
 from pydantic import BaseModel
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse , PlainTextResponse
 from config import (
     get_clients,
     get_systems_for_client,
@@ -35,6 +35,14 @@ class BuildRequest(BaseModel):
     builds: list  # List of dicts: {"manufacturer": ..., "system": ...}
     clients: list  # List of client names
 
+
+@app.get("/logs", response_class=PlainTextResponse)
+def get_logs():
+    try:
+        with open("/tmp/transfs.log", "r") as f:
+            return f.read()[-10000:]  # Return last 10k chars (or whatever you want)
+    except Exception as e:
+        return f"Could not read log: {e}"
 
 @app.get("/clients")
 def api_get_clients():
