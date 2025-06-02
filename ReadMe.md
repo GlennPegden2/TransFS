@@ -58,11 +58,11 @@ If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB 
 
 | System             | MiSTer | Mame | RetroPie | RetroBat | Notes |
 |--------------------|--------|------|----------|----------|-------|
-| Acorn Atom         | ✅     |      |          |          |       |
-| Acorn Electron     | ✅     |      |          |          |       |
+| Acorn Atom         | ✅ VHD    |      |          |          |       |
+| Acorn Electron     | ✅ VHD, MMB , UEF    |      |          |          |       |
 | BBCMicro           |        |      |          |          |       |
-| Amstrad PCW        | ⚠️     |      |          |          |       |
-| Amstrad CPC        | ⚠️     |      |          |          |       |
+| Amstrad PCW        | ✅ DSK     |      |          |          |       |
+| Amstrad CPC        | ⚠️ WONT BOOT!    |      |          |          |       |
 | AppleII            |        |      |          |          |       |
 | Atari2600          |        |      |          |          |       |
 | Atari5200          |        |      |          |          |       |
