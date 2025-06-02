@@ -6,6 +6,8 @@ import asyncio
 import re
 import requests
 import internetarchive
+import libtorrent as lt
+import time
 from pydantic import BaseModel
 import yaml
 from fastapi import FastAPI, HTTPException
@@ -15,6 +17,9 @@ from config import (
     get_systems_for_client,
     get_manufacturers_and_canonical_names,
 )
+from mega import Mega
+import tempfile
+from urllib.parse import urlparse, unquote
 
 app = FastAPI()
 
@@ -182,23 +187,23 @@ async def api_download_stream(req: DownloadRequest):
                 found = True
                 url = entry.get("url")
                 platform = entry.get("platform", "")
-                filename = os.path.basename(url)
                 dest_dir = os.path.join(base_path, platform)
                 os.makedirs(dest_dir, exist_ok=True)
-                dest_path = os.path.join(dest_dir, filename)
                 # Estimate download time
                 est_sec = estimate_download_time(url)
-                if est_sec is not None:
-                    est_msg = f"Estimated download time for {filename}: ~{est_sec//60}m {est_sec%60}s at 10Mbps\n"
-                else:
-                    est_msg = f"Could not estimate download time for {filename}\n"
-                yield est_msg
                 try:
                     resp = requests.get(url, stream=True, timeout=30)
                     resp.raise_for_status()
+                    filename = get_filename_from_response(resp, url)
+                    dest_path = os.path.join(dest_dir, filename)
                     total = int(resp.headers.get("Content-Length", 0))
                     downloaded_bytes = 0
                     chunk_size = 8192
+                    if est_sec is not None:
+                        est_msg = f"Estimated download time for {filename}: ~{est_sec//60}m {est_sec%60}s at 10Mbps\n"
+                    else:
+                        est_msg = f"Could not estimate download time for {filename}\n"
+                    yield est_msg
                     with open(dest_path, "wb") as f:
                         for chunk in resp.iter_content(chunk_size=chunk_size):
                             if chunk:
@@ -224,6 +229,62 @@ async def api_download_stream(req: DownloadRequest):
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     yield f"Failed to download IA-COL {url}: {exc}\n"
+            elif entry.get("type") == "tor":
+                found = True
+                url = entry.get("url")
+                platform = entry.get("platform", "")
+                dest_dir = os.path.join(base_path, platform)
+                os.makedirs(dest_dir, exist_ok=True)
+                yield f"Starting torrent download: {url}\n"
+                try:
+                    ses = lt.session()
+                    ses.listen_on(6881, 6891)
+                    params = {
+                        'save_path': dest_dir,
+                        'storage_mode': lt.storage_mode_t(2),
+                    }
+                    if url.endswith('.torrent'):
+                        yield f"Not a magnet - {url}\n"
+                        # Download the torrent file to a temp location
+                        resp = requests.get(url, verify=False, timeout=30)
+                        resp.raise_for_status()
+                        filename = get_filename_from_response(resp, url)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".torrent") as tf:
+                            tf.write(resp.content)
+                            torrent_path = tf.name
+                        info = lt.torrent_info(torrent_path)
+                        h = ses.add_torrent({'ti': info, 'save_path': dest_dir})
+                    else:
+                        # Assume magnet link
+                        yield f"Is a magnet - {url}\n"
+                        h = lt.add_magnet_uri(ses, url, params)
+                    yield "Fetching metadata...\n"
+                    while not h.has_metadata():
+                        await asyncio.sleep(1)
+                    yield "Metadata received. Downloading...\n"
+                    while not h.is_seed():
+                        s = h.status()
+                        percent = int(s.progress * 100)
+                        yield f"Torrent progress: {percent}% ({s.download_rate/1000:.1f} kB/s)\n"
+                        await asyncio.sleep(2)
+                    yield f"Torrent download complete for {req.manufacturer} / {req.system}: {dest_dir}\n"
+                except Exception as e:
+                    yield f"Failed to download torrent {url}: {e}\n"
+            elif entry.get("type") == "mega":
+                found = True
+                url = entry.get("url")
+                platform = entry.get("platform", "")
+                dest_dir = os.path.join(base_path, platform)
+                os.makedirs(dest_dir, exist_ok=True)
+                yield f"Starting MEGA.nz download: {url}\n"
+                try:
+                    mega = Mega()
+                    yield "Downloading from MEGA.nz (this may take a while)...\n"
+                    downloaded_file = mega.download_url(url, dest_dir)
+                    # Optionally sanitize the filename if needed here as well
+                    yield f"Downloaded MEGA.nz file for {req.manufacturer} / {req.system}: {downloaded_file}\n"
+                except Exception as e:
+                    yield f"Failed to download from MEGA.nz {url}: {e}\n"
         if not found:
             yield "No DDL sources found for this system\n"
         else:
@@ -287,3 +348,16 @@ def download_ia_collection(url, base_path, platform, filetypes=None):
  #           yield f"Downloaded item: {item_id}\n"
         else:
             yield f"No matching files in item: {item_id}\n"
+
+
+def get_filename_from_response(resp, url):
+    # Try Content-Disposition header
+    cd = resp.headers.get('Content-Disposition')
+    if cd:
+        fname_match = re.findall('filename="?([^"]+)"?', cd)
+        if fname_match:
+            return fname_match[0]
+    # Fallback: sanitize URL
+    parsed = urlparse(url)
+    filename = os.path.basename(parsed.path)
+    return unquote(filename)

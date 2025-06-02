@@ -36,14 +36,19 @@
             const meta = await fetch('/api/systems/meta').then(r => r.json());
             manufacturerSystemMap = meta; // Save for later use
             let html = '';
+            let idx = 0;
             for (const manufacturer in meta) {
+                const sysDivId = `systems-for-${manufacturer.replace(/\s+/g, '').toLowerCase()}`;
                 html += `
                   <div class="manufacturer-group">
-                    <div class="manufacturer-header">
-                      <img class="manufacturer-logo" src="/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png" alt="${manufacturer} logo" onerror="this.style.display='none'">
-                      <span>${manufacturer}</span>
+                    <div class="manufacturer-header" style="cursor:pointer;" onclick="toggleSystems('${sysDivId}')">
+                      <div style="display:flex;align-items:center;gap:0.5em;">
+                        <img class="manufacturer-logo" src="/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png" alt="${manufacturer} logo" onerror="this.style.display='none'">
+                        <span>${manufacturer}</span>
+                      </div>
+                      <span id="${sysDivId}-toggle" class="toggle-icon">[+]</span>
                     </div>
-                    <div class="system-grid">
+                    <div class="system-grid" id="${sysDivId}" style="display:none;">
                 `;
                 html += meta[manufacturer].map(s =>
                     `<div class="system-card">
@@ -55,10 +60,24 @@
                     </div>`
                 ).join('');
                 html += `</div></div>`;
+                idx++;
             }
             document.getElementById('systems').innerHTML = html;
         }
         loadData();
+
+        // Toggle function to show/hide systems for a manufacturer
+        function toggleSystems(sysDivId) {
+            const grid = document.getElementById(sysDivId);
+            const toggle = document.getElementById(sysDivId + '-toggle');
+            if (grid.style.display === 'none') {
+                grid.style.display = '';
+                if (toggle) toggle.textContent = '[-]';
+            } else {
+                grid.style.display = 'none';
+                if (toggle) toggle.textContent = '[+]';
+            }
+        }
 
         function appendLog(msg) {
             const logDiv = document.getElementById('log');
