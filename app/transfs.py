@@ -515,13 +515,8 @@ class TransFS(Passthrough):
                     'st_nlink': 2,
                     'st_size': 4096,
                 }
-            # Otherwise, fallback to real stat (will raise FileNotFoundError if missing)
-            st = os.lstat(full_path)
-            keys = (
-                'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
-                'st_nlink', 'st_size', 'st_uid'
-            )
-            return {key: int(getattr(st, key)) for key in keys}
+            # If not found and not a virtual directory, raise ENOENT
+            raise FuseOSError(errno.ENOENT)
 
         if isinstance(fspath, tuple):
             # (zip_path, internal_file)
