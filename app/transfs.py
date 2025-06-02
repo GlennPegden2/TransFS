@@ -539,11 +539,22 @@ class TransFS(Passthrough):
         else:
             st = os.lstat(fspath)
 
+        # Check if it's a file or directory
+        if os.path.isdir(fspath):
+            mode = 0o040755
+        elif os.path.isfile(fspath):
+            mode = 0o100644
+        else:
+            # fallback or error
+            raise FuseOSError(errno.ENOENT)
+
         keys = (
             'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
             'st_nlink', 'st_size', 'st_uid'
         )
-        return {key: int(getattr(st, key)) for key in keys}
+        out = {key: int(getattr(st, key)) for key in keys}
+        out['st_mode'] = mode
+        return out
 
     def open(self, path: str, flags: int) -> int:
         """FUSE open implementation."""
@@ -579,10 +590,10 @@ class TransFS(Passthrough):
 
     def create(self, path, mode, fi=None):
         real_dir = self._map_virtual_to_real(os.path.dirname(path))
-        if real_dir is None:
-            raise FuseOSError(errno.EROFS)  # Read-only filesystem
-        os.makedirs(real_dir, exist_ok=True)
         real_path = os.path.join(real_dir, os.path.basename(path))
+        if os.path.isdir(real_path):
+            raise FuseOSError(errno.EISDIR)
+        os.makedirs(real_dir, exist_ok=True)
         return os.open(real_path, os.O_WRONLY | os.O_CREAT, mode)
 
     def mkdir(self, path, mode):
