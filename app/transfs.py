@@ -536,17 +536,16 @@ class TransFS(Passthrough):
                     st_nlink = 1
                     st_size = info.file_size
                 st = StatObj()
+            mode = 0o100444
         else:
             st = os.lstat(fspath)
-
-        # Check if it's a file or directory
-        if os.path.isdir(fspath):
-            mode = 0o040755
-        elif os.path.isfile(fspath):
-            mode = 0o100644
-        else:
-            # fallback or error
-            raise FuseOSError(errno.ENOENT)
+            # Use the real file type, but force permissions to 755 for dirs, 644 for files
+            if os.path.isdir(fspath):
+                mode = 0o040755
+            elif os.path.isfile(fspath):
+                mode = 0o100644
+            else:
+                raise FuseOSError(errno.ENOENT)
 
         keys = (
             'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
