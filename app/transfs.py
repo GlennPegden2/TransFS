@@ -7,12 +7,18 @@ from pathlib import Path
 import zipfile
 from typing import Any, Optional, Tuple, Literal
 import yaml
-from fuse import FUSE
 from passthroughfs import Passthrough
 import errno
-from fuse import FuseOSError
 
 import sys
+
+logfile = "/tmp/transfs.log"
+sys.stdout = open(logfile, "a", buffering=1, encoding="utf-8")
+sys.stderr = sys.stdout
+
+from fuse import FUSE
+from fuse import FuseOSError
+
 
 
 
@@ -26,9 +32,6 @@ class TransFS(Passthrough):
         with open("transfs.yaml", "r", encoding="UTF-8") as f:
             self.config = yaml.safe_load(f)
 
-        logfile = "/tmp/transfs.log"
-        sys.stdout = open(logfile, "a", buffering=1, encoding="utf-8")
-        sys.stderr = sys.stdout
 
     # --- Filetype mapping helpers ---
 
