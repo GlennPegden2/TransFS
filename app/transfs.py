@@ -602,6 +602,28 @@ class TransFS(Passthrough):
         os.makedirs(real_dir, mode=mode, exist_ok=True)
         return 0
 
+    def access(self, path, mode):
+        """
+        FUSE access implementation.
+        Always allow access to virtual directories and files that exist in the virtual namespace.
+        """
+        full_path = self._full_path(path)
+        fspath = self.get_source_path(full_path)
+
+        # If it's a virtual directory, allow access
+        if fspath is None and self._is_virtual_path(full_path):
+            return 0
+
+        # If it's a real file or directory, check access using os.access
+        if fspath and os.path.exists(fspath):
+            if os.access(fspath, mode):
+                return 0
+            else:
+                raise FuseOSError(errno.EACCES)
+
+        # If not found, deny access
+        raise FuseOSError(errno.ENOENT)
+
 
 def main(mount_path: str, root_path: str):
     """Mount the FUSE filesystem."""
