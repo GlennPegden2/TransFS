@@ -5,6 +5,7 @@ python3 -m venv venv
 source ./venv/bin/activate
 pip install --upgrade pip
 pip install -q -r requirements.txt
+pip install -q tenacity --upgrade # Fix Mega.nz issue on Python3.10+
 
 # (you will need sudo for FUSE)
 # sudo python3 multizip_fs.py /mnt/transfs

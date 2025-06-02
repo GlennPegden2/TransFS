@@ -34,7 +34,7 @@
 
  #### Natively
 - Linux (for FUSE support)
-- Python 3.9+ (for non-containerised dev mode) - Inc venv and pip.
+- Python 3.9+ to 3.10 (for non-containerised dev mode) - Inc venv and pip. (3.10+ won't work with the Mega library used)
 - `fuse3` / `libfuse` 
 - Samba
 - uvicorn

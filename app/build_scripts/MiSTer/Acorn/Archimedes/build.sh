@@ -14,7 +14,7 @@ mkdir -p "$SOFTWARE_DIR/tmp/unzipped_software"
 
 unzip -o "$SOFTWARE_DIR/4corn/riscos3_71.zip" -d "$SOFTWARE_DIR/tmp/unzipped_software"
 7zr x -y "$SOFTWARE_DIR/SIDKiddCROS4.2/CROS42_082620.7z" -o"$SOFTWARE_DIR/tmp/unzipped_software"
-7zr x -y "$SOFTWARE_DIR/icebird/ICEBIRD.7z" -o"$SOFTWARE_DIR/tmp/unzipped_software"
+7zr x -y "$SOFTWARE_DIR/Icebird/ICEBIRD.7z" -o"$SOFTWARE_DIR/tmp/unzipped_software"
 
 
 mkdir -p "$SOFTWARE_DIR/../HDF"

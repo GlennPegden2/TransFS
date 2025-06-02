@@ -14,7 +14,7 @@
 #   - guestfish
 
 # An array of required commands
-REQUIRED_CMDS=(python3 fusermount smbd uvicorn tar unzip guestfish 7zip-full)
+REQUIRED_CMDS=(python3 fusermount smbd uvicorn tar unzip guestfish p7zip)
 
 MISSING=()
 
