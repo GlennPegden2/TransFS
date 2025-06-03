@@ -1,25 +1,16 @@
 #!/usr/bin/env python
 
+import errno
 import os
 import tempfile
 import time
-from pathlib import Path
 import zipfile
-from typing import Any, Optional, Tuple, Literal
+from pathlib import Path
+from typing import Any, Literal, Optional, Tuple
+
 import yaml
-from passthroughfs import Passthrough
-import errno
-
-import sys
-
-logfile = "/tmp/transfs.log"
-sys.stdout = open(logfile, "a", buffering=1, encoding="utf-8")
-sys.stderr = sys.stdout
-
-from fuse import FUSE
-from fuse import FuseOSError
-
-
+from fuse import FUSE, FuseOSError
+from passthroughfs import Passthrough  # type: ignore
 
 
 class TransFS(Passthrough):
@@ -91,11 +82,38 @@ class TransFS(Passthrough):
     # --- End filetype mapping helpers ---
 
     def _is_virtual_path(self, full_path: str) -> bool:
-        """Check if a path is a virtual (not real) path."""
+        print(f"DEBUG: _is_virtual_path({full_path})")
         parts = Path(full_path).parts
-        if not os.path.isdir(full_path) and not os.path.isfile(full_path):
-            if self._client_exists(parts[len(Path(self.root).parts)]):
+        rel_parts = parts[len(Path(self.root).parts):]
+        print(f"DEBUG: rel_parts={rel_parts}")
+        # /Native
+        if len(rel_parts) == 1 and rel_parts[0] == "Native":
+            return True
+        # /MiSTer
+        if len(rel_parts) == 1 and any(client.get("name") == rel_parts[0] for client in self.config.get("clients", [])):
+            return True
+        # /MiSTer/ARCHIE
+        if len(rel_parts) == 2:
+            client = next((c for c in self.config.get("clients", []) if c.get("name") == rel_parts[0]), None)
+            if client and any(sys.get("name") == rel_parts[1] for sys in client.get("systems", [])):
                 return True
+        # /MiSTer/ARCHIE/FDs or /MiSTer/ARCHIE/HDs
+        if len(rel_parts) == 3:
+            client = next((c for c in self.config.get("clients", []) if c.get("name") == rel_parts[0]), None)
+            if client:
+                system = next((s for s in client.get("systems", []) if s.get("name") == rel_parts[1]), None)
+                if system:
+                    # Check for direct map
+                    for map_entry in system.get("maps", []):
+                        map_name = list(map_entry.keys())[0]
+                        if map_name == rel_parts[2]:
+                            return True
+                        # Check for ...SoftwareArchives... filetypes
+                        if map_name == "...SoftwareArchives...":
+                            filetypes = map_entry[map_name].get("filetypes", [])
+                            for ft in filetypes:
+                                if rel_parts[2] in ft.keys():
+                                    return True
         return False
 
     def _client_exists(self, name_to_check: str) -> bool:
@@ -183,14 +201,28 @@ class TransFS(Passthrough):
         if not system:
             return []
         maps = []
+        mapped_names = set()
         for map_entry in system['maps']:
             map_name = list(map_entry.keys())[0]
+            mapped_names.add(map_name)
             if map_name == "...SoftwareArchives...":
                 filetypes = map_entry[map_name].get("filetypes", [])
                 for filetype in filetypes:
-                    maps.extend(filetype.keys())
+                    for ft_name in filetype.keys():
+                        maps.append(ft_name)
+                        mapped_names.add(ft_name)
             else:
                 maps.append(map_name)
+        # Add any real files/dirs in the real directory that aren't mapped
+        real_dir = os.path.join(
+            self.config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            system['local_base_path']
+        )
+        if os.path.isdir(real_dir):
+            for entry in os.listdir(real_dir):
+                if entry not in mapped_names and not entry.startswith('.'):
+                    maps.append(entry)
         return maps
 
     def _list_dynamic_or_regular(self, path: Path, root_parts: tuple) -> list:
@@ -342,6 +374,9 @@ class TransFS(Passthrough):
 
         if not rel_parts:
             return self.config.get("filestore", "/mnt/filestorefs")
+        if rel_parts[0] == "Native":
+            # Map /Native to /mnt/filestorefs/Native
+            return os.path.join(self.config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
 
         client = self._get_client(rel_parts)
         if not client:
@@ -373,7 +408,13 @@ class TransFS(Passthrough):
             "Native",
             system_info['local_base_path']
         )
-        subpath = rel_parts[len(path_template_parts):]
+        # Always join all remaining rel_parts after the system name
+        # Find the index of the system name in rel_parts
+        try:
+            sys_idx = rel_parts.index(system_info['name'])
+        except ValueError:
+            sys_idx = 1  # fallback, but should always be present
+        subpath = rel_parts[sys_idx+1:]
         return os.path.join(base, *subpath) if subpath else base
 
     def _get_client(self, rel_parts: tuple) -> Optional[dict]:
@@ -455,7 +496,21 @@ class TransFS(Passthrough):
                 system_info['local_base_path'],
                 mapdict["source_dir"]
             )
-            return os.path.join(base, *subpath) if subpath else base
+            if not subpath:
+                # Only return the real directory if it exists, else treat as virtual
+                if os.path.isdir(base):
+                    print(f"DEBUG: _get_regular_source_path returns real dir for map root: {base}")
+                    return base
+                else:
+                    print(f"DEBUG: _get_regular_source_path returns None for virtual dir (map root): {base}")
+                    return None
+            real_path = os.path.join(base, *subpath)
+            if os.path.exists(real_path):
+                print(f"DEBUG: _get_regular_source_path returns real path: {real_path}")
+                return real_path
+            else:
+                print(f"DEBUG: _get_regular_source_path returns None for missing path: {real_path}")
+                return None
         if "source_filename" in mapdict:
             base = os.path.join(
                 self.config.get("filestore", "/mnt/filestorefs"),
@@ -468,12 +523,25 @@ class TransFS(Passthrough):
             ds = mapdict["default_source"]
             if "source_dir" in ds:
                 base = os.path.join(
-                self.config.get("filestore", "/mnt/filestorefs"),
-                "Native",
-                system_info['local_base_path'],
+                    self.config.get("filestore", "/mnt/filestorefs"),
+                    "Native",
+                    system_info['local_base_path'],
                     ds["source_dir"]
                 )
-                return os.path.join(base, *subpath) if subpath else base
+                if not subpath:
+                    if os.path.isdir(base):
+                        print(f"DEBUG: _get_regular_source_path returns real dir for map root (default_source): {base}")
+                        return base
+                    else:
+                        print(f"DEBUG: _get_regular_source_path returns None for virtual dir (default_source map root): {base}")
+                        return None
+                real_path = os.path.join(base, *subpath)
+                if os.path.exists(real_path):
+                    print(f"DEBUG: _get_regular_source_path returns real path (default_source): {real_path}")
+                    return real_path
+                else:
+                    print(f"DEBUG: _get_regular_source_path returns None for missing path (default_source): {real_path}")
+                    return None
             if "source_filename" in ds:
                 base = os.path.join(
                     self.config.get("filestore", "/mnt/filestorefs"),
@@ -485,12 +553,14 @@ class TransFS(Passthrough):
         return None
 
     def readdir(self, path: str, fh: int):
-        """FUSE readdir implementation."""
         full_path = self._full_path(path)
         dirents = ['.', '..']
-        dirents.extend(self._parse_trans_path(full_path))
+        virtual_entries = set(self._parse_trans_path(full_path))
+        dirents.extend(virtual_entries)
         if os.path.isdir(full_path):
-            dirents.extend(os.listdir(full_path))
+            for entry in os.listdir(full_path):
+                if entry not in virtual_entries:
+                    dirents.append(entry)
         for entry in dirents:
             yield entry
 
@@ -507,11 +577,12 @@ class TransFS(Passthrough):
         int
     ]:
         """FUSE getattr implementation."""
+        print(f"DEBUG: getattr({path})")
         full_path = self._full_path(path)
         fspath = self.get_source_path(full_path)
+        print(f"DEBUG: getattr full_path={full_path}, fspath={fspath}")
 
         if fspath is None:
-            # If this is a known virtual directory, return a fake stat for a directory
             if self._is_virtual_path(full_path):
                 now = int(time.time())
                 return {
@@ -524,7 +595,6 @@ class TransFS(Passthrough):
                     'st_nlink': 2,
                     'st_size': 4096,
                 }
-            # If not found and not a virtual directory, raise ENOENT
             raise FuseOSError(errno.ENOENT)
 
         if isinstance(fspath, tuple):
@@ -542,8 +612,22 @@ class TransFS(Passthrough):
                 st = StatObj()
             mode = 0o100444
         else:
+            if not os.path.exists(fspath):
+                # PATCH: If the real path doesn't exist, check if it's a virtual path
+                if self._is_virtual_path(full_path):
+                    now = int(time.time())
+                    return {
+                        'st_atime': now,
+                        'st_ctime': now,
+                        'st_mtime': now,
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': 0o040755,  # directory
+                        'st_nlink': 2,
+                        'st_size': 4096,
+                    }
+                raise FuseOSError(errno.ENOENT)
             st = os.lstat(fspath)
-            # Use the real file type, but force permissions to 755 for dirs, 644 for files
             if os.path.isdir(fspath):
                 mode = 0o040755
             elif os.path.isfile(fspath):
@@ -557,7 +641,17 @@ class TransFS(Passthrough):
         )
         out = {key: int(getattr(st, key)) for key in keys}
         out['st_mode'] = mode
-        return out
+        from typing import Literal, cast
+        return cast(
+            dict[
+                Literal[
+                    'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
+                    'st_nlink', 'st_size', 'st_uid'
+                ],
+                int
+            ],
+            out
+        )
 
     def open(self, path: str, flags: int) -> int:
         """FUSE open implementation."""
@@ -580,33 +674,69 @@ class TransFS(Passthrough):
         return len(parts) == 2  # ["MiSTer", "ARCHIE"]
 
     def _map_virtual_to_real(self, path):
-        # Only allow writes in /MiSTer/<system>
-        if not self._is_system_root(path):
+        print(f"MAP: called with path={path}")
+        parts = Path(path.lstrip("/")).parts
+        print(f"MAP: parts={parts}")
+        if len(parts) < 2:
+            print("MAP: not enough parts for client/system mapping")
             return None
-        # Map to real storage, e.g. /mnt/filestorefs/Native/Acorn/Archimedes
-        # You may need to look this up from your YAML config
-        # Example:
-        client, system = path.strip("/").split("/")
-        # Lookup real path from config here...
-        # For demo, just join filestore root:
-        return os.path.join("/mnt/filestorefs", client, system)
+        client_name, system_name = parts[0], parts[1]
+        print(f"MAP: client_name={client_name}, system_name={system_name}")
+        client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+        if not client:
+            print(f"MAP: client '{client_name}' not found in config")
+            return None
+        system = next((s for s in client['systems'] if s['name'] == system_name), None)
+        if not system:
+            print(f"MAP: system '{system_name}' not found in client '{client_name}'")
+            return None
+        base = os.path.join(
+            self.config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            system['local_base_path']
+        )
+        print(f"MAP: base resolved to {base}")
+        if len(parts) > 2:
+            real_path = os.path.join(base, *parts[2:])
+            print(f"MAP: final real_path={real_path}")
+            return real_path
+        print(f"MAP: final real_path={base}")
+        return base
 
     def create(self, path, mode, fi=None):
-        real_dir = self._map_virtual_to_real(os.path.dirname(path))
-        real_path = os.path.join(real_dir, os.path.basename(path))
+        print(f"CREATE: called with path={path}, mode={oct(mode)}")
+        real_path = self._map_virtual_to_real(path)
+        print(f"CREATE: path={path}, real_path={real_path}")
+        if real_path is None:
+            print("CREATE: EROFS (no mapping)")
+            raise FuseOSError(errno.EROFS)
+        real_dir = os.path.dirname(real_path)
+        print(f"CREATE: real_dir={real_dir}")
+        try:
+            os.makedirs(real_dir, exist_ok=True)
+            print(f"CREATE: ensured directory exists: {real_dir}")
+        except Exception as e:
+            print(f"CREATE: failed to create directory {real_dir}: {e}")
+            raise
         if os.path.isdir(real_path):
+            print("CREATE: EISDIR (is a directory)")
             raise FuseOSError(errno.EISDIR)
-        os.makedirs(real_dir, exist_ok=True)
-        return os.open(real_path, os.O_WRONLY | os.O_CREAT, mode)
+        try:
+            fd = os.open(real_path, os.O_WRONLY | os.O_CREAT, mode)
+            print(f"CREATE: success fd={fd}")
+            return fd
+        except Exception as e:
+            print(f"CREATE: Exception {e}")
+            raise
 
     def mkdir(self, path, mode):
-        real_dir = self._map_virtual_to_real(path)
-        if real_dir is None:
+        real_path = self._map_virtual_to_real(path)
+        if real_path is None:
             raise FuseOSError(errno.EROFS)
-        os.makedirs(real_dir, mode=mode, exist_ok=True)
-        return 0
+        os.makedirs(real_path, mode=mode, exist_ok=True)
+        return None
 
-    def access(self, path, mode):
+    def access(self, path, amode):
         """
         FUSE access implementation.
         Always allow access to virtual directories and files that exist in the virtual namespace.
@@ -620,13 +750,33 @@ class TransFS(Passthrough):
 
         # If it's a real file or directory, check access using os.access
         if fspath and os.path.exists(fspath):
-            if os.access(fspath, mode):
+            if os.access(fspath, amode):
                 return 0
             else:
                 raise FuseOSError(errno.EACCES)
 
         # If not found, deny access
         raise FuseOSError(errno.ENOENT)
+
+    def truncate(self, path, length, fh=None):
+        print(f"TRUNCATE: called with path={path}, length={length}, fh={fh}")
+        real_path = self._map_virtual_to_real(path)
+        print(f"TRUNCATE: real_path={real_path}")
+        if real_path is None or not os.path.exists(real_path):
+            print("TRUNCATE: ENOENT")
+            raise FuseOSError(errno.ENOENT)
+        with open(real_path, 'r+b') as f:
+            f.truncate(length)
+        return 0
+
+    def unlink(self, path):
+        print(f"UNLINK: called with path={path}")
+        real_path = self._map_virtual_to_real(path)
+        print(f"UNLINK: real_path={real_path}")
+        if real_path is None or not os.path.exists(real_path):
+            print("UNLINK: ENOENT")
+            raise FuseOSError(errno.ENOENT)
+        os.unlink(real_path)
 
 
 def main(mount_path: str, root_path: str):
