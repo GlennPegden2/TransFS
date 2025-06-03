@@ -16,14 +16,14 @@ clients:
                 source_filename: Software/HDs/hoglet.vhd
           - HDs:
               source_dir: Software/HDs
-      - name: ARCHIE
+      - name: Archie
         manufacturer: Acorn
         cananonical_system_name: Archimedes
         local_base_path: Acorn/Archimedes
         maps:
           - riscos.rom:
               default_source:
-                source_filename: Software/BIOS/risocs-3.71.rom
+                source_filename: Software/BIOS/riscos.rom
           - ...SoftwareArchives...: 
               supports_zip: false   
               source_dir: Software
@@ -424,6 +424,10 @@ archive_sources:
         type: ddl
         url: https://www.4corn.co.uk/archive//roms/riscos3_71.zip
         platform: Collections/4corn
+      - name: mister-bios
+        type: ddl
+        url: https://github.com/MiSTer-devel/Archie_MiSTer/raw/refs/heads/master/releases/riscos.rom
+        platform: BIOS
 #      - name: arcarc.nl
 #        type: tor
 #        url: https://arcarc.nl/torrents/arcarc%20archive%2020250414%20v0029.torrent
