@@ -74,7 +74,7 @@ input[type="checkbox"]:focus {
     padding: 1em;
     background: #181c20;
     color: #e0e0e0;
-    height: 140px;
+    height: 280px; /* doubled from 140px */
     border-radius: 8px;
     font-family: 'Fira Mono', 'Consolas', monospace;
     overflow-y: auto;
@@ -110,20 +110,32 @@ button:hover, button:focus {
 .manufacturer-header {
     display: flex;
     align-items: center;
-    gap: 0.7em;
+    justify-content: space-between;
+    padding: 0.5em 0.5em 0.5em 0;
     font-size: 1.2em;
-    font-weight: bold;
-    margin-bottom: 0.5em;
+    border-bottom: 1px solid #eee;
+    background: transparent; /* Transparent background */
 }
 
 .manufacturer-logo {
-    width: 36px;
-    height: 36px;
+    width: 48px;
+    height: 48px;
     object-fit: contain;
-    background: #fff;
-    border-radius: 50%;
-    border: 1px solid #eee;
-    box-shadow: 0 1px 4px #0001;
+    border-radius: 0; /* Make rectangular/square, not round */
+    background: transparent; /* Transparent background */
+    vertical-align: middle;
+    margin-right: 0.5em;
+}
+
+.toggle-icon {
+    color: #888;
+    margin-left: auto;
+    font-weight: bold;
+    font-size: 1.2em;
+    cursor: pointer;
+    min-width: 2em;
+    text-align: right;
+    display: inline-block;
 }
 
 .system-grid {

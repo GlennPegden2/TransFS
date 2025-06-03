@@ -7,3 +7,6 @@ uvicorn
 jinja2
 fastapi
 uvicorn
+libtorrent
+mega.py
+
