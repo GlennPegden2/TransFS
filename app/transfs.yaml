@@ -47,11 +47,11 @@ clients:
       - name: BBCMicro
         manufacturer: Acorn
         cananonical_system_name: BBC Micro
-        local_base_path: Acorn/BBC_B
+        local_base_path: Acorn/BBC_B/
         maps:
           - boot.vhd:
               default_source:
-                source_filename: higgy_mmbeeb-v1.2.zip
+                source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
                 files:
                   boot.vhd:
                     zip: unzip
@@ -59,6 +59,12 @@ clients:
                     zip: unzip
                   higgy_mmbeeb-v1.2.zip:
                     zip: unzip
+          - ...SoftwareArchives...: 
+              supports_zip: false   
+              source_dir: Software
+              filetypes:
+              - FDs: SSD,DSD
+              - HDs: VHD, MMB:VHD
       # --- Amstrad ---
       - name: Amstrad PCW
         manufacturer: Amstrad
@@ -444,6 +450,21 @@ archive_sources:
         type: mega
         url: https://mega.nz/file/LCgA3IiD#XCjJIw5bVP2FK3c3QBx76NthtIMIzpvUYms4yJOssvY
         platform: HDs
+    "BBC Micro":
+      base_path: Acorn/BBC_B/Software/
+      sources:
+      - name: beeb.zip
+        type: ddl
+        url: https://retro.m1ner.co.uk/bbc/BEEB.zip
+        platform: MMB
+      - name: beeb2.zip
+        type: ddl
+        url: https://retro.m1ner.co.uk/bbc/BEEB2.zip
+        platform: MMB
+      - name: higgy_mmbeeb-v1.2.zip
+        type: ddl
+        url: https://retro.m1ner.co.uk/bbc/higgy_mmbeeb-v1.2.zip
+        platform: MMB
     "Electron":
       base_path: Acorn/Electron/Software/
       sources:

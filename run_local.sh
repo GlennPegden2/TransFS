@@ -24,6 +24,9 @@ cp ./smb.conf /etc/samba/smb.conf
 
 cd app
 service smbd start &&
+
+echo "IP: $(hostname -I | awk '{print $1}'), FQDN: $(hostname -f)"
+
 python3 transfs.py 2>&1 | tee /tmp/transfs.log &
 
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&

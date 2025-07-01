@@ -59,7 +59,7 @@ If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB 
 
 | System             | MiSTer | Mame | RetroPie | RetroBat | Notes |
 |--------------------|--------|------|----------|----------|-------|
-| Acorn Archimedes |        |      |          |          |       |
+| Acorn Archimedes |    ✅ ADF, HDF    |      |          |          |       |
 | Acorn Atom         | ✅ VHD    |      |          |          |       |
 | Acorn BBC Micro  |        |      |          |          |       |
 | Acorn Electron     | ✅ VHD, MMB , UEF    |      |          |          |       |
