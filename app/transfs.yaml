@@ -52,13 +52,13 @@ clients:
           - boot.vhd:
               default_source:
                 source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
-                files:
-                  boot.vhd:
-                    zip: unzip
-                  BEEB2.zip:
-                    zip: unzip
-                  higgy_mmbeeb-v1.2.zip:
-                    zip: unzip
+                unzip: true
+          - higgy_mmbeeb-v1.2.vhd:
+                source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
+                unzip: true
+            BEEB2.vhd:
+                source_filename: Software/MMB/BEEB2.zip
+                unzip: true
           - ...SoftwareArchives...: 
               supports_zip: false   
               source_dir: Software

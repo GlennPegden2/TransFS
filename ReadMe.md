@@ -59,8 +59,8 @@ If windows binds SMB to 443 (as it will want to), we can't bind too, so the SMB 
 
 | System             | MiSTer | Mame | RetroPie | RetroBat | Notes |
 |--------------------|--------|------|----------|----------|-------|
-| Acorn Archimedes |    ✅ ADF, HDF    |      |          |          |       |
-| Acorn Atom         | ✅ VHD    |      |          |          |       |
+| Acorn Archimedes |    ✅ ADF, HDF    |      |          |          |  See https://github.com/MiSTer-devel/Archie_MiSTer for info on how to attach disk images. CROS4 errors a few times on first open but does work     |
+| Acorn Atom         | ✅ VHD    |      |          |          | Shift F10 Lauch the StarDot collection      |
 | Acorn BBC Micro  |        |      |          |          |       |
 | Acorn Electron     | ✅ VHD, MMB , UEF    |      |          |          |       |
 | Amstrad PCW        | ✅ DSK     |      |          |          |       |

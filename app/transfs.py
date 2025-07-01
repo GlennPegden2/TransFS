@@ -368,6 +368,9 @@ class TransFS(Passthrough):
         source path in the filestore, using the translation logic from TransFS.
         Supports dynamic ...SoftwareArchives... mapping, including zip-as-folder logic and filetype mapping.
         """
+
+        print(f"DEBUG: get_source_path({translated_path}) called")
+
         path = Path(translated_path)
         root_parts = Path(self.root).parts
         rel_parts = path.parts[len(root_parts):]
@@ -518,6 +521,15 @@ class TransFS(Passthrough):
                 system_info['local_base_path'],
                 mapdict["source_filename"]
             )
+            # PATCH: handle zip+unzip logic for mapped files
+            unzip = mapdict.get("unzip", False)
+            if base.lower().endswith('.zip') and unzip:
+                if os.path.exists(base):
+                    with zipfile.ZipFile(base, 'r') as zf:
+                        namelist = [n for n in zf.namelist() if not n.endswith('/')]
+                        if namelist:
+                            return (base, namelist[0])
+                return None
             return os.path.join(base, *subpath) if subpath else base
         if "default_source" in mapdict:
             ds = mapdict["default_source"]
@@ -549,10 +561,19 @@ class TransFS(Passthrough):
                     system_info['local_base_path'],
                     ds["source_filename"]
                 )
+                unzip = ds.get("unzip", False)
+                if base.lower().endswith('.zip') and unzip:
+                    if os.path.exists(base):
+                        with zipfile.ZipFile(base, 'r') as zf:
+                            namelist = [n for n in zf.namelist() if not n.endswith('/')]
+                            if namelist:
+                                return (base, namelist[0])
+                    return None
                 return os.path.join(base, *subpath) if subpath else base
         return None
 
     def readdir(self, path: str, fh: int):
+        print(f"DEBUG: readdir({path})")        
         full_path = self._full_path(path)
         dirents = ['.', '..']
         virtual_entries = set(self._parse_trans_path(full_path))
@@ -562,6 +583,7 @@ class TransFS(Passthrough):
                 if entry not in virtual_entries:
                     dirents.append(entry)
         for entry in dirents:
+            print(f"DEBUG: readdir yields {entry}")
             yield entry
 
 
@@ -582,58 +604,111 @@ class TransFS(Passthrough):
         fspath = self.get_source_path(full_path)
         print(f"DEBUG: getattr full_path={full_path}, fspath={fspath}")
 
-        if fspath is None:
-            if self._is_virtual_path(full_path):
-                now = int(time.time())
+        # PATCH: If mapped to a file inside a zip (unzip: true), always stat as a file
+        if isinstance(fspath, tuple):
+            print(f"DEBUG: Inside isinstance(fspath, tuple) branch: {fspath}")
+            zip_path, internal_file = fspath
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                info = zf.getinfo(internal_file)
+                now = int(os.path.getmtime(zip_path))
                 return {
                     'st_atime': now,
                     'st_ctime': now,
                     'st_mtime': now,
                     'st_gid': 0,
                     'st_uid': 0,
-                    'st_mode': 0o040755,  # directory
-                    'st_nlink': 2,
-                    'st_size': 4096,
+                    'st_mode': 0o100444,  # regular file, read-only
+                    'st_nlink': 1,
+                    'st_size': info.file_size,
+                }
+
+        if fspath is None:
+            # Try to stat as a virtual entry if it is in the virtual directory listing
+            parent_path = str(Path(full_path).parent)
+            entries = set(self._parse_trans_path(parent_path))
+            name = os.path.basename(full_path)
+
+            print(f"DEBUG getattr fallback: parent_path={parent_path}, entries={entries}, name={name}")
+
+            if name in entries:
+                now = int(time.time())
+                # Heuristic: treat as file if it has a dot (extension), else directory
+                if '.' in name:
+                    mode = 0o100444  # file
+                    nlink = 1
+                    size = 0
+                else:
+                    mode = 0o040755  # directory
+                    nlink = 2
+                    size = 4096
+                return {
+                    'st_atime': now,
+                    'st_ctime': now,
+                    'st_mtime': now,
+                    'st_gid': 0,
+                    'st_uid': 0,
+                    'st_mode': mode,
+                    'st_nlink': nlink,
+                    'st_size': size,
+                }
+            # Otherwise, fall through to ENOENT
+            raise FuseOSError(errno.ENOENT)
+
+        print(f"DEBUG: getattr({path}) full_path={full_path} fspath={fspath} type={type(fspath)}")
+
+        # PATCH: treat zip files as directories unless mapped with unzip: true
+        if isinstance(fspath, str) and fspath.lower().endswith('.zip'):
+            # Only treat as file if this is a mapped file with unzip: false or missing
+            # Otherwise, treat as directory
+            st = os.lstat(fspath)
+            out = {
+                'st_atime': int(st.st_atime),
+                'st_ctime': int(st.st_ctime),
+                'st_mtime': int(st.st_mtime),
+                'st_gid': st.st_gid,
+                'st_uid': st.st_uid,
+                'st_mode': 0o040755,  # directory
+                'st_nlink': 2,
+                'st_size': 4096,
+            }
+            return out
+
+        if not os.path.exists(fspath):
+            # Check if this is a virtual entry (i.e., listed in the parent directory)
+            parent_path = str(Path(full_path).parent)
+            entries = set(self._parse_trans_path(parent_path))
+            name = os.path.basename(full_path)
+            print(f"DEBUG getattr fallback (real missing): parent_path={parent_path}, entries={entries}, name={name}")
+            if name in entries:
+                now = int(time.time())
+                # Heuristic: treat as file if it has a dot (extension), else directory
+                if '.' in name:
+                    mode = 0o100444  # file
+                    nlink = 1
+                    size = 0
+                else:
+                    mode = 0o040755  # directory
+                    nlink = 2
+                    size = 4096
+                return {
+                    'st_atime': now,
+                    'st_ctime': now,
+                    'st_mtime': now,
+                    'st_gid': 0,
+                    'st_uid': 0,
+                    'st_mode': mode,
+                    'st_nlink': nlink,
+                    'st_size': size,
                 }
             raise FuseOSError(errno.ENOENT)
 
-        if isinstance(fspath, tuple):
-            # (zip_path, internal_file)
-            zip_path, internal_file = fspath
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                info = zf.getinfo(internal_file)
-                class StatObj:
-                    st_atime = st_mtime = st_ctime = int(os.path.getmtime(zip_path))
-                    st_gid = 0
-                    st_uid = 0
-                    st_mode = 0o100444  # regular file, read-only
-                    st_nlink = 1
-                    st_size = info.file_size
-                st = StatObj()
-            mode = 0o100444
+        st = os.lstat(fspath)
+        if os.path.isdir(fspath):
+            mode = 0o040755
+        elif os.path.isfile(fspath):
+            mode = 0o100644
         else:
-            if not os.path.exists(fspath):
-                # PATCH: If the real path doesn't exist, check if it's a virtual path
-                if self._is_virtual_path(full_path):
-                    now = int(time.time())
-                    return {
-                        'st_atime': now,
-                        'st_ctime': now,
-                        'st_mtime': now,
-                        'st_gid': 0,
-                        'st_uid': 0,
-                        'st_mode': 0o040755,  # directory
-                        'st_nlink': 2,
-                        'st_size': 4096,
-                    }
-                raise FuseOSError(errno.ENOENT)
-            st = os.lstat(fspath)
-            if os.path.isdir(fspath):
-                mode = 0o040755
-            elif os.path.isfile(fspath):
-                mode = 0o100644
-            else:
-                raise FuseOSError(errno.ENOENT)
+            raise FuseOSError(errno.ENOENT)
 
         keys = (
             'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
