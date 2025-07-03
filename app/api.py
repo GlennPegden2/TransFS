@@ -1,26 +1,23 @@
 """ API Wrapper """
 import os
-import subprocess
 import math
 import asyncio
 import re
 import requests
 import internetarchive
-import libtorrent as lt
-import time
+import libtorrent as lt  
 from pydantic import BaseModel
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse , PlainTextResponse
+from mega import Mega
+import tempfile
+from urllib.parse import urlparse, unquote
 from config import (
     get_clients,
     get_systems_for_client,
     get_manufacturers_and_canonical_names,
 )
-from mega import Mega
-import tempfile
-from urllib.parse import urlparse, unquote
-
 app = FastAPI()
 
 

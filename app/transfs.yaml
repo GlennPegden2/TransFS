@@ -53,18 +53,13 @@ clients:
               default_source:
                 source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
                 unzip: true
-          - higgy_mmbeeb-v1.2.vhd:
-                source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
-                unzip: true
-            BEEB2.vhd:
-                source_filename: Software/MMB/BEEB2.zip
-                unzip: true
+                zip_internal_file: BEEB.MMB
           - ...SoftwareArchives...: 
               supports_zip: false   
               source_dir: Software
               filetypes:
               - FDs: SSD,DSD
-              - HDs: VHD, MMB:VHD
+              - HDs: VHD, , MMB, MMB:VHD
       # --- Amstrad ---
       - name: Amstrad PCW
         manufacturer: Amstrad

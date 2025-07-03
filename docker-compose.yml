@@ -18,6 +18,8 @@ services:
     volumes:
       - ./content:/mnt/filestorefs   # Mount point on the host
       - ./app:/app                      # Mount project root for code and static/templates
+      - ./tests:/tests                      # Not needed in production, but useful for testing
+
     environment:
       - PYTHONUNBUFFERED=1
     entrypoint: >
@@ -29,7 +31,7 @@ services:
           python3 -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/transfs.py &
         else
           echo 'Starting in normal mode...';
-          python3 transfs.py 2>&1 | tee /tmp/transfs.log &
+          python3 -m transfs 2>&1 | tee /tmp/transfs.log &
         fi &&
         echo 'Starting FastAPI web service...' &&
         uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&

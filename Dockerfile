@@ -4,11 +4,12 @@ FROM python:3.10-slim
 RUN apt-get update
 RUN apt-get install -y fuse3 samba wget unzip libguestfs-tools p7zip
 
+# Not needed for production, but useful for testing
+RUN pip install pytest 
+RUN pip install debugpy 
+
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-
-# Add this line to install debugpy
-RUN pip install debugpy 
 
 # Add FUSE permission
 RUN mkdir /mnt/transfs && chmod 755 /mnt/transfs
@@ -31,4 +32,4 @@ WORKDIR /app
 #COPY ./app /app
 
 # Start Samba and the FUSE filesystem
-CMD service smbd start && python3 transfs.py && tail -f /dev/null
+CMD service smbd start && python3 -m transfs && tail -f /dev/null
