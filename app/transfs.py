@@ -26,7 +26,7 @@ from pathutils import (
     map_virtual_to_real,
 )
 from sourcepath import get_source_path
-
+from zippath import open_file as zippath_open_file  # new
 
 class TransFS(Passthrough):
     """FUSE filesystem for translating virtual paths to real files, including zip logic and filetype mapping."""
@@ -216,18 +216,23 @@ class TransFS(Passthrough):
         if isinstance(trans_path, tuple):
             zip_path, internal_file = trans_path
             logger.debug("DEBUG: open extracting %s from %s", internal_file, zip_path)
-            if not os.path.exists(zip_path):
-                logger.error("open: zip file %s does not exist", zip_path)
+            # Use zippath layer to open internal file
+            try:
+                with zippath_open_file(f"{zip_path}/{internal_file}", "rb") as f:
+                    temp = tempfile.NamedTemporaryFile(mode='wb', delete=False)
+                    content = f.read()
+                    if isinstance(content, str):
+                        content = content.encode('utf-8')
+                    temp.write(content)
+                    temp.close()
+                    logger.debug("DEBUG: open temp file created at %s", temp.name)
+                    return os.open(temp.name, flags)
+            except FileNotFoundError:
+                logger.error("open: %s not in zip %s", internal_file, zip_path)
                 raise FuseOSError(errno.ENOENT)
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                if internal_file not in zf.namelist():
-                    logger.error("open: %s not in zip %s. Contents: %s", internal_file, zip_path, zf.namelist())
-                    raise FuseOSError(errno.ENOENT)
-                temp = tempfile.NamedTemporaryFile(delete=False)
-                temp.write(zf.read(internal_file))
-                temp.close()
-                logger.debug("DEBUG: open temp file created at %s", temp.name)
-                return os.open(temp.name, flags)
+            except Exception as e:
+                logger.error("open: error extracting %s from %s: %s", internal_file, zip_path, e)
+                raise FuseOSError(errno.ENOENT)
 
         if isinstance(trans_path, str):
             if not os.path.exists(trans_path):

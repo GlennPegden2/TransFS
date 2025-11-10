@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   transfs:
@@ -22,6 +21,7 @@ services:
 
     environment:
       - PYTHONUNBUFFERED=1
+      - DEBUG_MODE=1
     entrypoint: >
       bash -c "
         mkdir -p /mnt/filestorefs &&

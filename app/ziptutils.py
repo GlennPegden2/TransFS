@@ -29,7 +29,7 @@ def list_dir_with_zip(dir_path: str, supports_zip: bool) -> set:
             entry_path = os.path.join(dir_path, entry)
             if (
                 entry.lower().endswith('.zip')
-                and not supports_zip
+#                and not supports_zip
             ):
                 try:
                     namelist = list_zip_file(entry_path)
@@ -44,7 +44,7 @@ def list_dir_with_zip(dir_path: str, supports_zip: bool) -> set:
     elif (
         os.path.isfile(dir_path)
         and dir_path.lower().endswith('.zip')
-        and not supports_zip
+#        and not supports_zip
     ):
         try:
             namelist = list_zip_file(dir_path)

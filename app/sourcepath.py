@@ -5,7 +5,7 @@ import zipfile
 from pathutils import get_client, get_system_info, find_software_archive_entry
 from filetypes import get_filetype_maps
 from ziptutils import get_zip_mapping
-
+from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 
 def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]:
     """
@@ -45,6 +45,77 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if dynamic_result is not None:
         return dynamic_result
 
+    # Handle named maps (including nested paths like MMBs/beeb1_mmb.VHD)
+    if len(rel_parts) >= 3:
+        # Support nested map names by joining remaining parts
+        map_path_parts = rel_parts[2:]
+        # Try progressively longer paths to find a matching map
+        for i in range(len(map_path_parts), 0, -1):
+            map_name = '/'.join(map_path_parts[:i])
+            map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
+            if not map_entry:
+                continue
+            mapdict = map_entry[map_name]
+            # subpath is everything after the matched map name
+            subpath = map_path_parts[i:]
+            
+            # If default_source->source_filename is present, return the mapped file
+            ds = mapdict.get('default_source') or {}
+            if "source_filename" in ds:
+                source_filename = ds["source_filename"]
+                # Check if source_filename uses zippath-style notation (path.zip/internal/file)
+                zip_match = _parse_zippath_notation(source_filename)
+                if zip_match is not None:
+                    zip_file, internal_path = zip_match
+                    base = os.path.join(
+                        config.get("filestore", "/mnt/filestorefs"),
+                        "Native",
+                        system_info['local_base_path'],
+                        zip_file
+                    )
+                    if zippath_isfile(f"{base}/{internal_path}"):
+                        logger.debug(f"Using zippath-style source: {internal_path} in {base}")
+                        return (base, internal_path)
+                    else:
+                        logger.debug(f"zippath-style file {internal_path} not found in {base}")
+                    return None
+                
+                base = os.path.join(
+                    config.get("filestore", "/mnt/filestorefs"),
+                    "Native",
+                    system_info['local_base_path'],
+                    source_filename
+                )
+                unzip = ds.get("unzip", False)
+                if base.lower().endswith('.zip') and unzip:
+                    zip_internal_file = ds.get("zip_internal_file")
+                    if zip_internal_file:
+                        # use zippath to test for entry existence
+                        if zippath_isfile(f"{base}/{zip_internal_file}"):
+                            logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
+                            return (base, zip_internal_file)
+                        else:
+                            logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
+                        return None
+                    else:
+                        # fallback to existing mapping helper
+                        # Use the last component of map_name for matching
+                        match_name = map_name.split('/')[-1]
+                        result = get_zip_mapping(logger, base, match_name)
+                        logger.debug(f"ZIP mapping result for {map_name} in {base}: {result}")
+                        if result:
+                            return result
+                        return None
+                # Only return a real file path if it exists
+                if os.path.exists(base):
+                    logger.debug(f"Returning named map file path: {base}")
+                    return base
+                else:
+                    logger.debug(f"Named map file {base} does not exist, returning None")
+                    return None
+            # If we matched a map but it has no source_filename, continue to next iteration
+            break
+
     # Try regular map logic
     regular_result = get_regular_source_path(logger, config, system_info, rel_parts)
     if regular_result is not None:
@@ -65,11 +136,29 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     subpath = rel_parts[sys_idx+1:]
     return os.path.join(base, *subpath) if subpath else base
 
+def _parse_zippath_notation(path_str: str) -> Optional[tuple[str, str]]:
+    """
+    Parse zippath-style notation like 'Software/MMB/BEEB2.zip/BEEB.MMB'
+    Returns (zip_path, internal_path) if a .zip component is found, else None.
+    """
+    parts = path_str.split('/')
+    for i, part in enumerate(parts):
+        if part.lower().endswith('.zip'):
+            zip_path = '/'.join(parts[:i+1])
+            internal_path = '/'.join(parts[i+1:]) if i+1 < len(parts) else ''
+            return (zip_path, internal_path) if internal_path else None
+    return None
+
 def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Optional[Any]:
     """Handle ...SoftwareArchives... dynamic folders with zip logic and filetype mapping."""
+
+# Pretty sure this is redundant now
     if "...SoftwareArchives..." not in [list(m.keys())[0] for m in system_info['maps']]:
         return None
-    if len(rel_parts) < 4:
+
+#    if len(rel_parts) < 4:
+#        return None
+    if len(rel_parts) < 3:
         return None
 
     map_name = rel_parts[2]
@@ -79,6 +168,7 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
 
     filetype_map, reverse_map = get_filetype_maps(sa_entry)
     real_exts = filetype_map.get(map_name.upper(), [])
+
     supports_zip = sa_entry["...SoftwareArchives..."].get("supports_zip", True)
     source_dir = os.path.join(
         config["filestore"],
@@ -101,7 +191,7 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
         # If no real dir, treat as virtual dir (return None, getattr will fake stat)
         return None
 
-    # Otherwise, treat as file
+    # if is a mapped filetype
     filename = subpath[-1]
     name, virt_ext = os.path.splitext(filename)
     virt_ext = virt_ext[1:].upper()
@@ -110,16 +200,20 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
         real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
         if os.path.exists(real_path):
             return real_path
-        # Check for file in zip files in the real_ext directory
-        parent_dir = os.path.join(source_dir, real_ext, *subpath[:-1])
-        if os.path.isdir(parent_dir):
-            for entry in os.listdir(parent_dir):
-                if entry.lower().endswith('.zip'):
-                    zip_path = os.path.join(parent_dir, entry)
-                    with zipfile.ZipFile(zip_path, 'r') as zf:
-                        for zname in zf.namelist():
-                            if zname.split('/')[-1] == real_filename:
-                                return (zip_path, zname)
+
+
+
+# Suspect this is not needed now
+#         # Check for file in zip files in the real_ext directory
+#        parent_dir = os.path.join(source_dir, real_ext, *subpath[:-1])
+#        if os.path.isdir(parent_dir):
+#            for entry in os.listdir(parent_dir):
+#                if entry.lower().endswith('.zip'):
+#                    zip_path = os.path.join(parent_dir, entry)
+#                    with zipfile.ZipFile(zip_path, 'r') as zf:
+#                        for zname in zf.namelist():
+#                            if zname.split('/')[-1] == real_filename:
+#                                return (zip_path, zname)
     return None
 
 def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple) -> Optional[Any]:
@@ -165,18 +259,15 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         if base.lower().endswith('.zip') and unzip:
             zip_internal_file = mapdict.get("zip_internal_file")
             if zip_internal_file:
-                # Use the specified internal file directly
-                if os.path.exists(base):
-                    with zipfile.ZipFile(base, 'r') as zf:
-                        if zip_internal_file in zf.namelist():
-                            logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
-                            return (base, zip_internal_file)
-                        else:
-                            logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
+                if zippath_isfile(f"{base}/{zip_internal_file}"):
+                    logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
+                    return (base, zip_internal_file)
+                else:
+                    logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
                 return None
             else:
                 map_name = rel_parts[2]
-                result = get_zip_mapping(logger,base, map_name)
+                result = get_zip_mapping(logger, base, map_name)
                 logger.debug(f"ZIP mapping result for {map_name} in {base}: {result}")
                 if result:
                     return result
@@ -189,6 +280,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         else:
             logger.debug(f"File {real_path} does not exist, returning None")
             return None
+
     if "default_source" in mapdict:
         ds = mapdict["default_source"]
         if "source_dir" in ds:
@@ -223,18 +315,16 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
             if base.lower().endswith('.zip') and unzip:
                 zip_internal_file = ds.get("zip_internal_file")
                 if zip_internal_file:
-                    if os.path.exists(base):
-                        with zipfile.ZipFile(base, 'r') as zf:
-                            if zip_internal_file in zf.namelist():
-                                logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
-                                return (base, zip_internal_file)
-                            else:
-                                logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
+                    if zippath_isfile(f"{base}/{zip_internal_file}"):
+                        logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
+                        return (base, zip_internal_file)
+                    else:
+                        logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
                     return None
                 else:
                     # Try to match by virtual filename
                     map_name = rel_parts[2]
-                    result = get_zip_mapping(logger,base, map_name)
+                    result = get_zip_mapping(logger, base, map_name)
                     logger.debug(f"ZIP mapping result for {map_name} in {base}: {result}")
                     if result:
                         return result

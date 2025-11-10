@@ -2,3 +2,7 @@ content/*
 .DS_Store
 __pycache__/
 .vscode/
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github\instructions\snyk_rules.instructions.md
+.github/instructions/snyk_rules.instructions.md

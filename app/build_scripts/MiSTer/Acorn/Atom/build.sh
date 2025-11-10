@@ -63,4 +63,7 @@ EOF
 mkdir -p "$SOFTWARE_DIR/HDs"
 mv "$BLANK_VHD" "$SOFTWARE_DIR/HDs/hoglet.vhd"
 
+
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+
 echo "Build complete."

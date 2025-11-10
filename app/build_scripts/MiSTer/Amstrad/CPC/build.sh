@@ -46,4 +46,6 @@ mv $UNZIP_DIR/*/*Compilations*/* $SOFTWARE_DIR/DSK/Compilations
 #mv $UNZIP_DIR/*/*Boot\ Loader*/* $SOFTWARE_DIR/HEX
 #mv $UNZIP_DIR/*/*Firmware*/* $SOFTWARE_DIR/HEX
 
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+
 echo "Build complete. Flattened files are in $DSK_DIR"

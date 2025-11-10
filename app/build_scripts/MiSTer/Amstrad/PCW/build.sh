@@ -28,4 +28,6 @@ tar -zxvf "$DOWNLOADED_ZIP" -C "$UNZIP_DIR"
 find "$UNZIP_DIR" -type f -exec mv -t "$DSK_DIR" {} +
 find "$UNZIP_DIR" -type d -empty -delete
 
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+
 echo "Build complete. Flattened files are in $DSK_DIR"

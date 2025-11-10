@@ -57,4 +57,6 @@ mv -f $UNZIP_DIR/Elk-PubGameADF/*/* "$SOFTWARE_DIR/../ADF"
 mv -f $UNZIP_DIR/Elk-PubGameDFS/*/* "$SOFTWARE_DIR/../DFS"
 mv -f $UNZIP_DIR/Elk-PubGameHFE/*/* "$SOFTWARE_DIR/../HFE"
 
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+
 echo "Build complete."

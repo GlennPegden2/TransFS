@@ -40,5 +40,6 @@ mv $UNZIP_DIR/*/*\[HEX\]*/* $SOFTWARE_DIR/HEX
 mv $UNZIP_DIR/*/*Boot\ Loader*/* $SOFTWARE_DIR/HEX
 mv $UNZIP_DIR/*/*Firmware*/* $SOFTWARE_DIR/HEX
 
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
 
 echo "Build complete."

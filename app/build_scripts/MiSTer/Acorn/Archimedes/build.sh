@@ -23,4 +23,6 @@ mkdir -p "$SOFTWARE_DIR/../BIOS"
 mv $SOFTWARE_DIR/tmp/unzipped_software/*.hdf $SOFTWARE_DIR/../HDF
 mv $SOFTWARE_DIR/tmp/unzipped_software/*.rom $SOFTWARE_DIR/../BIOS
 
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+
 echo "Build complete."
