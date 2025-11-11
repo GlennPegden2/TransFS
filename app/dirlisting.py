@@ -144,7 +144,7 @@ def is_dynamic_map(config, map_name: str, sa_entry: dict) -> bool:
 
 def list_dynamic_map(
     config, path: Path, root_parts: tuple, system: dict, sa_entry: dict, map_name: str
-) -> list:
+) -> list[str]:
     """
     List files and directories for a dynamic ...SoftwareArchives... map,
     handling extension mapping and zip flattening.
@@ -216,21 +216,30 @@ def list_dynamic_map(
                     entries.add(entry)
                 # Handle zip files
                 elif entry.lower().endswith('.zip'):
+                    # Performance controls (new)
+                    flatten_enabled = os.getenv("TRANSFS_FLATTEN_ZIPS", "1") != "0"
                     try:
-                        # use zippath layer to list contents of the zip
+                        size_limit = int(os.getenv("TRANSFS_ZIP_FLATTEN_SIZE_LIMIT", "0"))
+                    except ValueError:
+                        size_limit = 0
+                    # If flatten disabled or size exceeds limit, just show zip name (no contents)
+                    if not flatten_enabled:
+                        entries.add(entry)
+                        continue
+                    if size_limit and os.path.getsize(entry_path) > size_limit:
+                        entries.add(entry)
+                        continue
+                    try:
                         namelist = zippath_listdir(entry_path)
-                        # Only files with the correct extension (case-insensitive)
                         filtered = [
                             n for n in namelist
                             if n.upper().endswith(f".{real_ext.upper()}")
                         ]
-                        # Flatten: show each file directly in this folder
                         for zname in filtered:
                             name, ext = os.path.splitext(os.path.basename(zname))
                             virt_ext = reverse_map.get(real_ext.upper(), real_ext.upper())
                             entries.add(f"{name}.{virt_ext.lower()}")
                     except Exception:
-                        # If zip is bad, just show as a file
                         entries.add(entry)
                 else:
                     # Regular file: check extension case-insensitively

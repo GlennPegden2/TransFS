@@ -39,7 +39,7 @@ mv $UNZIP_DIR/*/*\[DSK\]*/* $SOFTWARE_DIR/DSK
 mv $UNZIP_DIR/*/*\[ROM\]*/* $SOFTWARE_DIR/ROM
 mv $UNZIP_DIR/*/*\[CPR\]*/* $SOFTWARE_DIR/CPR
 mv $UNZIP_DIR/*/*Demos*/* $SOFTWARE_DIR/DSK/Demos
-mv $UNZIP_DIR/*/*Public Domain*/* $SOFTWARE_DIR/DSK/PD
+mv $UNZIP_DIR/*/*Public\ Domain*/* $SOFTWARE_DIR/DSK/PD
 mv $UNZIP_DIR/*/*Compilations*/* $SOFTWARE_DIR/DSK/Compilations
 #mv $UNZIP_DIR/*/*\[TAP\]*/* $SOFTWARE_DIR/TAP
 #mv $UNZIP_DIR/*/*\[HEX\]*/* $SOFTWARE_DIR/HEX

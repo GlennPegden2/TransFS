@@ -509,7 +509,7 @@ archive_sources:
       - name: TOSEC Amstrad CPC Collection
         type: ddl
         url: https://archive.org/download/Amstrad_CPC_TOSEC_2012_04_23/Amstrad_CPC_TOSEC_2012_04_23.zip
-        platform: Disks
+        platform: Collections
     "PCW":
       base_path: Amstrad/PCW/Software
       sources:
@@ -520,7 +520,7 @@ archive_sources:
       - name: 8bitChipInfo
         type: ddl
         url: http://8bitchip.info/commodore/Amstrad_PCW_8256_Games_Archive.tar.gz
-        platform: Collections/
+        platform: Collections
   "Apple":
     "AppleII":
       base_path: Apple/AppleII/Software

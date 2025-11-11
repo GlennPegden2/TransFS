@@ -310,7 +310,6 @@ class TransFS(Passthrough):
             raise FuseOSError(errno.ENOENT)
         with open(real_path, 'r+b') as f:
             f.truncate(length)
-        return None
 
     def unlink(self, path):
         logger.debug("UNLINK: called with path=%s", path)
@@ -320,6 +319,15 @@ class TransFS(Passthrough):
             logger.debug("UNLINK: ENOENT")
             raise FuseOSError(errno.ENOENT)
         os.unlink(real_path)
+
+    def getxattr(self, path: str, name: str, position: int = 0):
+        """
+        Return extended attributes. Since we're a translation layer,
+        we don't support xattrs and return ENODATA instead of ENOTSUP
+        to avoid traceback spam in logs.
+        """
+        # Silently indicate no extended attributes are available
+        raise FuseOSError(errno.ENODATA)
 
 
 def main(mount_path: str, root_path: str):
