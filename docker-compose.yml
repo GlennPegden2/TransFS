@@ -18,6 +18,7 @@ services:
       - ./content:/mnt/filestorefs   # Mount point on the host
       - ./app:/app                      # Mount project root for code and static/templates
       - ./tests:/tests                      # Not needed in production, but useful for testing
+      - ./transfs:/mnt/transfs # Probably don't want this in production, but it makes unit testing easier
 
     environment:
       - PYTHONUNBUFFERED=1

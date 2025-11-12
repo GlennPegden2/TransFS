@@ -90,6 +90,8 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               source_dir: Software
+              # zip_mode options: hierarchical (default, ZIPs as folders), flatten (legacy, merge contents), file (opaque)
+              zip_mode: hierarchical
               filetypes:
               - Disks: "DSK"
           - boot.rom:

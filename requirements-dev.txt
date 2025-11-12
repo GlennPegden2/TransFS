@@ -1,0 +1,27 @@
+# Development and Testing Dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Testing Framework
+pytest>=7.4.0
+pytest-cov>=4.1.0           # Coverage reporting
+pytest-xdist>=3.3.1         # Parallel test execution
+pytest-timeout>=2.1.0       # Timeout handling for stuck tests
+
+# Snapshot Testing
+syrupy>=4.6.0               # Modern snapshot testing
+
+# Docker Testing
+pytest-docker>=2.0.0        # Docker container orchestration in tests
+
+# Additional Testing Utilities
+pytest-mock>=3.11.1         # Mocking utilities
+pytest-benchmark>=4.0.0     # Performance benchmarking
+pytest-json-report>=1.5.0   # JSON test reports
+
+# Code Quality
+black>=23.7.0               # Code formatting
+flake8>=6.1.0               # Linting
+mypy>=1.5.0                 # Type checking
+
+# For comparing complex data structures
+deepdiff>=6.3.0             # Deep comparison of data structures

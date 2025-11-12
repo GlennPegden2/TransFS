@@ -5,7 +5,7 @@ import asyncio
 import re
 import requests
 import internetarchive
-import libtorrent as lt  
+import libtorrent as lt  # pylint: disable=import-error
 from pydantic import BaseModel
 import yaml
 from fastapi import FastAPI
@@ -242,11 +242,11 @@ async def api_download_stream(req: DownloadRequest):
                 os.makedirs(dest_dir, exist_ok=True)
                 yield f"Starting torrent download: {url}\n"
                 try:
-                    ses = lt.session()
+                    ses = lt.session() # type: ignore
                     ses.listen_on(6881, 6891)
                     params = {
                         'save_path': dest_dir,
-                        'storage_mode': lt.storage_mode_t(2),
+                        'storage_mode': lt.storage_mode_t(2), # type: ignore
                     }
                     if url.endswith('.torrent'):
                         yield f"Not a magnet - {url}\n"
@@ -257,12 +257,12 @@ async def api_download_stream(req: DownloadRequest):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".torrent") as tf:
                             tf.write(resp.content)
                             torrent_path = tf.name
-                        info = lt.torrent_info(torrent_path)
+                        info = lt.torrent_info(torrent_path) # type: ignore
                         h = ses.add_torrent({'ti': info, 'save_path': dest_dir})
                     else:
                         # Assume magnet link
                         yield f"Is a magnet - {url}\n"
-                        h = lt.add_magnet_uri(ses, url, params)
+                        h = lt.add_magnet_uri(ses, url, params) # type: ignore
                     yield "Fetching metadata...\n"
                     while not h.has_metadata():
                         await asyncio.sleep(1)

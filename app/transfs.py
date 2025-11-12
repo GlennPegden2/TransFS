@@ -8,6 +8,14 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Literal, Optional, cast
+from dirlisting import parse_trans_path
+from pathutils import (
+    full_path,
+    is_virtual_path,
+    map_virtual_to_real,
+)
+from sourcepath import get_source_path
+from zippath import open_file as zippath_open_file  # new
 
 import yaml
 from fuse import FUSE, FuseOSError
@@ -19,14 +27,6 @@ logger = logging.getLogger("transfs")
 logger.debug("TEST: Logging setup works")
 
 
-from dirlisting import parse_trans_path
-from pathutils import (
-    full_path,
-    is_virtual_path,
-    map_virtual_to_real,
-)
-from sourcepath import get_source_path
-from zippath import open_file as zippath_open_file  # new
 
 class TransFS(Passthrough):
     """FUSE filesystem for translating virtual paths to real files, including zip logic and filetype mapping."""
@@ -37,6 +37,35 @@ class TransFS(Passthrough):
         self.root = root_path
         with open("transfs.yaml", "r", encoding="UTF-8") as f:
             self.config = yaml.safe_load(f)
+
+    def _get_zip_mode_for_path(self, xfull_path: str) -> str:
+        """
+        Extract zip_mode configuration for the given path.
+        Returns 'hierarchical' (default), 'flatten', or 'file'.
+        """
+        from pathutils import get_client, get_system_info, find_software_archive_entry
+        
+        path = Path(xfull_path)
+        root_parts = Path(self.root).parts
+        rel_parts = path.parts[len(root_parts):]
+        
+        if len(rel_parts) < 3:
+            return "hierarchical"  # default
+        
+        client = get_client(self.config, rel_parts)
+        if not client:
+            return "hierarchical"
+        
+        path_template_parts = Path(client['default_target_path']).parts
+        system_info = get_system_info(client, list(rel_parts), path_template_parts)
+        if not system_info:
+            return "hierarchical"
+        
+        sa_entry = find_software_archive_entry(system_info)
+        if not sa_entry:
+            return "hierarchical"
+        
+        return sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
 
     def readdir(self, path: str, fh: int):
         logger.debug("DEBUG: readdir(%s)", path)
@@ -70,6 +99,10 @@ class TransFS(Passthrough):
         fspath = get_source_path(logger, self.config, self.root, xfull_path)
         logger.debug("DEBUG: getattr full_path=%s, fspath=%s", xfull_path, fspath)
 
+        # Determine zip_mode for this path (if applicable)
+        zip_mode = self._get_zip_mode_for_path(xfull_path)
+        logger.debug("DEBUG: getattr zip_mode=%s for path=%s", zip_mode, path)
+
         # PATCH: If mapped to a file inside a zip (unzip: true), always stat as a file
         if isinstance(fspath, tuple):
             logger.debug("DEBUG: Inside isinstance(fspath, tuple) branch: %s", fspath)
@@ -89,17 +122,24 @@ class TransFS(Passthrough):
                 }
 
         if fspath is None:
-            # Try to stat as a virtual entry if it is in the virtual directory listing
             parent_path = str(Path(xfull_path).parent)
             entries = set(parse_trans_path(self.config,self.root, parent_path))
             name = os.path.basename(xfull_path)
-
             logger.debug("DEBUG getattr fallback: parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
 
             if name in entries:
                 now = int(time.time())
-                # Heuristic: treat as file if it has a dot (extension), else directory
-                if '.' in name:
+                # Zip handling depends on zip_mode
+                if name.lower().endswith('.zip'):
+                    if zip_mode == "hierarchical":
+                        mode = 0o040755  # directory (navigable)
+                        nlink = 2
+                        size = 4096
+                    else:  # file or flatten mode → treat as file
+                        mode = 0o100444  # regular file
+                        nlink = 1
+                        size = 0
+                elif '.' in name:
                     mode = 0o100444  # file
                     nlink = 1
                     size = 0
@@ -122,21 +162,32 @@ class TransFS(Passthrough):
 
         logger.debug("DEBUG: getattr(%s) full_path=%s fspath=%s type=%s", path, full_path, fspath, type(fspath))
 
-        # PATCH: treat zip files as directories unless mapped with unzip: true
+        # PATCH: treat zip files based on zip_mode
         if isinstance(fspath, str) and fspath.lower().endswith('.zip'):
-            # Only treat as file if this is a mapped file with unzip: false or missing
-            # Otherwise, treat as directory
             st = os.lstat(fspath)
-            out = {
-                'st_atime': int(st.st_atime),
-                'st_ctime': int(st.st_ctime),
-                'st_mtime': int(st.st_mtime),
-                'st_gid': st.st_gid,
-                'st_uid': st.st_uid,
-                'st_mode': 0o040755,  # directory
-                'st_nlink': 2,
-                'st_size': 4096,
-            }
+            # Hierarchical mode: ZIPs are directories
+            if zip_mode == "hierarchical":
+                out = {
+                    'st_atime': int(st.st_atime),
+                    'st_ctime': int(st.st_ctime),
+                    'st_mtime': int(st.st_mtime),
+                    'st_gid': st.st_gid,
+                    'st_uid': st.st_uid,
+                    'st_mode': 0o040755,  # directory
+                    'st_nlink': 2,
+                    'st_size': 4096,
+                }
+            else:  # file or flatten mode: ZIPs are files
+                out = {
+                    'st_atime': int(st.st_atime),
+                    'st_ctime': int(st.st_ctime),
+                    'st_mtime': int(st.st_mtime),
+                    'st_gid': st.st_gid,
+                    'st_uid': st.st_uid,
+                    'st_mode': 0o100444,  # regular file
+                    'st_nlink': 1,
+                    'st_size': st.st_size,
+                }
             return cast(
                 dict[
                     Literal[
@@ -151,8 +202,12 @@ class TransFS(Passthrough):
         if not os.path.exists(fspath):
             # Check if this is a virtual entry (i.e., listed in the parent directory)
             parent_path = str(Path(xfull_path).parent)
+            t_start = time.time()
             entries = set(parse_trans_path(self.config, self.root, parent_path))
+            t_elapsed = time.time() - t_start
             name = os.path.basename(xfull_path)
+            if t_elapsed > 1.0:
+                logger.warning(f"SLOW parse_trans_path({parent_path}) took {t_elapsed:.2f}s, returned {len(entries)} entries")
             logger.debug("DEBUG getattr fallback (real missing): parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
             if name in entries:
                 now = int(time.time())
@@ -336,7 +391,7 @@ def main(mount_path: str, root_path: str):
         mount_path,
         nothreads=True,
         foreground=True,
-        debug=True,
+        debug=False,  # Set to True for FUSE protocol-level debugging
         encoding='utf-8',
         allow_other=True
     )

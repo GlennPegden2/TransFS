@@ -150,7 +150,10 @@ def _parse_zippath_notation(path_str: str) -> Optional[tuple[str, str]]:
     return None
 
 def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Optional[Any]:
-    """Handle ...SoftwareArchives... dynamic folders with zip logic and filetype mapping."""
+    """
+    Handle ...SoftwareArchives... dynamic folders with zip logic and filetype mapping.
+    Respects zip_mode configuration: hierarchical (default), flatten, or file.
+    """
 
 # Pretty sure this is redundant now
     if "...SoftwareArchives..." not in [list(m.keys())[0] for m in system_info['maps']]:
@@ -170,6 +173,7 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
     real_exts = filetype_map.get(map_name.upper(), [])
 
     supports_zip = sa_entry["...SoftwareArchives..."].get("supports_zip", True)
+    zip_mode = sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
     source_dir = os.path.join(
         config["filestore"],
         "Native",
@@ -180,40 +184,130 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
     if not subpath:
         return None
 
-    # If the last component has no extension, treat as a virtual directory
     last = subpath[-1]
-    if '.' not in last:
-        # Check if any real directory exists for this virtual directory
+
+    # ========== FILE MODE ==========
+    # ZIPs are opaque files, never treated as containers
+    if zip_mode == "file":
+        # If the last component is a .zip, return the real zip path as a file
+        if last.lower().endswith('.zip'):
+            for real_ext in real_exts:
+                candidate = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isfile(candidate):
+                    return candidate
+        
+        # If the last component has no extension, treat as a virtual directory
+        if '.' not in last:
+            for real_ext in real_exts:
+                dir_path = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isdir(dir_path):
+                    return dir_path
+            return None
+
+        # Mapped filetype handling (regular files)
+        filename = subpath[-1]
+        name, virt_ext = os.path.splitext(filename)
+        virt_ext = virt_ext[1:].upper()
         for real_ext in real_exts:
-            dir_path = os.path.join(source_dir, real_ext, *subpath)
-            if os.path.isdir(dir_path):
-                return dir_path  # This allows getattr/readdir to work
-        # If no real dir, treat as virtual dir (return None, getattr will fake stat)
+            real_filename = f"{name}.{real_ext.lower()}"
+            real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+            if os.path.exists(real_path):
+                return real_path
         return None
 
-    # if is a mapped filetype
-    filename = subpath[-1]
-    name, virt_ext = os.path.splitext(filename)
-    virt_ext = virt_ext[1:].upper()
-    for real_ext in real_exts:
-        real_filename = f"{name}.{real_ext.lower()}"
-        real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
-        if os.path.exists(real_path):
-            return real_path
+    # ========== HIERARCHICAL MODE (default) ==========
+    # ZIPs appear as navigable directories
+    if zip_mode == "hierarchical":
+        # Check if path contains a .zip component (navigating inside ZIP)
+        zip_path_parts = []
+        zip_internal_parts = []
+        found_zip = False
+        
+        for i, part in enumerate(subpath):
+            if not found_zip:
+                zip_path_parts.append(part)
+                if part.lower().endswith('.zip'):
+                    found_zip = True
+            else:
+                zip_internal_parts.append(part)
+        
+        # If we found a .zip in the path and supports_zip is enabled
+        if found_zip and supports_zip:
+            # Build real ZIP file path
+            for real_ext in real_exts:
+                zip_file_path = os.path.join(source_dir, real_ext, *zip_path_parts)
+                if os.path.isfile(zip_file_path):
+                    # If there are parts after the .zip, we're navigating inside
+                    if zip_internal_parts:
+                        internal_path = '/'.join(zip_internal_parts)
+                        # Return tuple for ZIP-internal access
+                        if zippath_exists(f"{zip_file_path}/{internal_path}"):
+                            return (zip_file_path, internal_path)
+                    else:
+                        # Accessing the .zip itself as a directory container
+                        return zip_file_path
+        
+        # Not inside a ZIP: handle regular filesystem paths
+        # If the last component is a .zip file (not yet entered)
+        if last.lower().endswith('.zip') and supports_zip:
+            for real_ext in real_exts:
+                candidate = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isfile(candidate):
+                    return candidate
 
+        # If the last component has no extension, treat as a virtual directory
+        if '.' not in last:
+            for real_ext in real_exts:
+                dir_path = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isdir(dir_path):
+                    return dir_path
+            return None
 
+        # Mapped filetype handling
+        filename = subpath[-1]
+        name, virt_ext = os.path.splitext(filename)
+        virt_ext = virt_ext[1:].upper()
+        for real_ext in real_exts:
+            real_filename = f"{name}.{real_ext.lower()}"
+            real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+            if os.path.exists(real_path):
+                return real_path
+        return None
 
-# Suspect this is not needed now
-#         # Check for file in zip files in the real_ext directory
-#        parent_dir = os.path.join(source_dir, real_ext, *subpath[:-1])
-#        if os.path.isdir(parent_dir):
-#            for entry in os.listdir(parent_dir):
-#                if entry.lower().endswith('.zip'):
-#                    zip_path = os.path.join(parent_dir, entry)
-#                    with zipfile.ZipFile(zip_path, 'r') as zf:
-#                        for zname in zf.namelist():
-#                            if zname.split('/')[-1] == real_filename:
-#                                return (zip_path, zname)
+    # ========== FLATTEN MODE (legacy) ==========
+    # ZIP contents are merged into parent directory listing
+    if zip_mode == "flatten":
+        # Flatten mode behaves like hierarchical for deeper paths
+        # The flattening happens in the listing logic, not path resolution
+        # So we use the same logic as hierarchical mode here
+        
+        # If the last component is a .zip, return the real zip path if it exists
+        if last.lower().endswith('.zip'):
+            for real_ext in real_exts:
+                candidate = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isfile(candidate):
+                    return candidate
+
+        # If the last component has no extension, treat as a virtual directory
+        if '.' not in last:
+            for real_ext in real_exts:
+                dir_path = os.path.join(source_dir, real_ext, *subpath)
+                if os.path.isdir(dir_path):
+                    return dir_path
+            return None
+
+        # Mapped filetype handling
+        filename = subpath[-1]
+        name, virt_ext = os.path.splitext(filename)
+        virt_ext = virt_ext[1:].upper()
+        for real_ext in real_exts:
+            real_filename = f"{name}.{real_ext.lower()}"
+            real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+            if os.path.exists(real_path):
+                return real_path
+        return None
+
+    # Default fallback (shouldn't reach here)
     return None
 
 def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple) -> Optional[Any]:

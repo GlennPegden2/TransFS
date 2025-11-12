@@ -24,6 +24,35 @@
 
 ---
 
+## 🧪 Testing
+
+TransFS includes a comprehensive **snapshot testing framework** to detect breaking changes:
+
+- **Automatic breaking change detection** - Tests fail if filesystem structure changes unexpectedly
+- **Snapshot comparison** - Captures expected filesystem state and compares on each test run
+- **CI/CD ready** - Easy integration with GitHub Actions and other CI systems
+
+### Quick Testing Commands
+
+```powershell
+# Install test dependencies
+pip install -r requirements-dev.txt
+
+# Run all snapshot tests
+pytest tests/test_filesystem_snapshots.py -v
+
+# Update snapshots after intentional changes
+pytest --snapshot-update
+```
+
+📚 **Full Testing Documentation:**
+- **[TESTING_QUICK_REFERENCE.md](TESTING_QUICK_REFERENCE.md)** - Quick command reference
+- **[TESTING.md](TESTING.md)** - Comprehensive testing guide
+- **[TESTING_WORKFLOW_DIAGRAM.md](TESTING_WORKFLOW_DIAGRAM.md)** - Visual workflow diagrams
+- **[TESTING_IMPLEMENTATION_SUMMARY.md](TESTING_IMPLEMENTATION_SUMMARY.md)** - Implementation details
+
+---
+
 ## 🚀 Getting Started
 
 ### Requirements
