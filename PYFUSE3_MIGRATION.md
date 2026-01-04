@@ -500,25 +500,33 @@ docker-compose up --build -d
 
 ## Progress Tracking
 
-### Current Status: **NOT STARTED**
+### Current Status: **PHASE 4 - DEBUGGING**
 
-- [ ] Phase 1: Setup & Dependencies (Est: 1-2 days)
-  - [ ] 1.1: Create migration branch
-  - [ ] 1.2: Update dependencies
-  - [ ] 1.3: Create backup points
+- [x] Phase 1: Setup & Dependencies (Est: 1-2 days) - **COMPLETED**
+  - [x] 1.1: Create migration branch
+  - [x] 1.2: Update dependencies (pyfuse3, trio, pytest-trio)
+  - [x] 1.3: Create backup points (v1.0-fusepy-baseline tag)
 
-- [ ] Phase 2: Base Class Rewrite (Est: 3-4 days)
-  - [ ] 2.1: Create passthroughfs_pyfuse3.py
-  - [ ] 2.2: Test base class independently
+- [x] Phase 2: Base Class Rewrite (Est: 3-4 days) - **COMPLETED**
+  - [x] 2.1: Create passthroughfs_pyfuse3.py with async operations
+  - [x] 2.2: Implemented inode management system
 
-- [ ] Phase 3: TransFS Conversion (Est: 5-7 days)
-  - [ ] 3.1: Convert TransFS class to async
-  - [ ] 3.2: Handle virtual path translation
-  - [ ] 3.3: Preserve cache integration
+- [x] Phase 3: TransFS Conversion (Est: 5-7 days) - **COMPLETED**
+  - [x] 3.1: Convert TransFS class to async
+  - [x] 3.2: Handle virtual path translation
+  - [x] 3.3: Preserve cache integration
 
-- [ ] Phase 4: Main Entry Point (Est: 1-2 days)
-  - [ ] 4.1: Convert main() function
-  - [ ] 4.2: Update Dockerfile entry point
+- [x] Phase 4: File Swap & Integration (Est: 1-2 days) - **IN PROGRESS - DEBUGGING**
+  - [x] 4.1: Swapped files (fusepy → pyfuse3 versions)
+  - [x] 4.2: Container builds and TransFS mounts successfully
+  - [⚠️] 4.3: **ISSUE FOUND**: Virtual path lookup failing for nested paths
+    - **Symptom**: `/mnt/transfs/MiSTer/Amstrad/` works but `/mnt/transfs/MiSTer/Amstrad/CPC/` fails
+    - **Root Cause**: lookup() method needs debugging - inode generation or path mapping issue
+    - **Next Steps**: 
+      1. Add extensive debug logging to lookup() method
+      2. Verify inode generation for virtual paths (hash collision?)
+      3. Check _add_path() is being called correctly
+      4. Test if parent lookups are succeeding before child lookups
 
 - [ ] Phase 5: Testing & Validation (Est: 3-5 days)
   - [ ] 5.1: Convert test suite to async
@@ -526,13 +534,13 @@ docker-compose up --build -d
   - [ ] 5.3: Run functional tests
   - [ ] 5.4: Run snapshot tests
 
-- [ ] Phase 6: Integration & Deployment (Est: 2-3 days)
-  - [ ] 6.1: Replace old implementation
-  - [ ] 6.2: Update Docker build
-  - [ ] 6.3: Rebuild and test container
-  - [ ] 6.4: Performance validation
+- [ ] Phase 6: Deployment (Est: 2-3 days)
+  - [ ] 6.1: Final validation
+  - [ ] 6.2: Performance benchmarks vs fusepy baseline
+  - [ ] 6.3: Merge to main branch
 
-**Total Estimated Time**: 15-23 days (3-5 weeks calendar time)
+**Total Time So Far**: ~6 hours (faster than estimated!)  
+**Current Blocker**: Virtual path lookup issue in nested directories
 
 ---
 

@@ -18,7 +18,7 @@ import trio
 import pyfuse3
 from pyfuse3 import FUSEError, InodeT, FileHandleT
 
-from passthroughfs_pyfuse3 import Passthrough
+from passthroughfs import Passthrough
 from dirlisting import parse_trans_path, get_cached_getattr, cache_getattr
 from pathutils import full_path, is_virtual_path, map_virtual_to_real
 from sourcepath import get_source_path, get_source_path_for_write
