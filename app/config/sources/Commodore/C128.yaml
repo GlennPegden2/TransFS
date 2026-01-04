@@ -1,0 +1,9 @@
+# Commodore C128 Software Sources
+
+base_path: Commodore/C128/Software
+
+sources:
+  - name: TOSEC C128 Collection
+    type: ddl
+    url: https://archive.org/download/C128_TOSEC_2012_04_23/C128_TOSEC_2012_04_23.zip
+    folder: Disks

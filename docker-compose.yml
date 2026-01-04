@@ -3,6 +3,10 @@ services:
   transfs:
     build: .
     container_name: transfs
+    hostname: transfs
+    image: transfs-image
+    extra_hosts:
+      - "transfs-host:host-gateway"  # Maps to Docker host's IP
     cap_add:
       - SYS_ADMIN
     devices:
@@ -10,31 +14,38 @@ services:
     ports:
       - "3445:445"
       - "4139:139"
+      - "137:137/udp"  # NetBIOS Name Service
+      - "138:138/udp"  # NetBIOS Datagram Service
       - "5678:5678"  # Expose debug port
-      - "8000:8000"  # Expose FastAPI web service
+      - "8000:8000"  # Expose FastAPI web service (change to match transfs.yaml web_api.port if modified)
     security_opt:
       - apparmor:unconfined
     volumes:
       - ./content:/mnt/filestorefs   # Mount point on the host
       - ./app:/app                      # Mount project root for code and static/templates
       - ./tests:/tests                      # Not needed in production, but useful for testing
-      - ./transfs:/mnt/transfs # Probably don't want this in production, but it makes unit testing easier
+      # - ./transfs:/mnt/transfs # COMMENTED OUT: This prevents FUSE from mounting. Only uncomment for specific unit testing needs
 
     environment:
+      - AVAHI_HOSTNAME=transfs.local  
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=1
+      - TRANSFS_PERSIST_ZIP_INDEX=1  # Enable ZIP index caching for better performance
+      # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
     entrypoint: >
       bash -c "
         mkdir -p /mnt/filestorefs &&
         service smbd start &&
-        if [ \"$DEBUG_MODE\" = \"1\" ]; then
+        service nmbd start &&
+        if [ \"$$DEBUG_MODE\" = \"1\" ]; then
           echo 'Starting in debug mode...';
           python3 -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/transfs.py &
         else
           echo 'Starting in normal mode...';
           python3 -m transfs 2>&1 | tee /tmp/transfs.log &
         fi &&
-        echo 'Starting FastAPI web service...' &&
-        uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&
+        WEB_PORT=\$$(python3 -c \"import yaml; print(yaml.safe_load(open('/app/transfs.yaml'))['web_api']['port'])\" 2>/dev/null || echo \"8000\") &&
+        WEB_HOST=\$$(python3 -c \"import yaml; print(yaml.safe_load(open('/app/transfs.yaml'))['web_api']['host'])\" 2>/dev/null || echo \"0.0.0.0\") &&
+        echo \"Starting FastAPI web service on $${WEB_HOST}:$${WEB_PORT}...\" &&
+        uvicorn main:app --host \"$${WEB_HOST}\" --port \"$${WEB_PORT}\" --reload &&
         tail -f /dev/null
       "

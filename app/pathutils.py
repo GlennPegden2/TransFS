@@ -24,15 +24,22 @@ def is_virtual_path(config, root: str, full_path: str) -> bool:
         if client and any(sys.get("name") == rel_parts[1] for sys in client.get("systems", [])):
             return True
     # /MiSTer/ARCHIE/FDs or /MiSTer/ARCHIE/HDs
-    if len(rel_parts) == 3:
+    if len(rel_parts) >= 3:
         client = next((c for c in config.get("clients", []) if c.get("name") == rel_parts[0]), None)
         if client:
             system = next((s for s in client.get("systems", []) if s.get("name") == rel_parts[1]), None)
             if system:
-                # Check for direct map
+                # Build the remaining path after system name
+                remaining_path = '/'.join(rel_parts[2:])
+                
+                # Check for direct map or parent directory of a map
                 for map_entry in system.get("maps", []):
                     map_name = list(map_entry.keys())[0]
-                    if map_name == rel_parts[2]:
+                    if map_name == remaining_path:
+                        return True
+                    # Check if remaining_path is a parent directory of map_name
+                    # e.g., "HDs" is parent of "HDs/beeb1_mmb.VHD"
+                    if map_name.startswith(remaining_path + '/'):
                         return True
                     # Check for ...SoftwareArchives... filetypes
                     if map_name == "...SoftwareArchives...":

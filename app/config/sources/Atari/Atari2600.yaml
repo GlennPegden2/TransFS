@@ -1,0 +1,9 @@
+# Atari 2600 Software Sources
+
+base_path: Atari/2600/Software
+
+sources:
+  - name: TOSEC Atari 2600 Collection
+    type: ddl
+    url: https://archive.org/download/Atari_2600_TOSEC_2012_04_23/Atari_2600_TOSEC_2012_04_23.zip
+    folder: ROMs

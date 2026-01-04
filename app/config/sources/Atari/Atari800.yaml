@@ -1,0 +1,9 @@
+# Atari 800 Software Sources
+
+base_path: Atari/800/Software
+
+sources:
+  - name: TOSEC Atari 8-bit Collection
+    type: ddl
+    url: https://archive.org/download/Atari_8bit_TOSEC_2012_04_23/Atari_8bit_TOSEC_2012_04_23.zip
+    folder: ROMs

@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 
 RUN apt-get update
-RUN apt-get install -y fuse3 samba wget unzip libguestfs-tools p7zip
+RUN apt-get install -y fuse3 samba wget unzip libguestfs-tools p7zip unrar-free
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
@@ -32,4 +32,11 @@ WORKDIR /app
 #COPY ./app /app
 
 # Start Samba and the FUSE filesystem
-CMD service smbd start && python3 -m transfs && tail -f /dev/null
+CMD service smbd start && \
+    service nmbd start && \
+    python3 -m transfs 2>&1 | tee /tmp/transfs.log & \
+    WEB_PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['port'])" 2>/dev/null || echo "8000") && \
+    WEB_HOST=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['host'])" 2>/dev/null || echo "0.0.0.0") && \
+    echo "Starting Web UI on ${WEB_HOST}:${WEB_PORT}" && \
+    uvicorn main:app --host "${WEB_HOST}" --port "${WEB_PORT}" & \
+    tail -f /dev/null

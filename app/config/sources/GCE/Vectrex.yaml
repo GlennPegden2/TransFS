@@ -1,0 +1,9 @@
+# GCE Vectrex Software Sources
+
+base_path: GCE/Vectrex/Software
+
+sources:
+  - name: TOSEC Vectrex Collection
+    type: ddl
+    url: https://archive.org/download/Vectrex_TOSEC_2012_04_23/Vectrex_TOSEC_2012_04_23.zip
+    folder: ROMs

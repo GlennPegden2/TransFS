@@ -20,10 +20,17 @@ if IS_IN_DOCKER:
     # Running inside container - use container paths
     FILESTORE_VOLUME = Path("/mnt/filestorefs")
     TRANSFS_VOLUME = Path("/mnt/transfs")
+    logger.info("Running tests INSIDE Docker container")
+    logger.info(f"  FILESTORE_VOLUME: {FILESTORE_VOLUME}")
+    logger.info(f"  TRANSFS_VOLUME: {TRANSFS_VOLUME}")
 else:
-    # Running on host - use host paths
+    # Running on host - use host paths (may not work on Windows due to FUSE limitations)
     FILESTORE_VOLUME = Path("./content")
     TRANSFS_VOLUME = Path("./transfs")
+    logger.warning("Running tests ON HOST - FUSE mount may not be accessible")
+    logger.warning("  For accurate testing, run: ./run_tests_in_docker.ps1")
+    logger.info(f"  FILESTORE_VOLUME: {FILESTORE_VOLUME}")
+    logger.info(f"  TRANSFS_VOLUME: {TRANSFS_VOLUME}")
 
 @pytest.fixture(scope="session")
 def fuse_mount():

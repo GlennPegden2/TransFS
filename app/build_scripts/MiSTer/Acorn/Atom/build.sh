@@ -26,7 +26,7 @@ unzip -o "$DOWNLOADED_ZIP" -d "$UNZIP_DIR"
 
 
 #Unzip the blank
-DOWNLOADED_ZIP=$(find "$SOFTWARE_DIR/Utils/" -type f -name "blank.zip" | head -n 1)
+DOWNLOADED_ZIP=$(find "$SOFTWARE_DIR/Software/Utils/" -type f -name "blank.zip" | head -n 1)
 if [[ -z "$DOWNLOADED_ZIP" ]]; then
     echo "No downloaded zip found in $SOFTWARE_DIR"
     exit 1
@@ -59,11 +59,11 @@ guestfish --rw -a "$BLANK_VHD" -m "$PARTITION" <<EOF
 copy-in "$SOFTWARE_DIR/tmp/unzipped_software/." /
 EOF
 
-# Move the updated VHD up one folder level
-mkdir -p "$SOFTWARE_DIR/HDs"
-mv "$BLANK_VHD" "$SOFTWARE_DIR/HDs/hoglet.vhd"
+# Move the updated VHD to Software/HDs directory
+mkdir -p "$SOFTWARE_DIR/Software/VHD"
+mv "$BLANK_VHD" "$SOFTWARE_DIR/Software/VHD/hoglet67.vhd"
 
 
-rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
+rm -rf "$SOFTWARE_DIR/tmp/"
 
 echo "Build complete."

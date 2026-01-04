@@ -1,0 +1,9 @@
+# Sega Genesis Software Sources
+
+base_path: Sega/Genesis/Software
+
+sources:
+  - name: No-Intro Genesis Collection
+    type: ddl
+    url: https://archive.org/download/No-Intro-Collection_2016-01-03/Sega%20-%20Genesis.zip
+    folder: ROMs

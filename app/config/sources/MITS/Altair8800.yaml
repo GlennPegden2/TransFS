@@ -1,0 +1,9 @@
+# MITS Altair 8800 Software Sources
+
+base_path: MITS/Altair8800/Software
+
+sources:
+  - name: MITS_Altair_8800_TOSEC_2012_04_23
+    type: ddl
+    url: https://archive.org/download/MITS_Altair_8800_TOSEC_2012_04_23/MITS_Altair_8800_TOSEC_2012_04_23.zip
+    folder: Collections/

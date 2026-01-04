@@ -1,0 +1,9 @@
+# Atari 5200 Software Sources
+
+base_path: Atari/5200/Software
+
+sources:
+  - name: TOSEC Atari 5200 Collection
+    type: ddl
+    url: https://archive.org/download/Atari_5200_TOSEC_2012_04_23/Atari_5200_TOSEC_2012_04_23.zip
+    folder: ROMs

@@ -1,0 +1,97 @@
+# Amstrad CPC Software Sources
+
+base_path: Amstrad/CPC/
+
+sources:
+  - name: BIOS_boot
+    type: ddl
+    url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/boot.rom
+    folder: BIOS
+  
+  - name: BIOS_cpc464nd
+    type: ddl
+    url: https://github.com/MiSTer-devel/Amstrad_MiSTer/raw/refs/heads/master/releases/cpc464nd.eZ0
+    folder: BIOS
+  
+  - name: intro_cdt
+    type: ddl
+    url: https://archive.org/download/amstrad-cpc-cdt-collection/AmstradCPC-CDT_Collection.zip/CDT%2Fintro.cdt
+    folder: Software/CDT
+
+# Removed, blocks direct access   - name: 464_system_disk
+#    type: ddl
+#    url: https://www.cpcwiki.eu/imgs/6/64/CPC464_DDI1_System_Disks_%28EN%29.zip
+#    folder: Software/DSK
+
+  - name: CPC_Top10_Games
+    type: ddl
+    folder: Software/DSK
+    urls: 
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Megablasters%20%281994%29%28Odiesoft%29%28Disk%201%20of%204%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Megablasters%20%281994%29%28Odiesoft%29%28Disk%202%20of%204%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Megablasters%20%281994%29%28Odiesoft%29%28Disk%203%20of%204%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Megablasters%20%281994%29%28Odiesoft%29%28Disk%204%20of%204%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Get%20Dexter%20%2819xx%29%28ERE%20Informatique%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Manoir%20de%20Mortvielle%2C%20Le%20%281988%29%28Lankhor%29%28fr%29%28Disk%201%20of%202%29%5Bb%5D.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Manoir%20de%20Mortvielle%2C%20Le%20%281988%29%28Lankhor%29%28fr%29%28Disk%202%20of%202%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Bumpy%27s%20Arcade%20Fantasy%20%281992%29%28Loriciels%29%5Bcr%20NPS%5D%5Bt%20NPS%5D.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Elite%20%281985%29%28Firebird%20Software%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Guild%20of%20Thieves%2C%20The%20%281988%29%28Rainbird%20Software%29%28Disk%201%20of%202%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Guild%20of%20Thieves%2C%20The%20%281988%29%28Rainbird%20Software%29%28Disk%202%20of%202%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Prince%20of%20Persia%20%281990%29%28Broderbund%20Software%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Xyphoes%20Fantasy%20%281991%29%28Silmarils%29%28Disk%201%20of%202%29%5Bcpm%20version%5D.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Xyphoes%20Fantasy%20%281991%29%28Silmarils%29%28Disk%202%20of%202%29%5Bcpm%20version%5D.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Sentinel%2C%20The%20%281987%29%28Firebird%20Software%29.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Rick%20Dangerous%20%281989%29%28Firebird%20Software%29%5Bcr%20Les%20Cafes%20Kids%20Crackers%5D.zip
+      - https://archive.org/download/AmstradCPCGameCollectionByGhostware/Hitchhiker%27s%20Guide%20to%20the%20Galaxy%2C%20The%20%281984%29%28Infocom%29%5Bcpm%20version%5D.zip
+
+
+  - name: TOSEC_Amstrad_CPC_Collection
+    type: ddl
+    url: https://archive.org/download/Amstrad_CPC_TOSEC_2012_04_23/Amstrad_CPC_TOSEC_2012_04_23.zip
+    folder: Software/Collections
+    extract: true
+
+  - name: VincentC_Amstrad_CPC_Collection
+    type: ddl
+    url: https://archive.org/download/amstrad-cpc-cdt-collection/AmstradCPC-CDT_Collection.zip
+    folder: Software/
+    # That folder is correct, it handily unzips into a CDT folder
+    extract: true
+
+packs:
+  - id: minimal
+    name: Minimal Starter Set
+    description: Essential BIOS files and the tape that shipped with the CPC464
+    estimated_size: 11MB
+    sources: [BIOS_boot, BIOS_cpc464nd, intro_cdt, 464_system_disk]
+
+  - id: cpc_top10
+    name: Top 10 Games
+    description: Top 10 Games as ranked by CPCWiki. Downlaod from IA.
+    estimated_size: 11MB
+    sources: [BIOS_boot, BIOS_cpc464nd, CPC_Top10_Games]
+    info_links:
+      - label: CPCWiki Top Games
+        url: https://www.cpcwiki.eu/index.php/Top_games
+
+  - id: TOSEC_CPC
+    name: TOSEC Amstrad CPC Collection
+    description: There are 5575 images in this collection for the Amstrad CPC disk image, including games, demos, applications, public domain, and compilations.
+    estimated_size: 250MB
+    sources: [TOSEC_Amstrad_CPC_Collection]
+    info_links:
+      - label: Home on Internet Archive
+        url: https://archive.org/details/Amstrad_CPC_TOSEC_2012_04_23
+      - label: TOSEC Site
+        url:  https://mail.tosecdev.org/
+
+  - id: VINCENT_CDT
+    name: VincentGR's Amstrad CPC Cassette Image (CDT) Collection
+    description: A collection of over 3500 tape images in CDT format.
+    estimated_size: 114MB
+    sources: [VincentC_Amstrad_CPC_Collection]
+    info_links:
+      - label: Home on Internet Archive
+        url: https://archive.org/details/amstrad-cpc-cdt-collection
+  

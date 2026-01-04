@@ -1,0 +1,88 @@
+# Example configurations for multiple URLs per source feature
+# This demonstrates the flexible URL configuration options
+
+archive_sources:
+  "Example":
+    "MultiFileSystem":
+      base_path: Example/MultiFile/Software
+      sources:
+        # Example 1: Legacy single URL (backward compatible)
+        - name: Single File Download
+          type: ddl
+          url: https://example.com/single-file.zip
+          folder: Collections
+          extract_from_archive:
+            - specific-file.rom
+        
+        # Example 2: Simple list of URLs (all use same folder and settings)
+        - name: Multi-Part Collection
+          type: ddl
+          urls:
+            - https://example.com/part1.zip
+            - https://example.com/part2.zip
+            - https://example.com/part3.zip
+          folder: Collections/MultiPart
+        
+        # Example 3: Rich URL objects (per-URL customization)
+        - name: BIOS Files from Multiple Sources
+          type: ddl
+          urls:
+            - url: https://example.com/bios-usa.zip
+              folder: BIOS
+              extract_from_archive:
+                - usa-bios.rom
+            - url: https://example.com/bios-europe.zip
+              folder: BIOS
+              extract_from_archive:
+                - eur-bios.rom
+            - url: https://example.com/bios-japan.zip
+              folder: BIOS/Regional
+              extract_from_archive:
+                - jpn-bios.rom
+        
+        # Example 4: Mixed simple and rich URLs
+        - name: Software Collection Parts
+          type: ddl
+          folder: Software/Games  # Default folder
+          urls:
+            - https://example.com/games-a-to-m.zip  # Uses default folder
+            - url: https://example.com/games-n-to-z.zip
+              folder: Software/Games/NtoZ  # Override folder
+            - url: https://example.com/demos.zip
+              folder: Software/Demos  # Different folder entirely
+              extract_from_archive:
+                - demo1.bin
+                - demo2.bin
+        
+        # Example 5: Source-level rename applies after all URLs downloaded
+        - name: Multi-Archive with Rename
+          type: ddl
+          folder: Downloads
+          urls:
+            - https://example.com/archive1.zip
+            - https://example.com/archive2.zip
+          extract_from_archive:
+            - file1.rom
+            - file2.rom
+          rename:
+            - from: file1.rom
+              to: ../../BIOS/renamed-file1.rom
+            - from: file2.rom
+              to: ../../BIOS/renamed-file2.rom
+
+# How this works:
+# 1. If 'url' (singular) exists, it's treated as a single URL (legacy)
+# 2. If 'urls' (plural) exists, it can be:
+#    a. List of strings: ["url1", "url2"] - all use source-level settings
+#    b. List of objects: [{url, folder, extract_from_archive}, ...] - per-URL settings
+# 3. Settings inheritance:
+#    - url: required in each URL object
+#    - folder: URL-level overrides source-level, defaults to ""
+#    - extract_from_archive: URL-level overrides source-level
+# 4. Source-level operations (rename) run after all URLs processed
+
+# Use cases:
+# - Download multi-part archives from same site
+# - Collect BIOS files from different regional sources
+# - Download large collections split across multiple files
+# - Combine files from different folders into one location

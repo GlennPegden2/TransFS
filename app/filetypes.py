@@ -2,9 +2,13 @@ from typing import Dict, List, Tuple
 
 def parse_filetype_map(filetypes_entry) -> Tuple[Dict[str, List[str]], Dict[str, str]]:
     """
-    Parse a filetypes entry like {'ROM': 'ROM, BIN:ROM, HEX:ROM'}
-    Returns a dict: {virtual_ext: [real_exts]}
+    Parse a filetypes entry like {'ROM': 'ROM, BIN:ROM, HEX:ROM'} or {'HDs': 'MMB:VHD,VHD'}
+    Returns a dict: {virtual_folder: [real_exts]}
     and a reverse map: {real_ext: virtual_ext}
+    
+    The folder name (key) is always used as the virtual folder.
+    For entries with REAL:VIRTUAL syntax, the REAL extension is added to the folder's
+    real_exts list, and the reverse map records REAL->VIRTUAL for display transformation.
     """
     mapping = {}
     reverse = {}
@@ -13,10 +17,12 @@ def parse_filetype_map(filetypes_entry) -> Tuple[Dict[str, List[str]], Dict[str,
         for ext in exts.split(','):
             ext = ext.strip()
             if ':' in ext:
+                # REAL:VIRTUAL syntax - add REAL to this folder, map REAL->VIRTUAL for display
                 real_ext, virt_ext = ext.split(':', 1)
-                mapping.setdefault(virt_ext.upper(), []).append(real_ext.upper())
+                mapping[virtual_folder.upper()].append(real_ext.upper())
                 reverse[real_ext.upper()] = virt_ext.upper()
             else:
+                # Plain extension - add to this folder
                 mapping[virtual_folder.upper()].append(ext.upper())
                 # Do NOT add to reverse here!
     return mapping, reverse

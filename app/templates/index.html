@@ -7,6 +7,19 @@
 </head>
 <body>
     <h1>TransFS Dashboard</h1>
+    
+    <!-- Tab Navigation -->
+    <div class="tab-container">
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="switchTab('download')">Download</button>
+            <button class="tab-button" onclick="switchTab('browse-native')">Browse Native</button>
+            <button class="tab-button" onclick="switchTab('browse-virtual')">Browse Virtual</button>
+            <button class="tab-button" onclick="switchTab('debug')">Debug</button>
+        </div>
+    </div>
+    
+    <!-- Download Tab -->
+    <div id="download-tab" class="tab-content active">
     <form id="selectionForm">
         <div class="columns">
             <div>
@@ -17,63 +30,405 @@
                 <h2>Systems</h2>
                 <div id="systems"></div>
             </div>
+            <div>
+                <h2>Packs</h2>
+                <div id="packs-info" style="color:#888;">Select a system to view available packs</div>
+                <div id="packs"></div>
+            </div>
         </div>
-        <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:100px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
-        <button type="button" onclick="submitDownload()">Download</button>
-        <button type="button" onclick="submitBuild()">Build</button>
+        <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:300px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
+        <button type="button" id="installPacksBtn" onclick="submitInstallPacks()" style="background:#2c7;" title="Download and install selected packs (downloads + builds automatically)">Install Packs</button>
         <button type="button" onclick="document.getElementById('log').textContent = ''" style="background:#888;">Clear Log</button>
     </form>
-
-    <!-- FUSE log window -->
-    <div style="margin-top:2em;">
-        <h2>FUSE log</h2>
-        <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
-        <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
-        <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
+    </div>
+    
+    <!-- Browse Native Tab -->
+    <div id="browse-native-tab" class="tab-content">
+        <div class="file-browser">
+            <h2>Native File System Browser</h2>
+            <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
+                <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">/mnt/filestorefs/Native</div>
+            </div>
+            <div class="file-list" id="native-files">Loading...</div>
+        </div>
+    </div>
+    
+    <!-- Browse Virtual Tab -->
+    <div id="browse-virtual-tab" class="tab-content">
+        <div class="file-browser">
+            <h2>Virtual File System Browser</h2>
+            <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
+                <div class="breadcrumb" id="virtual-breadcrumb" style="flex: 1; margin: 0;">/mnt/transfs</div>
+            </div>
+            <div class="file-list" id="virtual-files">Loading...</div>
+            <div id="virtual-timing" style="padding: 0.5em; margin-top: 1em; background: #f0f0f0; border-radius: 4px; font-size: 0.85em; color: #666; display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1em;">
+                    <div>
+                        API request took: <strong id="virtual-timing-value">0s</strong>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 1em;">
+                        <div id="cache-status" style="display: flex; align-items: center; gap: 0.5em;">
+                            <span id="cache-indicator" style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #999;" title="Cache status"></span>
+                            <span id="cache-text" style="font-size: 0.9em;">Unknown</span>
+                        </div>
+                        <button id="recache-btn" onclick="recacheCurrentDir()" style="padding: 0.3em 0.8em; font-size: 0.85em; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;" title="Clear cache and reload">Recache</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Debug Tab -->
+    <div id="debug-tab" class="tab-content">
+        <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>FUSE Log</h2>
+            <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
+            <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
+            <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
+        </div>
     </div>
 
     <script>
         let manufacturerSystemMap = {};
+        let currentNativePath = '/mnt/filestorefs/Native';
+        let currentVirtualPath = '/mnt/transfs';
+        
+        // Tab switching
+        function switchTab(tabName, skipHistory = false) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            // Update URL without adding to history if initial load
+            if (!skipHistory) {
+                if (tabName === 'browse-native') {
+                    history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${currentNativePath.replace('/mnt/filestorefs/Native', '')}`);
+                } else if (tabName === 'browse-virtual') {
+                    history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
+                } else {
+                    history.pushState({ tab: tabName }, '', '/');
+                }
+            }
+            
+            // Load file browser if needed
+            if (tabName === 'browse-native') {
+                loadDirectory(currentNativePath, 'native', true);
+            } else if (tabName === 'browse-virtual') {
+                loadDirectory(currentVirtualPath, 'virtual', true);
+            }
+        }
+        
+        // Load directory contents
+        async function loadDirectory(path, type, skipHistory = false) {
+            const fileList = document.getElementById(type + '-files');
+            const breadcrumb = document.getElementById(type + '-breadcrumb');
+            
+            fileList.innerHTML = '<div style="padding:1em;">Loading...</div>';
+            breadcrumb.textContent = path;
+            
+            // Hide timing bar during load for virtual
+            if (type === 'virtual') {
+                const timingBar = document.getElementById('virtual-timing');
+                if (timingBar) timingBar.style.display = 'none';
+            }
+            
+            if (type === 'native') {
+                currentNativePath = path;
+            } else {
+                currentVirtualPath = path;
+            }
+            
+            // Update URL with current path
+            if (!skipHistory) {
+                const urlPath = type === 'native' 
+                    ? `/browse/native${path.replace('/mnt/filestorefs/Native', '')}`
+                    : `/browse/virtual${path.replace('/mnt/transfs', '')}`;
+                history.pushState({ tab: 'browse-' + type, path: path }, '', urlPath || '/browse/' + type);
+            }
+            
+            try {
+                // Start timing for virtual requests
+                const startTime = type === 'virtual' ? performance.now() : null;
+                
+                const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                // Calculate elapsed time for virtual requests
+                if (type === 'virtual' && startTime !== null) {
+                    const elapsedMs = Math.round(performance.now() - startTime);
+                    const elapsedSec = (elapsedMs / 1000).toFixed(1);
+                    const timingBar = document.getElementById('virtual-timing');
+                    const timingValue = document.getElementById('virtual-timing-value');
+                    if (timingBar && timingValue) {
+                        timingValue.textContent = elapsedSec + 's';
+                        timingBar.style.display = 'block';
+                    }
+                    
+                    // Check cache status
+                    updateCacheStatus(path);
+                }
+                
+                if (data.error) {
+                    fileList.innerHTML = `<div class="error">${escapeHtml(data.error)}</div>`;
+                    return;
+                }
+                
+                let html = '';
+                
+                // Add parent directory link if not at root
+                const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
+                if (!roots.includes(path)) {
+                    const parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    html += `<div class="file-item folder" onclick="loadDirectory('${parentPath}', '${type}')">
+                        <span class="icon">📁</span>
+                        <span class="name">..</span>
+                    </div>`;
+                }
+                
+                // Sort: directories first, then files
+                data.entries.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+                
+                // Add entries
+                for (const entry of data.entries) {
+                    const fullPath = path + '/' + entry.name;
+                    const icon = entry.type === 'directory' ? '📁' : '📄';
+                    const sizeStr = entry.size !== undefined ? formatSize(entry.size) : '';
+                    const onclick = entry.type === 'directory' ? `onclick="loadDirectory('${fullPath}', '${type}')"` : '';
+                    const className = entry.type === 'directory' ? 'folder' : 'file';
+                    
+                    html += `<div class="file-item ${className}" ${onclick}>
+                        <span class="icon">${icon}</span>
+                        <span class="name">${escapeHtml(entry.name)}</span>
+                        <span class="size">${sizeStr}</span>
+                    </div>`;
+                }
+                
+                // If directory is empty and not at root, show .. entry
+                if (data.entries.length === 0 && !roots.includes(path)) {
+                    const parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    html = `<div class="file-item folder" onclick="loadDirectory('${parentPath}', '${type}')">
+                        <span class="icon">📁</span>
+                        <span class="name">..</span>
+                    </div>`;
+                }
+                
+                if (data.entries.length === 0 && roots.includes(path)) {
+                    html = '<div style="padding:1em; color:#888;">Empty directory</div>';
+                }
+                
+                fileList.innerHTML = html;
+            } catch (e) {
+                fileList.innerHTML = `<div class="error">Error loading directory: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+        
+        // Format file size
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+        
+        // Sanitize HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
         async function loadData() {
             // Load clients
             const clients = await fetch('/api/clients').then(r => r.json());
-            document.getElementById('clients').innerHTML = clients.map(c =>
-                `<label><input type="checkbox" name="clients" value="${c}"> ${c}</label><br>`
-            ).join('');
+            document.getElementById('clients').innerHTML = clients.map(c => {
+                const safeClient = escapeHtml(c);
+                const logoName = c.toLowerCase().replace(/\s+/g, '');
+                const logoSrc = `/static/logos/clients/${logoName}.png`;
+                return `<label style="display:flex;align-items:center;margin-bottom:0.5em;">
+                    <input type="checkbox" name="clients" value="${safeClient}" style="margin-right:0.5em;">
+                    <img class="client-logo" src="${logoSrc}" alt="${safeClient} logo" onerror="this.style.display='none'">
+                    <span>${safeClient}</span>
+                </label>`;
+            }).join('');
+            
+            // Add listener to client checkboxes for pack loading
+            document.querySelectorAll('input[name="clients"]').forEach(cb => {
+                cb.addEventListener('change', loadPacksForSelection);
+            });
+            
             // Load systems meta (now grouped by manufacturer)
             const meta = await fetch('/api/systems/meta').then(r => r.json());
             manufacturerSystemMap = meta; // Save for later use
             let html = '';
             let idx = 0;
             for (const manufacturer in meta) {
+                const safeManufacturer = escapeHtml(manufacturer);
                 const sysDivId = `systems-for-${manufacturer.replace(/\s+/g, '').toLowerCase()}`;
                 html += `
                   <div class="manufacturer-group">
                     <div class="manufacturer-header" style="cursor:pointer;" onclick="toggleSystems('${sysDivId}')">
                       <div style="display:flex;align-items:center;gap:0.5em;">
-                        <img class="manufacturer-logo" src="/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png" alt="${manufacturer} logo" onerror="this.style.display='none'">
-                        <span>${manufacturer}</span>
+                        <img class="manufacturer-logo" src="/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png" alt="${safeManufacturer} logo" onerror="this.style.display='none'">
+                        <span>${safeManufacturer}</span>
                       </div>
                       <span id="${sysDivId}-toggle" class="toggle-icon">[+]</span>
                     </div>
                     <div class="system-grid" id="${sysDivId}" style="display:none;">
                 `;
-                html += meta[manufacturer].map(s =>
-                    `<div class="system-card">
+                html += meta[manufacturer].map(s => {
+                    const safeSystem = escapeHtml(s);
+                    return `<div class="system-card">
                         <label>
-                            <input type="checkbox" name="systems" value="${manufacturer}|||${s}">
-                            <img class="system-logo" src="/static/logos/systems/${s}.png" alt="${s} logo" onerror="this.style.display='none'">
-                            <span>${s}</span>
+                            <input type="checkbox" name="systems" value="${safeManufacturer}|||${safeSystem}">
+                            <img class="system-logo" src="/static/logos/systems/${s}.png" alt="${safeSystem} logo" onerror="this.style.display='none'">
+                            <span>${safeSystem}</span>
                         </label>
-                    </div>`
-                ).join('');
+                    </div>`;
+                }).join('');
                 html += `</div></div>`;
                 idx++;
             }
             document.getElementById('systems').innerHTML = html;
+            
+            // Add listener to system checkboxes for pack loading
+            document.querySelectorAll('input[name="systems"]').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    loadPacksForSelection();
+                    updateButtonStates();
+                });
+            });
         }
         loadData();
+        
+        // Load packs when client + system are selected
+        async function loadPacksForSelection() {
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
+            
+            if (!checkedClient || checkedSystems.length === 0) {
+                document.getElementById('packs-info').textContent = 'Select a client and system to view available packs';
+                document.getElementById('packs').innerHTML = '';
+                return;
+            }
+            
+            if (checkedSystems.length > 1) {
+                document.getElementById('packs-info').textContent = 'Select only one system to view packs';
+                document.getElementById('packs').innerHTML = '';
+                return;
+            }
+            
+            const clientName = checkedClient.value;
+            const [manufacturer, systemName] = checkedSystems[0].value.split('|||');
+            
+            try {
+                // Get system name from clients/{client}/systems first
+                const systemsResponse = await fetch(`/api/clients/${clientName}/systems`);
+                const systems = await systemsResponse.json();
+                
+                // Find the system that matches the canonical name
+                let matchingSystemName = null;
+                for (const sys of systems) {
+                    // Fetch pack info to check canonical name
+                    const packResponse = await fetch(`/api/clients/${clientName}/systems/${sys}/packs`);
+                    if (packResponse.ok) {
+                        const packData = await packResponse.json();
+                        if (packData.canonical_name === systemName) {
+                            matchingSystemName = sys;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!matchingSystemName) {
+                    document.getElementById('packs-info').textContent = 'No packs available for this system';
+                    document.getElementById('packs').innerHTML = '';
+                    return;
+                }
+                
+                const response = await fetch(`/api/clients/${clientName}/systems/${matchingSystemName}/packs`);
+                if (!response.ok) {
+                    document.getElementById('packs-info').textContent = 'Failed to load packs';
+                    document.getElementById('packs').innerHTML = '';
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.error || !data.packs || data.packs.length === 0) {
+                    document.getElementById('packs-info').textContent = 'No packs available for this system';
+                    document.getElementById('packs').innerHTML = '';
+                    return;
+                }
+                
+                const safeSystemName = escapeHtml(data.system);
+                document.getElementById('packs-info').textContent = `Available packs for ${safeSystemName}:`;
+                document.getElementById('packs').innerHTML = data.packs.map(pack => {
+                    const safePackId = escapeHtml(pack.id);
+                    const safePackName = escapeHtml(pack.name);
+                    const safePackSize = escapeHtml(pack.estimated_size);
+                    const safePackDesc = escapeHtml(pack.description);
+                    const safeClientName = escapeHtml(clientName);
+                    const safeMatchingSystemName = escapeHtml(matchingSystemName);
+                    
+                    // Build info links HTML if available
+                    let infoLinksHtml = '';
+                    if (pack.info_links && pack.info_links.length > 0) {
+                        const links = pack.info_links.map(link => {
+                            const safeLabel = escapeHtml(link.label);
+                            const safeUrl = escapeHtml(link.url);
+                            return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:#2d8cf0; text-decoration:none; margin-right:0.8em;">🔗 ${safeLabel}</a>`;
+                        }).join('');
+                        infoLinksHtml = `<br><span style="font-size:0.85em;">${links}</span>`;
+                    }
+                    
+                    return `
+                    <div style="margin:0.5em 0; padding:0.5em; border:1px solid #333; border-radius:4px; background:#f9f9f9;">
+                        <label style="display:flex; align-items:start; gap:0.5em;">
+                            <input type="checkbox" name="packs" value="${safePackId}" data-client="${safeClientName}" data-system="${safeMatchingSystemName}">
+                            <div>
+                                <strong>${safePackName}</strong> <em style="color:#666;">(${safePackSize})</em>
+                                <br><span style="font-size:0.9em; color:#555;">${safePackDesc}</span>${infoLinksHtml}
+                            </div>
+                        </label>
+                    </div>
+                    `;
+                }).join('');
+                
+                // Add listeners to pack checkboxes to update button states
+                document.querySelectorAll('input[name="packs"]').forEach(cb => {
+                    cb.addEventListener('change', updateButtonStates);
+                });
+                updateButtonStates();
+            } catch (e) {
+                document.getElementById('packs-info').textContent = 'Error loading packs: ' + e.message;
+                document.getElementById('packs').innerHTML = '';
+            }
+        }
+
+        // Update button enabled/disabled states based on selections
+        function updateButtonStates() {
+            const hasCheckedPacks = document.querySelector('input[name="packs"]:checked') !== null;
+            const installPacksBtn = document.getElementById('installPacksBtn');
+            
+            if (hasCheckedPacks) {
+                // Packs selected - enable Install Packs button
+                installPacksBtn.disabled = false;
+                installPacksBtn.style.opacity = '1';
+                installPacksBtn.title = 'Download and install selected packs (downloads + builds automatically)';
+            } else {
+                // No packs selected - disable Install Packs button
+                installPacksBtn.disabled = true;
+                installPacksBtn.style.opacity = '0.5';
+                installPacksBtn.title = 'Select packs to enable this button';
+            }
+        }
 
         // Toggle function to show/hide systems for a manufacturer
         function toggleSystems(sysDivId) {
@@ -93,48 +448,32 @@
             logDiv.textContent += msg;
             logDiv.scrollTop = logDiv.scrollHeight;
         }
-
-        async function submitDownload() {
-            const checked = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
-            if (checked.length === 0) {
-                appendLog("Please select at least one system to download.");
+        
+        // Pack installation handler
+        async function submitInstallPacks() {
+            const checkedPacks = Array.from(document.querySelectorAll('input[name="packs"]:checked'));
+            
+            if (checkedPacks.length === 0) {
+                appendLog("Please select at least one pack to install.\n");
                 return;
             }
-            for (const box of checked) {
-                const [manufacturer, system] = box.value.split('|||');
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ manufacturer, system })
-                });
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let { value, done } = await reader.read();
-                while (!done) {
-                    appendLog(decoder.decode(value));
-                    ({ value, done } = await reader.read());
-                }
-            }
-        }
-
-        // Build handler
-        async function submitBuild() {
-            const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
-            const checkedClients = Array.from(document.querySelectorAll('input[name="clients"]:checked'));
-            if (checkedSystems.length === 0 || checkedClients.length === 0) {
-                appendLog("Please select at least one system and one client to build.");
-                return;
-            }
-            const builds = checkedSystems.map(box => {
-                const [manufacturer, system] = box.value.split('|||');
-                return { manufacturer, system };
-            });
-            const clients = checkedClients.map(box => box.value);
-
-            const response = await fetch('/api/build', {
+            
+            // All packs should have the same client/system
+            const client = checkedPacks[0].dataset.client;
+            const system = checkedPacks[0].dataset.system;
+            const packIds = checkedPacks.map(box => box.value);
+            
+            appendLog(`Installing ${packIds.length} pack(s) for ${system}...\n`);
+            
+            const response = await fetch(`/api/clients/${client}/systems/${system}/install-packs`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ builds, clients })
+                body: JSON.stringify({
+                    client: client,
+                    system: system,
+                    pack_ids: packIds,
+                    skip_existing: true
+                })
             });
 
             const reader = response.body.getReader();
@@ -163,8 +502,122 @@
             }
         }
 
+        // Cache status functions
+        async function updateCacheStatus(path) {
+            try {
+                const response = await fetch(`/api/cache/status?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                const indicator = document.getElementById('cache-indicator');
+                const text = document.getElementById('cache-text');
+                
+                if (data.cached) {
+                    indicator.style.background = '#4CAF50'; // Green
+                    indicator.title = 'Cached';
+                    text.textContent = `Cached (${data.entry_count} entries)`;
+                } else {
+                    indicator.style.background = '#FF9800'; // Orange
+                    indicator.title = 'Not cached';
+                    text.textContent = 'Not cached';
+                }
+            } catch (e) {
+                console.error('Failed to check cache status:', e);
+            }
+        }
+
+        async function recacheCurrentDir() {
+            const path = currentVirtualPath;
+            const btn = document.getElementById('recache-btn');
+            
+            // Disable button and show loading state
+            btn.disabled = true;
+            btn.textContent = 'Recaching...';
+            
+            try {
+                // Clear cache for this path
+                await fetch(`/api/cache/clear?path=${encodeURIComponent(path)}`, { method: 'POST' });
+                
+                // Update cache indicator to show it's being rebuilt
+                const indicator = document.getElementById('cache-indicator');
+                const text = document.getElementById('cache-text');
+                indicator.style.background = '#2196F3'; // Blue
+                text.textContent = 'Rebuilding cache...';
+                
+                // Reload the directory (this will rebuild the cache)
+                await loadPath('virtual', path, true);
+                
+            } catch (e) {
+                console.error('Failed to recache:', e);
+                alert('Failed to recache directory');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Recache';
+            }
+        }
+        
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', (event) => {
+            if (event.state) {
+                if (event.state.tab === 'browse-native') {
+                    const path = event.state.path || '/mnt/filestorefs/Native';
+                    currentNativePath = path;
+                    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('browse-native-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[1].classList.add('active');
+                    loadDirectory(path, 'native', true);
+                } else if (event.state.tab === 'browse-virtual') {
+                    const path = event.state.path || '/mnt/transfs';
+                    currentVirtualPath = path;
+                    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('browse-virtual-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[2].classList.add('active');
+                    loadDirectory(path, 'virtual', true);
+                } else {
+                    // Navigate to download tab or other tabs
+                    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('download-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[0].classList.add('active');
+                }
+            }
+        });
+        
+        // Parse URL on page load to restore state
+        function initializeFromURL() {
+            const path = window.location.pathname;
+            if (path.startsWith('/browse/native')) {
+                const dirPath = path.replace('/browse/native', '') || '';
+                const fullPath = '/mnt/filestorefs/Native' + dirPath;
+                currentNativePath = fullPath;
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.getElementById('browse-native-tab').classList.add('active');
+                document.querySelectorAll('.tab-button')[1].classList.add('active');
+                loadDirectory(fullPath, 'native', true);
+                history.replaceState({ tab: 'browse-native', path: fullPath }, '', path);
+            } else if (path.startsWith('/browse/virtual')) {
+                const dirPath = path.replace('/browse/virtual', '') || '';
+                const fullPath = '/mnt/transfs' + dirPath;
+                currentVirtualPath = fullPath;
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.getElementById('browse-virtual-tab').classList.add('active');
+                document.querySelectorAll('.tab-button')[2].classList.add('active');
+                loadDirectory(fullPath, 'virtual', true);
+                history.replaceState({ tab: 'browse-virtual', path: fullPath }, '', path);
+            } else {
+                // Default to download tab
+                history.replaceState({ tab: 'download' }, '', '/');
+            }
+        }
+
         // Optionally, auto-refresh FUSE log every 10 seconds:
         // setInterval(refreshFuseLog, 10000);
+        
+        // Initialize from URL on page load
+        window.addEventListener('DOMContentLoaded', initializeFromURL);
     </script>
 </body>
 </html>

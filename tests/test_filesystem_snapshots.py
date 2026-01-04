@@ -182,6 +182,45 @@ class TestComparativeAnalysis:
         assert comparison == snapshot
 
 
+class TestMiSTerSystems:
+    """Tests for MiSTer system configurations."""
+    
+    def test_bbc_micro_structure(self, transfs_volume, filesystem_walker, snapshot):
+        """Verify BBC Micro virtual filesystem structure.
+        
+        Tests:
+        - boot.vhd file presence
+        - HDs folder with MMB->VHD extension aliasing
+        - FDs folder with SSD files
+        - Transparent ZIP access for flatten mode
+        """
+        bbc_path = transfs_volume / "MiSTer" / "BBCMicro"
+        
+        if not bbc_path.exists():
+            pytest.skip("BBC Micro not configured")
+        
+        state = filesystem_walker(bbc_path, max_depth=2, include_metadata=True)
+        assert state == snapshot
+    
+    def test_acorn_electron_structure(self, transfs_volume, filesystem_walker, snapshot):
+        """Verify Acorn Electron virtual filesystem structure.
+        
+        Tests:
+        - boot.vhd file presence
+        - HDs folder with MMB->VHD extension aliasing
+        - Tapes folder with UEF files
+        - FDs folder with ADF/DFS/HFE/SSD files
+        - Hierarchical mode ZIP handling
+        """
+        electron_path = transfs_volume / "MiSTer" / "AcornElectron"
+        
+        if not electron_path.exists():
+            pytest.skip("Acorn Electron not configured")
+        
+        state = filesystem_walker(electron_path, max_depth=2, include_metadata=True)
+        assert state == snapshot
+
+
 class TestRegressionDetection:
     """Tests specifically designed to catch common regression patterns."""
     
