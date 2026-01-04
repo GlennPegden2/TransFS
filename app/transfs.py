@@ -100,96 +100,76 @@ class TransFS(Passthrough):
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
         Read directory entries using token-based callback (pyfuse3 style).
-        This replaces the generator-based readdir from fusepy.
+        Optimized to avoid expensive lookup() calls for every entry.
         """
         t_start = time.time()
         path = self._inode_to_path(fh)  # Use fh as inode (from opendir)
-        logger.debug("DEBUG: readdir(inode=%s) path=%s", fh, path)
+        logger.info("READDIR START: path=%s start_id=%d", path, start_id)
         
         xfull_path = path  # Already full path from inode map
         t_parse_start = time.time()
         
         # Get virtual entries
-        virtual_entries = set(parse_trans_path(self.config, self.root, xfull_path))
+        virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
         t_parse_elapsed = time.time() - t_parse_start
-        logger.debug(f"DEBUG readdir: xfull_path={xfull_path}, virtual_entries count={len(virtual_entries)} parse_time=%.4fs", t_parse_elapsed)
-        
-        # Build entry list with (inode, name, attr) tuples
-        entries = []
-        entry_id = 1  # Start IDs from 1
-        
-        # For ZIP-internal paths, trust zippath results
-        is_zip_internal = "//" not in xfull_path and ".zip/" in xfull_path
-        
-        if is_zip_internal:
-            # Fast path: trust zippath results
-            for entry_name in virtual_entries:
-                entry_full_path = os.path.join(xfull_path, entry_name)
-                try:
-                    # Get inode for this entry (will stat it)
-                    attr = await self.lookup(fh, entry_name.encode('utf-8'))
-                    entries.append((attr.st_ino, entry_name, attr, entry_id))
-                    entry_id += 1
-                except (FUSEError, OSError):
-                    continue
-        else:
-            # Slow path: validate each entry
-            for entry_name in virtual_entries:
-                entry_full_path = os.path.join(xfull_path, entry_name)
-                entry_source_path = get_source_path(logger, self.config, self.root, entry_full_path)
-                
-                # Check if backing file exists
-                if entry_source_path:
-                    if isinstance(entry_source_path, tuple):
-                        zip_path, _ = entry_source_path
-                        if os.path.exists(zip_path):
-                            try:
-                                attr = await self.lookup(fh, entry_name.encode('utf-8'))
-                                entries.append((attr.st_ino, entry_name, attr, entry_id))
-                                entry_id += 1
-                            except (FUSEError, OSError):
-                                continue
-                    else:
-                        if os.path.exists(entry_source_path):
-                            try:
-                                attr = await self.lookup(fh, entry_name.encode('utf-8'))
-                                entries.append((attr.st_ino, entry_name, attr, entry_id))
-                                entry_id += 1
-                            except (FUSEError, OSError):
-                                continue
-                # Virtual directories (like ...SoftwareArchives...)
-                elif entry_name.startswith('...') and entry_name.endswith('...'):
-                    try:
-                        attr = await self.lookup(fh, entry_name.encode('utf-8'))
-                        entries.append((attr.st_ino, entry_name, attr, entry_id))
-                        entry_id += 1
-                    except (FUSEError, OSError):
-                        continue
+        logger.info(f"READDIR: parsed {len(virtual_entries)} virtual entries in {t_parse_elapsed:.4f}s")
         
         # Add real directory entries if directory exists
         if os.path.isdir(xfull_path):
             real_entries = os.listdir(xfull_path)
-            logger.debug(f"DEBUG readdir: real directory exists, real_entries={real_entries}")
-            existing_names = {name for _, name, _, _ in entries}
+            existing_names = set(virtual_entries)
             for entry_name in real_entries:
                 if entry_name not in existing_names:
-                    try:
-                        attr = await self.lookup(fh, entry_name.encode('utf-8'))
-                        entries.append((attr.st_ino, entry_name, attr, entry_id))
-                        entry_id += 1
-                    except (FUSEError, OSError):
-                        continue
+                    virtual_entries.append(entry_name)
+            logger.info(f"READDIR: added {len(real_entries)} real entries, total={len(virtual_entries)}")
+        
+        # Send entries with minimal attributes (defer full stat to getattr calls)
+        entry_id = 1
+        sent_count = 0
+        for entry_name in virtual_entries:
+            if entry_id <= start_id:
+                entry_id += 1
+                continue
+            
+            # Create minimal attributes - full details will come from getattr when needed
+            # Use hash of path for synthetic inode
+            entry_path = os.path.join(xfull_path, entry_name)
+            synthetic_inode = abs(hash(entry_path)) & 0x7FFFFFFF
+            if synthetic_inode == 0 or synthetic_inode == pyfuse3.ROOT_INODE:
+                synthetic_inode = abs(hash(entry_path + "_alt")) & 0x7FFFFFFF
+            
+            # Create minimal entry attributes (defer expensive stat)
+            entry = pyfuse3.EntryAttributes()
+            entry.st_ino = synthetic_inode
+            entry.st_mode = 0o040755  # Directory by default, getattr will correct
+            entry.st_nlink = 2
+            entry.st_uid = 0
+            entry.st_gid = 0
+            entry.st_size = 4096
+            entry.st_atime_ns = int(time.time() * 1e9)
+            entry.st_mtime_ns = int(time.time() * 1e9)
+            entry.st_ctime_ns = int(time.time() * 1e9)
+            entry.st_rdev = 0
+            entry.generation = 0
+            entry.entry_timeout = 0
+            entry.attr_timeout = 0
+            entry.st_blksize = 512
+            entry.st_blocks = 8
+            
+            # Add to inode map for later getattr calls
+            self._add_path(synthetic_inode, entry_path)
+            
+            # Send to client
+            if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                logger.info(f"READDIR: client buffer full after {sent_count} entries")
+                break  # Client buffer full
+            
+            sent_count += 1
+            entry_id += 1
         
         t_total = time.time() - t_start
-        logger.info(f"READDIR PROFILE: {path} entries={len(entries)} parse_time=%.4fs total_time=%.4fs", t_parse_elapsed, t_total)
-        logger.debug(f"DEBUG readdir: final entries count={len(entries)}")
-        
-        # Send entries via token callback
-        for ino, name, attr, eid in entries:
-            if eid <= start_id:
-                continue
-            if not pyfuse3.readdir_reply(token, name.encode('utf-8'), attr, eid):
-                break  # Client buffer full
+        logger.info(f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} parse={t_parse_elapsed:.4f}s total={t_total:.4f}s")
+
 
     async def getattr(self, inode: InodeT, ctx=None):
         """
@@ -452,30 +432,65 @@ class TransFS(Passthrough):
         Handles virtual path translation.
         """
         name_str = name.decode('utf-8') if isinstance(name, bytes) else name
-        logger.debug(f"lookup for {name_str} in inode {parent_inode}")
-        
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
+        logger.info(f"LOOKUP: '{name_str}' in inode {parent_inode}, parent_path={parent_path}, full_path={path}")
         
-        # Check if this is a virtual path
-        if is_virtual_path(self.config, self.root, path):
-            # Get attributes via getattr which handles virtual paths
-            # First, we need to assign an inode
-            # Use hash of path for synthetic inode
-            synthetic_inode = abs(hash(path)) & 0x7FFFFFFF
-            if synthetic_inode == 0:
-                synthetic_inode = 1
-            if synthetic_inode == pyfuse3.ROOT_INODE:
-                synthetic_inode += 1
-            
-            # Add to inode map
+        # Special handling for . and ..
+        if name_str == '.':
+            logger.info(f"LOOKUP: returning parent inode for '.'")
+            return await self.getattr(parent_inode, ctx)
+        if name_str == '..':
+            parent_of_parent = str(Path(parent_path).parent)
+            if parent_of_parent in self._inode_path_map.values():
+                for inode, p in self._inode_path_map.items():
+                    if p == parent_of_parent or (isinstance(p, set) and parent_of_parent in p):
+                        logger.info(f"LOOKUP: returning inode {inode} for '..'")
+                        return await self.getattr(inode, ctx)
+            # Fallback: use ROOT_INODE if we're at the top
+            logger.info(f"LOOKUP: returning ROOT_INODE for '..'")
+            return await self.getattr(pyfuse3.ROOT_INODE, ctx)
+        
+        # Try to get source path (handles virtual translation)
+        source_path = get_source_path(logger, self.config, self.root, path)
+        logger.info(f"LOOKUP: source_path={source_path}")
+        
+        # Generate inode for this path
+        # Use hash of path for synthetic inode (deterministic)
+        synthetic_inode = abs(hash(path)) & 0x7FFFFFFF
+        if synthetic_inode == 0:
+            synthetic_inode = 1
+        if synthetic_inode == pyfuse3.ROOT_INODE:
+            synthetic_inode += 1
+        
+        # Check if it's a real file that exists
+        if source_path and isinstance(source_path, str) and os.path.exists(source_path):
+            # Real file - use its actual inode
+            stat = os.lstat(source_path)
+            actual_inode = stat.st_ino
+            self._add_path(actual_inode, path)
+            logger.info(f"LOOKUP: SUCCESS - real file, inode={actual_inode}")
+            return await self.getattr(actual_inode, ctx)
+        
+        # Check if it's a file in a zip
+        if source_path and isinstance(source_path, tuple):
+            # File in zip - use synthetic inode
             self._add_path(synthetic_inode, path)
-            
-            # Get attributes
+            logger.info(f"LOOKUP: SUCCESS - zip file, synthetic_inode={synthetic_inode}")
             return await self.getattr(synthetic_inode, ctx)
         
-        # Use parent class lookup for real files
-        return await super().lookup(parent_inode, name, ctx)
+        # Check if it's a virtual directory/file by checking if it would be listed
+        parent_entries = set(parse_trans_path(self.config, self.root, parent_path))
+        logger.info(f"LOOKUP: parent_entries={parent_entries}")
+        if name_str in parent_entries:
+            # It's a virtual entry - use synthetic inode
+            self._add_path(synthetic_inode, path)
+            logger.info(f"LOOKUP: SUCCESS - virtual entry in parent, synthetic_inode={synthetic_inode}")
+            return await self.getattr(synthetic_inode, ctx)
+        
+        # Not found
+        logger.info(f"LOOKUP: FAILED - not found: {name_str}")
+        raise FUSEError(errno.ENOENT)
 
     async def create(self, parent_inode: InodeT, name: bytes, mode, flags, ctx):
         """Create and open a file."""
