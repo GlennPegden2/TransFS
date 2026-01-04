@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 
 RUN apt-get update
-RUN apt-get install -y fuse3 samba wget unzip libguestfs-tools p7zip unrar-free
+RUN apt-get install -y fuse3 libfuse3-dev pkg-config gcc samba wget unzip libguestfs-tools p7zip unrar-free
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt

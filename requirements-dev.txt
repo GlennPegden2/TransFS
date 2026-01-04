@@ -3,6 +3,7 @@
 
 # Testing Framework
 pytest>=7.4.0
+pytest-trio>=0.8.0          # Async testing support
 pytest-cov>=4.1.0           # Coverage reporting
 pytest-xdist>=3.3.1         # Parallel test execution
 pytest-timeout>=2.1.0       # Timeout handling for stuck tests
