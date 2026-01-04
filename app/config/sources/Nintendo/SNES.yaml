@@ -1,0 +1,9 @@
+# Nintendo SNES Software Sources
+
+base_path: Nintendo/SNES/Software
+
+sources:
+  - name: No-Intro SNES Collection
+    type: ddl
+    url: https://archive.org/download/No-Intro-Collection_2016-01-03/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System.zip
+    folder: ROMs

@@ -8,5 +8,7 @@ jinja2
 fastapi
 uvicorn
 libtorrent
+rarfile
 mega.py
+py7zr
 

@@ -29,5 +29,10 @@ echo "IP: $(hostname -I | awk '{print $1}'), FQDN: $(hostname -f)"
 
 python3 -m transfs 2>&1 | tee /tmp/transfs.log &
 
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&
+# Read port from transfs.yaml
+WEB_PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['port'])" 2>/dev/null || echo "8000")
+WEB_HOST=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['host'])" 2>/dev/null || echo "0.0.0.0")
+
+echo "Starting Web UI on ${WEB_HOST}:${WEB_PORT}"
+uvicorn main:app --host "${WEB_HOST}" --port "${WEB_PORT}" --reload &&
 tail -f /dev/null

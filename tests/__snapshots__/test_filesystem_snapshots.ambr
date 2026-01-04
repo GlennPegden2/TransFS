@@ -9,6 +9,124 @@
     'transfs_file_count': 218,
   })
 # ---
+# name: TestMiSTerSystems.test_acorn_electron_structure
+  dict({
+    'directories': list([
+      'HDs/',
+      'Tapes/',
+    ]),
+    'files': list([
+      'boot.vhd',
+      'HDs/BEEB.vhd',
+      'Tapes/Intro_E.uef',
+    ]),
+    'metadata': dict({
+      'HDs/BEEB.vhd': dict({
+        'extension': '.vhd',
+        'is_symlink': False,
+        'size': 104660992,
+      }),
+      'Tapes/Intro_E.uef': dict({
+        'extension': '.uef',
+        'is_symlink': False,
+        'size': 58802,
+      }),
+      'boot.vhd': dict({
+        'extension': '.vhd',
+        'is_symlink': False,
+        'size': 104660992,
+      }),
+    }),
+    'root': '/mnt/transfs/MiSTer/AcornElectron',
+    'sampled': True,
+  })
+# ---
+# name: TestMiSTerSystems.test_bbc_micro_structure
+  dict({
+    'directories': list([
+      'FDs/',
+      'HDs/',
+    ]),
+    'files': list([
+      'boot.vhd',
+      'FDs/Arkanoid.ssd',
+      'FDs/AroundTheWorldIn40ScreensP.ssd',
+      'FDs/AticAtac.ssd',
+      'FDs/AviatorColour.ssd',
+      'FDs/BlockbustersDomark.ssd',
+      'FDs/Boffin.ssd',
+      'FDs/CastleQuest.ssd',
+      'FDs/ChuckieEgg.ssd',
+      'FDs/ChuckieEgg2.ssd',
+      'FDs/Citadel.ssd',
+      'HDs/BEEB.vhd',
+    ]),
+    'metadata': dict({
+      'FDs/Arkanoid.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/AroundTheWorldIn40ScreensP.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/AticAtac.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/AviatorColour.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/BlockbustersDomark.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/Boffin.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/CastleQuest.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/ChuckieEgg.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/ChuckieEgg2.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'FDs/Citadel.ssd': dict({
+        'extension': '.ssd',
+        'is_symlink': False,
+        'size': 204800,
+      }),
+      'HDs/BEEB.vhd': dict({
+        'extension': '.vhd',
+        'is_symlink': False,
+        'size': 104660992,
+      }),
+      'boot.vhd': dict({
+        'extension': '.vhd',
+        'is_symlink': False,
+        'size': 104660992,
+      }),
+    }),
+    'root': '/mnt/transfs/MiSTer/BBCMicro',
+    'sampled': True,
+  })
+# ---
 # name: TestTransFSSnapshots.test_filestore_unchanged
   dict({
     'directories': list([

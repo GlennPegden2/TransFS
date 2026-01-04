@@ -1,0 +1,9 @@
+# Apple II Software Sources
+
+base_path: Apple/AppleII/Software
+
+sources:
+  - name: TOSEC Apple II Collection
+    type: ddl
+    url: https://archive.org/download/Apple_II_TOSEC_2012_04_23/Apple_II_TOSEC_2012_04_23.zip
+    folder: Disks

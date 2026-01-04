@@ -1,0 +1,9 @@
+# NEC PC Engine Software Sources
+
+base_path: NEC/PCE/Software
+
+sources:
+  - name: TOSEC PC Engine Collection
+    type: ddl
+    url: https://archive.org/download/PC_Engine_TOSEC_2012_04_23/PC_Engine_TOSEC_2012_04_23.zip
+    folder: ROMs

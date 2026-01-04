@@ -21,9 +21,9 @@ def _timed(func):
         if elapsed > 0.1:  # log only slow calls
             try:
                 arg0 = args[0]
-            except Exception:
+            except Exception:  # pylint: disable=broad-except
                 arg0 = "N/A"
-            logger.debug(f"{func.__name__} took {elapsed:.3f}s for {arg0}")
+            logger.debug("%s took %.3fs for %s", func.__name__, elapsed, arg0)
         return result
     return wrapper
 
@@ -89,18 +89,16 @@ class ZipIndex:
         children: Set[str] = set()
         # From files
         for f in files:  # type: ignore
-            if not f.startswith(prefix_slash):
-                if prefix:  # skip
-                    continue
-                # prefix == '' -> top-level
+            if prefix == "":
+                # Top-level: get first path component
                 first = f.split("/", 1)[0]
                 children.add(first)
-                continue
-            rest = f[plen + 1:]
-            if not rest:
-                continue
-            first = rest.split("/", 1)[0]
-            children.add(first)
+            elif f.startswith(prefix_slash):
+                # File is under the prefix directory
+                rest = f[plen + 1:]
+                if rest:
+                    first = rest.split("/", 1)[0]
+                    children.add(first)
         # From dirs
         for d in dirs:  # type: ignore
             if d == prefix or d == "":
@@ -109,13 +107,11 @@ class ZipIndex:
                 first = d.split("/", 1)[0]
                 children.add(first)
             else:
-                if not d.startswith(prefix_slash):
-                    continue
-                rest = d[plen + 1:]
-                if not rest:
-                    continue
-                first = rest.split("/", 1)[0]
-                children.add(first)
+                if d.startswith(prefix_slash):
+                    rest = d[plen + 1:]
+                    if rest:
+                        first = rest.split("/", 1)[0]
+                        children.add(first)
         result = sorted(children)
         self._children_cache[prefix] = result
         return result
@@ -169,7 +165,7 @@ def _persist_index(idx: ZipIndex):
         fd = os.open(idx_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:
             pickle.dump(idx, f, protocol=pickle.HIGHEST_PROTOCOL)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         pass
 
 def _load_persisted_index(zip_path: str, mtime: float) -> Optional[ZipIndex]:
@@ -187,7 +183,7 @@ def _load_persisted_index(zip_path: str, mtime: float) -> Optional[ZipIndex]:
             obj = pickle.load(f)
         if isinstance(obj, ZipIndex) and obj.mtime == mtime:
             return obj
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         return None
     return None
 
@@ -197,7 +193,7 @@ def _build_index(zip_path: str, mtime: float) -> ZipIndex:
     with zipfile.ZipFile(zip_path, 'r') as zf:
         t0 = time.perf_counter()
         infos = zf.infolist()
-        logger.debug(f"ZipFile.infolist() took {time.perf_counter() - t0:.3f}s for {zip_path} entries={len(infos)}")
+        logger.debug("ZipFile.infolist() took %.3fs for %s entries=%d", time.perf_counter() - t0, zip_path, len(infos))
         for info in infos:
             is_dir = info.filename.endswith('/')
             logical_name = info.filename[:-1] if is_dir else info.filename
@@ -223,8 +219,8 @@ def _get_index(zip_path: str) -> ZipIndex:
     # Get mtime for validation
     try:
         mtime = os.path.getmtime(zp)
-    except OSError:
-        raise FileNotFoundError(zp)
+    except OSError as exc:
+        raise FileNotFoundError(zp) from exc
     
     # Check global cache without full lock (optimistic read)
     curr = _zip_index_cache.get(zp)
@@ -306,7 +302,7 @@ def exists(path: str) -> bool:
     zip_path, inner = z
     try:
         return _get_index(zip_path).exists(inner)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         # Fallback to previous behavior
         try:
             if inner == "":
@@ -316,7 +312,7 @@ def exists(path: str) -> bool:
                 return True
             pref = inner.rstrip("/") + "/"
             return any(n.startswith(pref) for n in names)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return False
 
 @_timed
@@ -327,7 +323,7 @@ def isdir(path: str) -> bool:
     zip_path, inner = z
     try:
         return _get_index(zip_path).isdir(inner)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         try:
             if inner == "":
                 return True
@@ -336,7 +332,7 @@ def isdir(path: str) -> bool:
             if inner in names and inner.endswith("/"):
                 return True
             return any(n.startswith(pref) for n in names)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return False
 
 @_timed
@@ -349,11 +345,11 @@ def isfile(path: str) -> bool:
         return False
     try:
         return _get_index(zip_path).isfile(inner)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         try:
             names = _zip_namelist(zip_path)
             return inner in names and not inner.endswith("/")
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return False
 
 @_timed
@@ -365,12 +361,12 @@ def listdir(path: str) -> List[str]:
     if z is None:
         try:
             return sorted([e for e in os.listdir(path) if not e.startswith(".")])
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return []
     zip_path, inner = z
     try:
         return _get_index(zip_path).listdir(inner)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         # Fallback to previous behavior
         try:
             names = _zip_namelist(zip_path)
@@ -385,33 +381,115 @@ def listdir(path: str) -> List[str]:
                 first = rest.split("/", 1)[0]
                 seen.add(first)
             return sorted(seen)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return []
 
 @_timed
 def getinfo(path: str):
+    t_start = time.perf_counter()
     z = _find_zip_component(path)
+    t_find = time.perf_counter() - t_start
+    
     if z is None:
         try:
             st = os.stat(path)
             return {"size": st.st_size, "is_dir": os.path.isdir(path), "mtime": int(st.st_mtime)}
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return None
+    zip_path, inner = z
+    t_idx_start = time.perf_counter()
+    try:
+        idx = _get_index(zip_path)
+        t_idx = time.perf_counter() - t_idx_start
+        
+        if inner == "":
+            return {"size": os.path.getsize(zip_path), "is_dir": True, "mtime": int(os.path.getmtime(zip_path))}
+        
+        t_check_start = time.perf_counter()
+        if idx.isfile(inner):
+            # Ensure sizes loaded
+            idx._ensure_sets()  # pylint: disable=protected-access
+            size = idx._file_sizes.get(inner, 0) if idx._file_sizes else 0  # pylint: disable=protected-access
+            t_check = time.perf_counter() - t_check_start
+            t_total = time.perf_counter() - t_start
+            if t_total > 0.05:
+                logger.warning("PERF: getinfo slow %.3fs (find=%.3fs, idx=%.3fs, check=%.3fs) for %s", t_total, t_find, t_idx, t_check, path)
+            return {"size": size, "is_dir": False, "mtime": None}
+        if idx.isdir(inner):
+            t_check = time.perf_counter() - t_check_start
+            t_total = time.perf_counter() - t_start
+            if t_total > 0.05:
+                logger.warning("PERF: getinfo slow %.3fs (find=%.3fs, idx=%.3fs, check=%.3fs) for %s", t_total, t_find, t_idx, t_check, path)
+            return {"size": 0, "is_dir": True, "mtime": None}
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return None
+
+def listdir_with_info(path: str) -> List[dict]:
+    """
+    List directory contents with metadata (name, size, is_dir) in one efficient call.
+    This is much faster than calling listdir() then getinfo() for each entry.
+    """
+    z = _find_zip_component(path)
+    if z is None:
+        # Regular directory - use os.scandir for efficiency
+        try:
+            result = []
+            for entry in os.scandir(path):
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    size = 0 if is_dir else entry.stat(follow_symlinks=False).st_size
+                    result.append({
+                        "name": entry.name,
+                        "size": size,
+                        "is_dir": is_dir
+                    })
+                except (PermissionError, OSError):
+                    continue
+            return result
+        except Exception:  # pylint: disable=broad-except
+            return []
+    
+    # ZIP path - use cached index for maximum efficiency
     zip_path, inner = z
     try:
         idx = _get_index(zip_path)
-        if inner == "":
-            return {"size": os.path.getsize(zip_path), "is_dir": True, "mtime": int(os.path.getmtime(zip_path))}
-        if idx.isfile(inner):
-            # Ensure sizes loaded
-            idx._ensure_sets()
-            size = idx._file_sizes.get(inner, 0) if idx._file_sizes else 0
-            return {"size": size, "is_dir": False, "mtime": None}
-        if idx.isdir(inner):
-            return {"size": 0, "is_dir": True, "mtime": None}
-    except Exception:
-        pass
-    return None
+        idx._ensure_sets()  # pylint: disable=protected-access
+        
+        # Get children from index
+        children = idx.listdir(inner)
+        
+        # Build full paths and get metadata
+        result = []
+        inner_prefix = inner.strip("/")
+        
+        # Cache references to avoid attribute lookups in loop
+        file_set = idx._file_set  # type: ignore  # pylint: disable=protected-access
+        dir_set = idx._dir_set  # type: ignore  # pylint: disable=protected-access
+        file_sizes = idx._file_sizes  # type: ignore  # pylint: disable=protected-access
+        
+        # Pre-compute separator (empty string or slash)
+        sep = "/" if inner_prefix else ""
+        
+        for name in children:
+            # Build full inner path efficiently
+            full_inner = f"{inner_prefix}{sep}{name}" if inner_prefix else name
+            
+            # Check if it's a file or directory (set lookups are O(1))
+            is_file = full_inner in file_set if file_set else False
+            is_dir = full_inner in dir_set if dir_set else False
+            
+            size = file_sizes.get(full_inner, 0) if is_file and file_sizes else 0
+            
+            result.append({
+                "name": name,
+                "size": size,
+                "is_dir": is_dir
+            })
+        
+        return result
+    except Exception:  # pylint: disable=broad-except
+        return []
 
 class _ZipEntryFile:
     """
@@ -467,11 +545,11 @@ class _ZipEntryFile:
 
     def close(self):
         try: self._buffer.close()
-        except Exception: pass
+        except Exception: pass  # pylint: disable=broad-except
         try: self._file.close()
-        except Exception: pass
+        except Exception: pass  # pylint: disable=broad-except
         try: self._zf.close()
-        except Exception: pass
+        except Exception: pass  # pylint: disable=broad-except
 
     def __enter__(self):
         return self
@@ -481,7 +559,7 @@ class _ZipEntryFile:
 def open_file(path: str, mode: str = "rb"):
     z = _find_zip_component(path)
     if z is None:
-        return open(path, mode)
+        return open(path, mode, encoding='utf-8' if 'b' not in mode else None)
     zip_path, inner = z
     if inner == "":
         raise FileNotFoundError(path)

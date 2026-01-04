@@ -1,0 +1,421 @@
+# TransFS Clients Configuration
+# Defines how different retro gaming platforms map to the filesystem
+
+clients:
+  - name: MiSTer
+    default_target_path: "{name}/{system_name}/{maps}"
+    systems:
+      # --- Acorn ---
+      - name: AcornAtom
+        manufacturer: Acorn
+        cananonical_system_name: Atom
+        local_base_path: Acorn/Atom
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: Software/VHD/hoglet67.vhd
+          - ...SoftwareArchives...: 
+              supports_zip: false   
+              source_dir: Software
+              filetypes:
+              - HDs: VHD
+      - name: Archie
+        manufacturer: Acorn
+        cananonical_system_name: Archimedes
+        local_base_path: Acorn/Archimedes
+        maps:
+          - riscos.rom:
+              default_source:
+                source_filename: BIOS/riscos.rom
+          - riscos3_71.rom:
+              default_source:
+                source_filename: BIOS/risocs-3.71.rom
+          - ...SoftwareArchives...: 
+              supports_zip: false   
+              source_dir: Software
+              filetypes:
+              - FDs: ADF
+              - HDs: HDF
+      - name: AcornElectron
+        manufacturer: Acorn
+        cananonical_system_name: Electron
+        local_base_path: Acorn/Electron/
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: Software/MMB/ElkBEEB.zip
+                unzip: true
+                zip_internal_file: BEEB.MMB
+          - ...SoftwareArchives...: 
+              supports_zip: true
+              zip_mode: flatten
+              source_dir: Software
+              filetypes:
+              - FDs: ADF,DFS,HFE,SSD
+              - HDs: "MMB:VHD,VHD"
+              - Tapes: UEF
+              - ROMs: ROM
+      - name: BBCMicro
+        manufacturer: Acorn
+        cananonical_system_name: BBC Micro
+        local_base_path: Acorn/BBC_B/
+        maps:
+          - boot.vhd:
+              default_source:
+                source_filename: Software/MMB/higgy_mmbeeb-v1.2.zip
+                unzip: true
+                zip_internal_file: BEEB.MMB
+          - ...SoftwareArchives...: 
+              supports_zip: true
+              zip_mode: flatten
+              source_dir: Software
+              filetypes:
+              - FDs: SSD,DSD
+              - HDs: "MMB:VHD,VHD"
+      # --- Amstrad ---
+      - name: Amstrad PCW
+        manufacturer: Amstrad
+        cananonical_system_name: PCW
+        local_base_path: Amstrad/PCW
+        maps:
+          - ...SoftwareArchives...: 
+              supports_zip: false   
+              source_dir: Software
+              filetypes:
+              - FDs: DSK
+      - name: Amstrad
+        manufacturer: Amstrad
+        cananonical_system_name: CPC
+        local_base_path: Amstrad/CPC/
+        maps:
+          - boot.rom:
+              default_source:
+                source_filename: BIOS/boot.rom
+          - cpc464nd.eZ0:
+              default_source:
+                source_filename: BIOS/cpc464nd.eZ0
+          - ...SoftwareArchives...:
+              supports_zip: true
+              zip_mode: file
+              source_dir: Software
+              filetypes:
+              - Disks: "DSK"
+              - Tapes: "CDT"
+              - Collections: "ZIP"
+      # --- Apple ---
+      - name: AppleII
+        manufacturer: Apple
+        cananonical_system_name: AppleII
+        local_base_path: Apple/AppleII
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Disks: "DSK,DO"
+      # --- Atari ---
+      - name: Atari2600
+        manufacturer: Atari
+        cananonical_system_name: Atari2600
+        local_base_path: Atari/2600
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "BIN"
+      - name: Atari5200
+        manufacturer: Atari
+        cananonical_system_name: Atari5200
+        local_base_path: Atari/5200
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "BIN"
+      - name: Atari7800
+        manufacturer: Atari
+        cananonical_system_name: Atari7800
+        local_base_path: Atari/7800
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "A78"
+      - name: Atari800
+        manufacturer: Atari
+        cananonical_system_name: Atari800
+        local_base_path: Atari/800
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "ROM"
+              - Disks: "ATR,XFD"
+      - name: AtariLynx
+        manufacturer: Atari
+        cananonical_system_name: Lynx
+        local_base_path: Atari/Lynx
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "LNX"
+      # --- Coleco ---
+      - name: ColecoVision
+        manufacturer: Coleco
+        cananonical_system_name: ColecoVision
+        local_base_path: Coleco/ColecoVision
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "COL"
+      # --- Commodore ---
+      - name: Amiga
+        manufacturer: Commodore
+        cananonical_system_name: Amiga
+        local_base_path: Commodore/Amiga
+        maps:
+          - KICK.ROM:
+              source_filename: BIOS/kick.rom
+          - HDs:
+              source_dir: HDDs
+          - FDs:
+              source_dir: FDs
+      - name: Commodore128
+        manufacturer: Commodore
+        cananonical_system_name: C128
+        local_base_path: Commodore/C128
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Disks: "D64,D71,D81"
+      - name: Commodore64
+        manufacturer: Commodore
+        cananonical_system_name: C64
+        local_base_path: Commodore/C64
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Tapes: "TAP"
+              - Disks: "D64,G64"
+      - name: CommodorePET
+        manufacturer: Commodore
+        cananonical_system_name: PET
+        local_base_path: Commodore/PET
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Tapes: "TAP"
+              - Disks: "D64"
+      - name: CommodorePlus4
+        manufacturer: Commodore
+        cananonical_system_name: Plus4
+        local_base_path: Commodore/Plus4
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Tapes: "TAP"
+              - Disks: "D64"
+      # --- GCE ---
+      - name: Vectrex
+        manufacturer: GCE
+        cananonical_system_name: Vectrex
+        local_base_path: GCE/Vectrex
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "BIN"
+      # --- Mattel ---
+      - name: Intellivision
+        manufacturer: Mattel
+        cananonical_system_name: Intellivision
+        local_base_path: Mattel/Intellivision
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "INT"
+      # --- Microsoft ---
+      - name: MSX
+        manufacturer: Microsoft
+        cananonical_system_name: MSX
+        local_base_path: Microsoft/MSX
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "ROM"
+              - Disks: "DSK"
+      # --- MITS ---
+      - name: Altair8800
+        manufacturer: MITS
+        cananonical_system_name: Altair8800
+        local_base_path: MITS/Altair8800
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "ROM, BIN:ROM, HEX:ROM"
+      # --- NEC ---
+      - name: PC-Engine
+        manufacturer: NEC
+        cananonical_system_name: PCE
+        local_base_path: NEC/PCE
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "PCE"
+      - name: TurboGrafx16
+        manufacturer: NEC
+        cananonical_system_name: TurboGrafx16
+        local_base_path: NEC/TurboGrafx16
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "PCE"
+      # --- Nintendo ---
+      - name: GameBoy
+        manufacturer: Nintendo
+        cananonical_system_name: GameBoy
+        local_base_path: Nintendo/GameBoy
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "GB"
+      - name: GameBoyAdvance
+        manufacturer: Nintendo
+        cananonical_system_name: GBA
+        local_base_path: Nintendo/GBA
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "GBA"
+      - name: GameBoyColor
+        manufacturer: Nintendo
+        cananonical_system_name: GBC
+        local_base_path: Nintendo/GBC
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "GBC"
+      - name: NES
+        manufacturer: Nintendo
+        cananonical_system_name: NES
+        local_base_path: Nintendo/NES
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "NES"
+      - name: SNES
+        manufacturer: Nintendo
+        cananonical_system_name: SNES
+        local_base_path: Nintendo/SNES
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "SFC,SMC,SFC:SMC"
+      # --- Sega ---
+      - name: SegaGameGear
+        manufacturer: Sega
+        cananonical_system_name: GameGear
+        local_base_path: Sega/GameGear
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "GG"
+      - name: SegaGenesis
+        manufacturer: Sega
+        cananonical_system_name: Genesis
+        local_base_path: Sega/Genesis
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "BIN,GEN,MD"
+      - name: SegaMasterSystem
+        manufacturer: Sega
+        cananonical_system_name: MasterSystem
+        local_base_path: Sega/MasterSystem
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "SMS"
+      # --- Sinclair ---
+      - name: ZX Spectrum
+        manufacturer: Sinclair
+        cananonical_system_name: Spectrum
+        local_base_path: Sinclair/Spectrum
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Tapes: "TAP,TZX"
+              - Disks: "TRD,SCL"
+      # --- SNK ---
+      - name: NeoGeo
+        manufacturer: SNK
+        cananonical_system_name: NeoGeo
+        local_base_path: SNK/NeoGeo
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - ROMs: "ZIP"
+      # --- Tandy ---
+      - name: AliceMC10
+        manufacturer: Tandy
+        cananonical_system_name: MC-10
+        local_base_path: Tandy/MC-10
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              source_dir: Software
+              filetypes:
+              - Tapes: c10
+  - name: Mame
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroBat
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroPie                  
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"

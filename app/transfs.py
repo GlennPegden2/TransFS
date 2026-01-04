@@ -14,29 +14,53 @@ from pathutils import (
     is_virtual_path,
     map_virtual_to_real,
 )
-from sourcepath import get_source_path
+from sourcepath import get_source_path, get_source_path_for_write
 from zippath import open_file as zippath_open_file  # new
 
-import yaml
 from fuse import FUSE, FuseOSError
 from passthroughfs import Passthrough  
 from logging_setup import setup_logging
 
-setup_logging(logging.DEBUG)
+setup_logging(logging.INFO)
 logger = logging.getLogger("transfs")
-logger.debug("TEST: Logging setup works")
+logger.info("TransFS logging initialized")
 
 
 
 class TransFS(Passthrough):
     """FUSE filesystem for translating virtual paths to real files, including zip logic and filetype mapping."""
+    
+    # Profiling stats
+    _getattr_count = 0
+    _getattr_total_time = 0.0
+    _getattr_cache_hits = 0
+    _getattr_cache_misses = 0
+    _last_stats_print = time.time()
 
     def __init__(self, root_path: str):
         super().__init__(root_path)
         logger.debug("Starting TransFS")
         self.root = root_path
-        with open("transfs.yaml", "r", encoding="UTF-8") as f:
-            self.config = yaml.safe_load(f)
+        from config import read_config
+        self.config = read_config()
+    
+    def _maybe_print_stats(self):
+        """Print profiling stats every 10 seconds."""
+        now = time.time()
+        if now - TransFS._last_stats_print >= 10.0:
+            if TransFS._getattr_count > 0:
+                avg_time = TransFS._getattr_total_time / TransFS._getattr_count
+                hit_rate = 100.0 * TransFS._getattr_cache_hits / TransFS._getattr_count
+                logger.info(
+                    "GETATTR STATS: count=%d hits=%d misses=%d hit_rate=%.1f%% avg_time=%.4fs total_time=%.2fs",
+                    TransFS._getattr_count,
+                    TransFS._getattr_cache_hits,
+                    TransFS._getattr_cache_misses,
+                    hit_rate,
+                    avg_time,
+                    TransFS._getattr_total_time
+                )
+            TransFS._last_stats_print = now
 
     def _get_zip_mode_for_path(self, xfull_path: str) -> str:
         """
@@ -68,17 +92,53 @@ class TransFS(Passthrough):
         return sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
 
     def readdir(self, path: str, fh: int):
+        t_start = time.time()
         logger.debug("DEBUG: readdir(%s)", path)
         xfull_path = full_path(self.root,path)
+        t_parse_start = time.time()
         dirents = ['.', '..']
         virtual_entries = set(parse_trans_path(self.config,self.root, xfull_path))
-        dirents.extend(virtual_entries)
-        if os.path.isdir(xfull_path):
-            for entry in os.listdir(xfull_path):
-                if entry not in virtual_entries:
+        t_parse_elapsed = time.time() - t_parse_start
+        logger.debug(f"DEBUG readdir: xfull_path={xfull_path}, virtual_entries count={len(virtual_entries)} parse_time=%.4fs", t_parse_elapsed)
+        
+        # For ZIP-internal paths (hierarchical mode), entries from zippath are already validated
+        # Skip expensive existence checks for large directories
+        is_zip_internal = "//" not in xfull_path and ".zip/" in xfull_path
+        
+        if is_zip_internal:
+            # Fast path: trust zippath results, no validation needed
+            dirents.extend(virtual_entries)
+        else:
+            # Slow path: validate each entry exists (needed for non-ZIP virtual paths)
+            for entry in virtual_entries:
+                entry_full_path = os.path.join(xfull_path, entry)
+                entry_source_path = get_source_path(logger, self.config, self.root, entry_full_path)
+                
+                # Check if the backing file/directory exists
+                if entry_source_path:
+                    if isinstance(entry_source_path, tuple):
+                        # It's a zip file mapping - check if zip exists
+                        zip_path, _ = entry_source_path
+                        if os.path.exists(zip_path):
+                            dirents.append(entry)
+                    else:
+                        if os.path.exists(entry_source_path):
+                            dirents.append(entry)
+                # If no source path, it's a virtual directory (like ...SoftwareArchives...)
+                elif entry.startswith('...') and entry.endswith('...'):
                     dirents.append(entry)
+        
+        if os.path.isdir(xfull_path):
+            real_entries = os.listdir(xfull_path)
+            logger.debug(f"DEBUG readdir: real directory exists, real_entries={real_entries}")
+            for entry in real_entries:
+                if entry not in dirents:  # Avoid duplicates
+                    dirents.append(entry)
+        
+        t_total = time.time() - t_start
+        logger.info(f"READDIR PROFILE: {path} entries={len(dirents)} parse_time=%.4fs total_time=%.4fs", t_parse_elapsed, t_total)
+        logger.debug(f"DEBUG readdir: final dirents count={len(dirents)}")
         for entry in dirents:
-            logger.debug("DEBUG: readdir yields %s", entry)
             yield entry
 
 
@@ -94,9 +154,34 @@ class TransFS(Passthrough):
         int
     ]:
         """FUSE getattr implementation."""
+        t_start = time.time()
         logger.debug("DEBUG: getattr(%s)", path)
         xfull_path = full_path(self.root, path)
+        
+        # Try cache first - use real filesystem path for parent dir mtime checking
+        t_cache_start = time.time()
+        parent_dir_virtual = str(Path(xfull_path).parent)
+        # Convert /mnt/transfs -> /mnt/filestorefs for cache key matching
+        parent_dir = parent_dir_virtual.replace("/mnt/transfs", "/mnt/filestorefs")
+        from dirlisting import get_cached_getattr, cache_getattr
+        cached_stat = get_cached_getattr(xfull_path, parent_dir)
+        t_cache_elapsed = time.time() - t_cache_start
+        
+        if cached_stat is not None:
+            t_total = time.time() - t_start
+            TransFS._getattr_cache_hits += 1
+            TransFS._getattr_count += 1
+            TransFS._getattr_total_time += t_total
+            logger.debug("GETATTR CACHE HIT: %s (cache_lookup=%.4fs, total=%.4fs)", path, t_cache_elapsed, t_total)
+            self._maybe_print_stats()
+            return cached_stat
+        
+        TransFS._getattr_cache_misses += 1
+        logger.debug("GETATTR CACHE MISS: %s (cache_lookup=%.4fs)", path, t_cache_elapsed)
+        t_source_start = time.time()
         fspath = get_source_path(logger, self.config, self.root, xfull_path)
+        t_source_elapsed = time.time() - t_source_start
+        logger.debug("GETATTR get_source_path took %.4fs for %s", t_source_elapsed, path)
         logger.debug("DEBUG: getattr full_path=%s, fspath=%s", xfull_path, fspath)
 
         # Determine zip_mode for this path (if applicable)
@@ -107,10 +192,31 @@ class TransFS(Passthrough):
         if isinstance(fspath, tuple):
             logger.debug("DEBUG: Inside isinstance(fspath, tuple) branch: %s", fspath)
             zip_path, internal_file = fspath
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                info = zf.getinfo(internal_file)
-                now = int(os.path.getmtime(zip_path))
-                return {
+            import zippath
+            
+            # Use zippath.getinfo() which uses cached index - much faster than opening ZipFile
+            full_internal_path = os.path.join(zip_path, internal_file)
+            now = int(os.path.getmtime(zip_path))
+            
+            info = zippath.getinfo(full_internal_path)
+            if info is None:
+                raise FileNotFoundError(f"Path not found in ZIP: {internal_file}")
+            
+            if info['is_dir']:
+                # It's a directory (explicit or inferred)
+                result = {
+                    'st_atime': now,
+                    'st_ctime': now,
+                    'st_mtime': now,
+                    'st_gid': 0,
+                    'st_uid': 0,
+                    'st_mode': 0o040555,  # directory, read-only
+                    'st_nlink': 2,
+                    'st_size': 0,
+                }
+            else:
+                # It's a file - size from cached index
+                result = {
                     'st_atime': now,
                     'st_ctime': now,
                     'st_mtime': now,
@@ -118,8 +224,11 @@ class TransFS(Passthrough):
                     'st_uid': 0,
                     'st_mode': 0o100444,  # regular file, read-only
                     'st_nlink': 1,
-                    'st_size': info.file_size,
+                    'st_size': info['size'],
                 }
+            
+            cache_getattr(xfull_path, parent_dir, result)
+            return result
 
         if fspath is None:
             parent_path = str(Path(xfull_path).parent)
@@ -128,35 +237,63 @@ class TransFS(Passthrough):
             logger.debug("DEBUG getattr fallback: parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
 
             if name in entries:
-                now = int(time.time())
-                # Zip handling depends on zip_mode
-                if name.lower().endswith('.zip'):
-                    if zip_mode == "hierarchical":
-                        mode = 0o040755  # directory (navigable)
-                        nlink = 2
-                        size = 4096
-                    else:  # file or flatten mode → treat as file
-                        mode = 0o100444  # regular file
-                        nlink = 1
-                        size = 0
-                elif '.' in name:
-                    mode = 0o100444  # file
-                    nlink = 1
-                    size = 0
-                else:
-                    mode = 0o040755  # directory
-                    nlink = 2
-                    size = 4096
-                return {
-                    'st_atime': now,
-                    'st_ctime': now,
-                    'st_mtime': now,
-                    'st_gid': 0,
-                    'st_uid': 0,
-                    'st_mode': mode,
-                    'st_nlink': nlink,
-                    'st_size': size,
-                }
+                # Retry get_source_path to find the real backing file
+                retry_fspath = get_source_path(logger, self.config, self.root, xfull_path)
+                logger.debug("DEBUG getattr retry_fspath: %s", retry_fspath)
+                
+                # If we found a real file, stat it for accurate size
+                if retry_fspath and isinstance(retry_fspath, str) and os.path.exists(retry_fspath):
+                    st = os.lstat(retry_fspath)
+                    result = {
+                        'st_atime': int(st.st_atime),
+                        'st_ctime': int(st.st_ctime),
+                        'st_mtime': int(st.st_mtime),
+                        'st_gid': st.st_gid,
+                        'st_uid': st.st_uid,
+                        'st_mode': 0o100444,  # regular file, read-only
+                        'st_nlink': 1,
+                        'st_size': st.st_size,
+                    }
+                    cache_getattr(xfull_path, parent_dir, result)
+                    return result
+                elif retry_fspath and isinstance(retry_fspath, tuple):
+                    # Handle zip internal file
+                    zip_path, internal_file = retry_fspath
+                    if os.path.exists(zip_path):
+                        with zipfile.ZipFile(zip_path, 'r') as zf:
+                            info = zf.getinfo(internal_file)
+                            now = int(os.path.getmtime(zip_path))
+                            result = {
+                                'st_atime': now,
+                                'st_ctime': now,
+                                'st_mtime': now,
+                                'st_gid': 0,
+                                'st_uid': 0,
+                                'st_mode': 0o100444,
+                                'st_nlink': 1,
+                                'st_size': info.file_size,
+                            }
+                            cache_getattr(xfull_path, parent_dir, result)
+                            return result
+                
+                # Check if it's a virtual directory (like ...SoftwareArchives...)
+                if name.startswith('...') and name.endswith('...'):
+                    now = int(time.time())
+                    result = {
+                        'st_atime': now,
+                        'st_ctime': now,
+                        'st_mtime': now,
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': 0o040755,  # directory
+                        'st_nlink': 2,
+                        'st_size': 4096,
+                    }
+                    cache_getattr(xfull_path, parent_dir, result)
+                    return result
+                
+                # If no backing file exists, raise ENOENT (file not found)
+                logger.debug("DEBUG getattr: entry %s in map but no backing file exists", name)
             # Otherwise, fall through to ENOENT
             raise FuseOSError(errno.ENOENT)
 
@@ -188,6 +325,7 @@ class TransFS(Passthrough):
                     'st_nlink': 1,
                     'st_size': st.st_size,
                 }
+            cache_getattr(xfull_path, parent_dir, out)
             return cast(
                 dict[
                     Literal[
@@ -200,6 +338,7 @@ class TransFS(Passthrough):
             )
 
         if not os.path.exists(fspath):
+            # fspath doesn't exist, but maybe it's a virtual mapping to a different real file
             # Check if this is a virtual entry (i.e., listed in the parent directory)
             parent_path = str(Path(xfull_path).parent)
             t_start = time.time()
@@ -210,26 +349,63 @@ class TransFS(Passthrough):
                 logger.warning(f"SLOW parse_trans_path({parent_path}) took {t_elapsed:.2f}s, returned {len(entries)} entries")
             logger.debug("DEBUG getattr fallback (real missing): parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
             if name in entries:
-                now = int(time.time())
-                # Heuristic: treat as file if it has a dot (extension), else directory
-                if '.' in name:
-                    mode = 0o100444  # file
-                    nlink = 1
-                    size = 0
-                else:
-                    mode = 0o040755  # directory
-                    nlink = 2
-                    size = 4096
-                return {
-                    'st_atime': now,
-                    'st_ctime': now,
-                    'st_mtime': now,
-                    'st_gid': 0,
-                    'st_uid': 0,
-                    'st_mode': mode,
-                    'st_nlink': nlink,
-                    'st_size': size,
-                }
+                # Retry get_source_path to find the real backing file  
+                retry_fspath = get_source_path(logger, self.config, self.root, xfull_path)
+                logger.debug("DEBUG getattr retry_fspath (real missing): %s", retry_fspath)
+                
+                # If we found a different real file, stat it
+                if retry_fspath and isinstance(retry_fspath, str) and retry_fspath != fspath and os.path.exists(retry_fspath):
+                    st = os.lstat(retry_fspath)
+                    result = {
+                        'st_atime': int(st.st_atime),
+                        'st_ctime': int(st.st_ctime),
+                        'st_mtime': int(st.st_mtime),
+                        'st_gid': st.st_gid,
+                        'st_uid': st.st_uid,
+                        'st_mode': 0o100444,  # regular file, read-only
+                        'st_nlink': 1,
+                        'st_size': st.st_size,
+                    }
+                    cache_getattr(xfull_path, parent_dir, result)
+                    return result
+                elif retry_fspath and isinstance(retry_fspath, tuple):
+                    # Handle zip internal file
+                    zip_path, internal_file = retry_fspath
+                    if os.path.exists(zip_path):
+                        with zipfile.ZipFile(zip_path, 'r') as zf:
+                            info = zf.getinfo(internal_file)
+                            now = int(os.path.getmtime(zip_path))
+                            result = {
+                                'st_atime': now,
+                                'st_ctime': now,
+                                'st_mtime': now,
+                                'st_gid': 0,
+                                'st_uid': 0,
+                                'st_mode': 0o100444,
+                                'st_nlink': 1,
+                                'st_size': info.file_size,
+                            }
+                            cache_getattr(xfull_path, parent_dir, result)
+                            return result
+                
+                # Check if it's a virtual directory (like ...SoftwareArchives...)
+                if name.startswith('...') and name.endswith('...'):
+                    now = int(time.time())
+                    result = {
+                        'st_atime': now,
+                        'st_ctime': now,
+                        'st_mtime': now,
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': 0o040755,  # directory
+                        'st_nlink': 2,
+                        'st_size': 4096,
+                    }
+                    cache_getattr(xfull_path, parent_dir, result)
+                    return result
+                
+                # If no backing file exists, raise ENOENT
+                logger.debug("DEBUG getattr (real missing): entry %s in map but no backing file exists", name)
             raise FuseOSError(errno.ENOENT)
 
         st = os.lstat(fspath)
@@ -246,6 +422,15 @@ class TransFS(Passthrough):
         )
         out = {key: int(getattr(st, key)) for key in keys}
         out['st_mode'] = mode
+        cache_getattr(xfull_path, parent_dir, out)
+        
+        t_total = time.time() - t_start
+        TransFS._getattr_count += 1
+        TransFS._getattr_total_time += t_total
+        if t_total > 0.01:  # Log slow operations
+            logger.info("GETATTR PROFILE: %s took %.4fs (source_path=%.4fs)", path, t_total, t_source_elapsed)
+        
+        self._maybe_print_stats()
         return cast(
             dict[
                 Literal[
@@ -265,8 +450,18 @@ class TransFS(Passthrough):
         logger.debug("DEBUG: open trans_path=%s", trans_path)
 
         if trans_path is None:
-            logger.debug("DEBUG: open: no mapping for %s", path)
-            raise FuseOSError(errno.ENOENT)
+            # Check if this is a write operation
+            if flags & os.O_CREAT:
+                from sourcepath import get_source_path_for_write
+                trans_path = get_source_path_for_write(logger, self.config, self.root, xfull_path)
+                logger.debug("DEBUG: open write trans_path=%s", trans_path)
+                if trans_path is None:
+                    logger.debug("DEBUG: open: no mapping for write %s", path)
+                    raise FuseOSError(errno.ENOENT)
+                # Create file path determined, handle below
+            else:
+                logger.debug("DEBUG: open: no mapping for %s", path)
+                raise FuseOSError(errno.ENOENT)
 
         if isinstance(trans_path, tuple):
             zip_path, internal_file = trans_path
@@ -291,8 +486,26 @@ class TransFS(Passthrough):
 
         if isinstance(trans_path, str):
             if not os.path.exists(trans_path):
-                logger.error("open: real file %s does not exist", trans_path)
-                raise FuseOSError(errno.ENOENT)
+                # Check if O_CREAT flag is set
+                if flags & os.O_CREAT:
+                    logger.debug("open: creating new file at %s", trans_path)
+                    # Ensure parent directory exists
+                    parent_dir = os.path.dirname(trans_path)
+                    try:
+                        os.makedirs(parent_dir, exist_ok=True)
+                        logger.debug("open: ensured directory exists: %s", parent_dir)
+                    except Exception as e:
+                        logger.error("open: failed to create directory %s: %s", parent_dir, e)
+                        raise FuseOSError(errno.EACCES)
+                    # Create and open the file
+                    try:
+                        return os.open(trans_path, flags, 0o644)
+                    except Exception as e:
+                        logger.error("open: failed to create file %s: %s", trans_path, e)
+                        raise FuseOSError(errno.EACCES)
+                else:
+                    logger.error("open: real file %s does not exist", trans_path)
+                    raise FuseOSError(errno.ENOENT)
             logger.debug("open using trans_path=%s", trans_path)
             return os.open(trans_path, flags)
 
@@ -303,7 +516,8 @@ class TransFS(Passthrough):
 
     def create(self, path, mode, fi=None):
         logger.debug("CREATE: called with path=%s, mode=%s", path, oct(mode))
-        real_path = map_virtual_to_real(self.config, path)
+        trans_path = full_path(self.root, path)
+        real_path = get_source_path_for_write(logger, self.config, self.root, trans_path)
         logger.debug("CREATE: path=%s, real_path=%s", path, real_path)
         if real_path is None:
             logger.debug("CREATE: EROFS (no mapping)")
@@ -393,7 +607,8 @@ def main(mount_path: str, root_path: str):
         foreground=True,
         debug=False,  # Set to True for FUSE protocol-level debugging
         encoding='utf-8',
-        allow_other=True
+        allow_other=True,
+        direct_io=True  # Disable kernel caching to prevent Samba data corruption
     )
 
 

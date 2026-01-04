@@ -1,0 +1,110 @@
+# Acorn Archimedes Software Sources
+
+base_path: Acorn/Archimedes/
+
+sources:
+  - name: mister-bios
+    type: ddl
+    url: https://github.com/MiSTer-devel/Archie_MiSTer/raw/refs/heads/master/releases/riscos.rom
+    folder: BIOS
+
+  - name: 4corn-bios
+    type: ddl
+    url: https://www.4corn.co.uk/archive//roms/riscos3_71.zip
+    folder: Software/Collections/4corn
+    extract_from_archive:
+      - risocs-3.71.rom # Yes! They spelt it wrong!
+    rename:
+      - from: risocs-3.71.rom
+        to: ../../../BIOS/riscos3_71.rom
+  
+  - name: IA-RiscOS-RomPack
+    type: ddl
+    url: https://archive.org/download/RISC-OS-ROM-collection/ROMS.rar
+    folder: BIOS
+    extract: true
+
+  - name: arcarcnl-app1
+    type: ddl
+    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%201%20%281992%29%28Acorn%20Computers%29.adf
+    folder: Software/ADF
+  
+  - name: arcarcnl-app2
+    type: ddl
+    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%202%20%281992%29%28Acorn%20Computers%29.adf
+    folder: Software/ADF
+  
+  - name: arcarcnl-support
+    type: ddl
+    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Support%20Disc%20%281992%29%28Acorn%20Computers%29.adf
+    folder: Software/ADF
+  
+  - name: arcarc.nl
+    type: tor
+    url: https://arcarc.nl/torrents/arcarc%20archive%2020250414%20v0029.torrent
+    folder: Software/Collections/arcarc.nl
+  
+  - name: SIDKidd-CROS4.2
+    type: ddl
+    url: https://www.dropbox.com/s/i6qcf09p5kgv905/CROS42_082620.7z?dl=1
+    folder: Software/HDF
+    extract: "*.hdf"
+  
+  - name: SIDKidd-Icebird
+    type: ddl
+    url: https://www.dropbox.com/s/moktqfe4c4khjnw/ICEBIRD.7z?dl=1
+    folder: Software/HDF
+    extract: "*.hdf"
+  
+  - name: hubersn
+    type: mega
+    url: https://mega.nz/file/LCgA3IiD#XCjJIw5bVP2FK3c3QBx76NthtIMIzpvUYms4yJOssvY
+    folder: Software/HDF
+
+packs:
+  - id: minimal
+    name: Minimal Starter Set
+    description: Essential BIOS files and a few demo applications that shipped with RiscOS 3, to test the system
+    estimated_size: 11MB
+    sources: [mister-bios, 4corn-bios, arcarcnl-app1, arcarcnl-app2, arcarcnl-support]
+  
+  - id: desktop-cros4
+    name: CROS4.2
+    description: A ready to go HD image desktop environment and a good selelction of Apps and Games, built by SIDKidd for the Qube RiscOS project.
+    estimated_size: 250MB
+    sources: [mister-bios, SIDKidd-CROS4.2]
+    info_links:
+      - label: CROS4
+        url: http://qubeserver.com/Qube/classicriscos.html
+      - label: Configuring IDE Disks images (see under "Hard Disk Images")
+        url:  https://github.com/MiSTer-devel/Archie_MiSTer/blob/master/ReadMe.md
+  
+  - id: full-collection
+    name: Massive Software Collection
+    description: SIDKidds CROS4.2 and Icebird Demos/Diskmags Hard Disk Images, retrofan01's "hubersn" disk images, and the full arcarc.nl archive and other misc content.  
+    estimated_size: 2GB
+    sources: [mister-bios, IA-RiscOS-RomPack, SIDKidd-CROS4.2, SIDKidd-Icebird, hubersn]
+    info_links:
+      - label: CROS4
+        url: http://qubeserver.com/Qube/classicriscos.html
+      - label: retrofan01's image
+        url: https://misterfpga.org/viewtopic.php?p=807&sid=fae44cd81fa6151d6e164e55875e7209#p807
+      - label: Configuring IDE Disks images (see under "Hard Disk Images")
+        url:  https://github.com/MiSTer-devel/Archie_MiSTer/blob/master/ReadMe.md
+
+
+  - id: arcarc-tor
+    name: ArcArc.nl torrent of full archive
+    description: "A torrent of 43Gb of goodies from the arcarc.nl archive, including lots of RiscOS software, games, apps, magazines, and more. Note: Tor support is experimental at incomplete/slow torrents are not handled well. Also this is likely to need some manual unpacking" 
+    estimated_size: 43GB
+    sources: [arcarc.nl]
+    info_links:
+      - label: arcarc.nl
+        url: https://arcarc.nl
+
+  - id: All-RiscOS-BIOS
+    name: All RiscOS BIOS Roms
+    description: "A large collections of different RiscOS revisions, including ArtherOS and post v3.11 versions unlikely to work on many emulators. Note: these roms are left in the BIOS sub folder and may be need to copied/renamed to be used by some emulators. This is NOT needed for normal usage."
+    estimated_size: 142MB
+    sources: [IA-RiscOS-RomPack]
+  

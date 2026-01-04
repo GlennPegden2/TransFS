@@ -1,0 +1,9 @@
+# Commodore C64 Software Sources
+
+base_path: Commodore/C64/Software
+
+sources:
+  - name: TOSEC C64 Collection
+    type: ddl
+    url: https://archive.org/download/C64_TOSEC_2012_04_23/C64_TOSEC_2012_04_23.zip
+    folder: Disks

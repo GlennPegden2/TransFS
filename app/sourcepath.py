@@ -41,7 +41,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         return None
 
     # Try dynamic SoftwareArchives first
-    dynamic_result = get_dynamic_source_path(config, system_info, rel_parts)
+    dynamic_result = get_dynamic_source_path(logger, config, system_info, rel_parts)
     if dynamic_result is not None:
         return dynamic_result
 
@@ -106,12 +106,14 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                         if result:
                             return result
                         return None
-                # Only return a real file path if it exists
+                # Only return a real file path if it exists (unless for write operations)
                 if os.path.exists(base):
                     logger.debug(f"Returning named map file path: {base}")
                     return base
                 else:
                     logger.debug(f"Named map file {base} does not exist, returning None")
+                    # Store the would-be path for potential write operations
+                    # Caller can check this via get_source_path_for_write()
                     return None
             # If we matched a map but it has no source_filename, continue to next iteration
             break
@@ -149,7 +151,7 @@ def _parse_zippath_notation(path_str: str) -> Optional[tuple[str, str]]:
             return (zip_path, internal_path) if internal_path else None
     return None
 
-def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Optional[Any]:
+def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple) -> Optional[Any]:
     """
     Handle ...SoftwareArchives... dynamic folders with zip logic and filetype mapping.
     Respects zip_mode configuration: hierarchical (default), flatten, or file.
@@ -182,6 +184,18 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
     )
     subpath = rel_parts[3:]
     if not subpath:
+        # Return the directory path for the virtual directory itself (e.g., HDs -> Software/HDF)
+        for real_ext in real_exts:
+            dir_path = os.path.join(source_dir, real_ext)
+            if os.path.isdir(dir_path):
+                return dir_path
+        
+        # Fallback: if extension folder doesn't exist, try using map_name as folder name
+        # This handles semantic folder names like "Collections" when extension is "ZIP"
+        alt_dir_path = os.path.join(source_dir, map_name)
+        if os.path.isdir(alt_dir_path):
+            return alt_dir_path
+        
         return None
 
     last = subpath[-1]
@@ -246,6 +260,16 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
                     else:
                         # Accessing the .zip itself as a directory container
                         return zip_file_path
+            
+            # Fallback: try map_name folder instead of extension folder
+            zip_file_path = os.path.join(source_dir, map_name, *zip_path_parts)
+            if os.path.isfile(zip_file_path):
+                if zip_internal_parts:
+                    internal_path = '/'.join(zip_internal_parts)
+                    if zippath_exists(f"{zip_file_path}/{internal_path}"):
+                        return (zip_file_path, internal_path)
+                else:
+                    return zip_file_path
         
         # Not inside a ZIP: handle regular filesystem paths
         # If the last component is a .zip file (not yet entered)
@@ -254,6 +278,11 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
                 candidate = os.path.join(source_dir, real_ext, *subpath)
                 if os.path.isfile(candidate):
                     return candidate
+            
+            # Fallback: try map_name folder
+            candidate = os.path.join(source_dir, map_name, *subpath)
+            if os.path.isfile(candidate):
+                return candidate
 
         # If the last component has no extension, treat as a virtual directory
         if '.' not in last:
@@ -301,10 +330,29 @@ def get_dynamic_source_path(config, system_info: dict, rel_parts: tuple) -> Opti
         name, virt_ext = os.path.splitext(filename)
         virt_ext = virt_ext[1:].upper()
         for real_ext in real_exts:
-            real_filename = f"{name}.{real_ext.lower()}"
-            real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
-            if os.path.exists(real_path):
-                return real_path
+            # Try both lowercase and uppercase versions of the filename
+            for real_ext_case in [real_ext.lower(), real_ext.upper()]:
+                real_filename = f"{name}.{real_ext_case}"
+                
+                # Check regular filesystem first
+                if subpath[:-1]:
+                    real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+                else:
+                    real_path = os.path.join(source_dir, real_ext, real_filename)
+                if os.path.exists(real_path):
+                    return real_path
+                
+                # In flatten mode, also check inside ZIP files in the real_ext directory
+                if supports_zip:
+                    real_ext_dir = os.path.join(source_dir, real_ext)
+                    if os.path.isdir(real_ext_dir):
+                        for entry in os.listdir(real_ext_dir):
+                            if entry.lower().endswith('.zip'):
+                                zip_path = os.path.join(real_ext_dir, entry)
+                                if os.path.isfile(zip_path):
+                                    # Check if the file exists inside this ZIP
+                                    if zippath_isfile(f"{zip_path}/{real_filename}"):
+                                        return (zip_path, real_filename)
         return None
 
     # Default fallback (shouldn't reach here)
@@ -433,3 +481,77 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
                     logger.debug(f"File {real_path} does not exist, returning None")
                     return None
             return None
+
+
+def get_source_path_for_write(logger, config, root, translated_path: str) -> Optional[str]:
+    """
+    Similar to get_source_path, but returns the mapped path even if the file doesn't exist yet.
+    This is used for write operations where we need to create new files.
+    Only returns regular file paths (strings), not zip mappings (tuples).
+    """
+    logger.debug(f"DEBUG: get_source_path_for_write({translated_path}) called")
+
+    path = Path(translated_path)
+    root_parts = Path(root).parts
+    rel_parts = path.parts[len(root_parts):]
+
+    if not rel_parts:
+        return None
+    
+    if rel_parts[0] == "Native":
+        return os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
+
+    client = get_client(config, rel_parts)
+    if not client:
+        return None
+
+    if len(rel_parts) == 1:
+        return None
+
+    path_template_parts = Path(client['default_target_path']).parts
+    system_info = get_system_info(client, list(rel_parts), path_template_parts)
+    if not system_info:
+        return None
+
+    # Handle named maps
+    if len(rel_parts) >= 3:
+        map_path_parts = rel_parts[2:]
+        for i in range(len(map_path_parts), 0, -1):
+            map_name = '/'.join(map_path_parts[:i])
+            map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
+            if not map_entry:
+                continue
+            mapdict = map_entry[map_name]
+            subpath = map_path_parts[i:]
+            
+            ds = mapdict.get('default_source') or {}
+            if "source_filename" in ds:
+                source_filename = ds["source_filename"]
+                # Skip zip mappings for write operations (check for archive_internal_path)
+                if "archive_internal_path" in ds:
+                    logger.debug(f"Skipping zip mapping for write: {source_filename}")
+                    return None
+                
+                base = os.path.join(
+                    config.get("filestore", "/mnt/filestorefs"),
+                    "Native",
+                    system_info['local_base_path'],
+                    source_filename
+                )
+                logger.debug(f"Returning write path (may not exist): {base}")
+                return base
+            break
+
+    # Fallback to regular path
+    local_base = system_info.get('local_base_path', '')
+    if local_base:
+        result = os.path.join(
+            config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            local_base,
+            *rel_parts[2:]
+        )
+        logger.debug(f"Returning fallback write path: {result}")
+        return result
+
+    return None
