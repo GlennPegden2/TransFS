@@ -459,11 +459,11 @@ class TransFS(Passthrough):
     async def open(self, inode: InodeT, flags: int, ctx):
         """Open a file (pyfuse3 async version)."""
         path = self._inode_to_path(inode)
-        logger.debug("DEBUG: open(inode=%s, flags=%s) path=%s", inode, flags, path)
+        logger.info("OPEN: inode=%s, flags=%s, path=%s", inode, flags, path)
         
         xfull_path = path
         trans_path = get_source_path(logger, self.config, self.root, xfull_path)
-        logger.debug("DEBUG: open trans_path=%s", trans_path)
+        logger.info("OPEN: trans_path=%s", trans_path)
 
         if trans_path is None:
             if flags & os.O_CREAT:
@@ -518,6 +518,7 @@ class TransFS(Passthrough):
                         self._fd_inode_map[fd] = inode
                         self._inode_fd_map[inode] = fd
                         self._fd_open_count[fd] = 1
+                        logger.info("OPEN: created new file, fd=%s", fd)
                         return pyfuse3.FileInfo(fh=fd)
                     except Exception as e:
                         logger.error("open: failed to create file %s: %s", trans_path, e)
@@ -526,9 +527,25 @@ class TransFS(Passthrough):
                     logger.error("open: real file %s does not exist", trans_path)
                     raise FUSEError(errno.ENOENT)
             
-            logger.debug("open using trans_path=%s", trans_path)
-            # Use parent class open logic
-            return await super().open(inode, flags, ctx)
+            # File exists - open it directly (don't use parent class)
+            logger.info("OPEN: opening existing file trans_path=%s", trans_path)
+            try:
+                # Check if already open
+                if inode in self._inode_fd_map:
+                    fd = self._inode_fd_map[inode]
+                    self._fd_open_count[fd] += 1
+                    logger.info("OPEN: file already open, fd=%s, count=%s", fd, self._fd_open_count[fd])
+                    return pyfuse3.FileInfo(fh=fd)
+                
+                fd = os.open(trans_path, flags)
+                self._fd_inode_map[fd] = inode
+                self._inode_fd_map[inode] = fd
+                self._fd_open_count[fd] = 1
+                logger.info("OPEN: opened successfully, fd=%s", fd)
+                return pyfuse3.FileInfo(fh=fd)
+            except OSError as exc:
+                logger.error("OPEN: failed to open %s: %s", trans_path, exc)
+                raise FUSEError(exc.errno if exc.errno else errno.EIO)
 
         logger.debug("DEBUG: open: unknown mapping")
         raise FUSEError(errno.ENOENT)
@@ -589,11 +606,28 @@ class TransFS(Passthrough):
         # Check if it's a virtual directory/file by checking if it would be listed
         parent_entries = set(parse_trans_path(self.config, self.root, parent_path))
         logger.info(f"LOOKUP: parent_entries={parent_entries}")
+        
+        # Try exact match first
         if name_str in parent_entries:
             # It's a virtual entry - use synthetic inode
             self._add_path(synthetic_inode, path)
             logger.info(f"LOOKUP: SUCCESS - virtual entry in parent, synthetic_inode={synthetic_inode}")
             return await self.getattr(synthetic_inode, ctx)
+        
+        # Try case-insensitive match (for SMB/CIFS clients like MiSTer)
+        name_lower = name_str.lower()
+        for entry in parent_entries:
+            if entry.lower() == name_lower:
+                # Found case-insensitive match - use the actual entry name
+                actual_path = os.path.join(parent_path, entry)
+                actual_synthetic_inode = abs(hash(actual_path)) & 0x7FFFFFFF
+                if actual_synthetic_inode == 0:
+                    actual_synthetic_inode = 1
+                if actual_synthetic_inode == pyfuse3.ROOT_INODE:
+                    actual_synthetic_inode += 1
+                self._add_path(actual_synthetic_inode, actual_path)
+                logger.info(f"LOOKUP: SUCCESS - case-insensitive match '{entry}' for '{name_str}', synthetic_inode={actual_synthetic_inode}")
+                return await self.getattr(actual_synthetic_inode, ctx)
         
         # Not found
         logger.info(f"LOOKUP: FAILED - not found: {name_str}")
