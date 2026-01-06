@@ -97,78 +97,185 @@ class TransFS(Passthrough):
         
         return sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
 
+    def _dict_to_entry_attributes(self, stat_dict: dict, inode: int) -> pyfuse3.EntryAttributes:
+        """Convert stat dict to pyfuse3 EntryAttributes."""
+        entry = pyfuse3.EntryAttributes()
+        entry.st_ino = inode
+        entry.st_mode = stat_dict['st_mode']
+        entry.st_nlink = stat_dict.get('st_nlink', 1)
+        entry.st_uid = stat_dict.get('st_uid', 0)
+        entry.st_gid = stat_dict.get('st_gid', 0)
+        entry.st_size = stat_dict.get('st_size', 0)
+        entry.st_atime_ns = int(stat_dict['st_atime'] * 1e9)
+        entry.st_mtime_ns = int(stat_dict['st_mtime'] * 1e9)
+        entry.st_ctime_ns = int(stat_dict['st_ctime'] * 1e9)
+        entry.st_rdev = 0
+        entry.generation = 0
+        entry.entry_timeout = 5.0  # Cache for 5 seconds
+        entry.attr_timeout = 5.0
+        entry.st_blksize = 512
+        entry.st_blocks = (stat_dict.get('st_size', 0) + 511) // 512
+        return entry
+
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
-        Read directory entries using token-based callback (pyfuse3 style).
-        Optimized to avoid expensive lookup() calls for every entry.
+        Read directory entries with FULL attributes (readdirplus support).
+        Optimized to batch-resolve virtual paths and use cache efficiently.
         """
         t_start = time.time()
-        path = self._inode_to_path(fh)  # Use fh as inode (from opendir)
+        path = self._inode_to_path(fh)
         logger.info("READDIR START: path=%s start_id=%d", path, start_id)
         
-        xfull_path = path  # Already full path from inode map
+        xfull_path = path
+        parent_dir = xfull_path.replace("/mnt/transfs", "/mnt/filestorefs")
+        
+        # Parse virtual entries
         t_parse_start = time.time()
-        
-        # Get virtual entries
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
-        t_parse_elapsed = time.time() - t_parse_start
-        logger.info(f"READDIR: parsed {len(virtual_entries)} virtual entries in {t_parse_elapsed:.4f}s")
+        t_parse = time.time() - t_parse_start
         
-        # Add real directory entries if directory exists
+        # Add real directory entries
         if os.path.isdir(xfull_path):
             real_entries = os.listdir(xfull_path)
-            existing_names = set(virtual_entries)
-            for entry_name in real_entries:
-                if entry_name not in existing_names:
-                    virtual_entries.append(entry_name)
-            logger.info(f"READDIR: added {len(real_entries)} real entries, total={len(virtual_entries)}")
+            existing = set(virtual_entries)
+            virtual_entries.extend([e for e in real_entries if e not in existing])
         
-        # Send entries with minimal attributes (defer full stat to getattr calls)
+        logger.info(f"READDIR: {len(virtual_entries)} entries, parse={t_parse:.4f}s")
+        
+        # Batch get source paths for ALL entries (much faster than one-by-one)
+        t_batch_start = time.time()
+        source_paths = {}
+        for entry_name in virtual_entries:
+            entry_path = os.path.join(xfull_path, entry_name)
+            # Check cache first
+            cached = get_cached_getattr(entry_path, parent_dir)
+            if cached:
+                source_paths[entry_name] = ('cached', cached)
+            else:
+                # Get source path for uncached entries
+                fspath = get_source_path(logger, self.config, self.root, entry_path)
+                source_paths[entry_name] = ('uncached', fspath)
+        t_batch = time.time() - t_batch_start
+        
+        # Send entries with full attributes
         entry_id = 1
         sent_count = 0
+        cache_hits = 0
+        
         for entry_name in virtual_entries:
             if entry_id <= start_id:
                 entry_id += 1
                 continue
             
-            # Create minimal attributes - full details will come from getattr when needed
-            # Use hash of path for synthetic inode
             entry_path = os.path.join(xfull_path, entry_name)
             synthetic_inode = abs(hash(entry_path)) & 0x7FFFFFFF
-            if synthetic_inode == 0 or synthetic_inode == pyfuse3.ROOT_INODE:
-                synthetic_inode = abs(hash(entry_path + "_alt")) & 0x7FFFFFFF
+            if synthetic_inode <= 1:
+                synthetic_inode = abs(hash(entry_path + "_x")) & 0x7FFFFFFF
             
-            # Create minimal entry attributes (defer expensive stat)
-            entry = pyfuse3.EntryAttributes()
-            entry.st_ino = synthetic_inode
-            entry.st_mode = 0o040755  # Directory by default, getattr will correct
-            entry.st_nlink = 2
-            entry.st_uid = 0
-            entry.st_gid = 0
-            entry.st_size = 4096
-            entry.st_atime_ns = int(time.time() * 1e9)
-            entry.st_mtime_ns = int(time.time() * 1e9)
-            entry.st_ctime_ns = int(time.time() * 1e9)
-            entry.st_rdev = 0
-            entry.generation = 0
-            entry.entry_timeout = 0
-            entry.attr_timeout = 0
-            entry.st_blksize = 512
-            entry.st_blocks = 8
-            
-            # Add to inode map for later getattr calls
             self._add_path(synthetic_inode, entry_path)
             
-            # Send to client
+            # Get attributes from cache or source path
+            source_type, source_data = source_paths[entry_name]
+            
+            if source_type == 'cached':
+                # Use cached attributes
+                entry = self._dict_to_entry_attributes(source_data, synthetic_inode)
+                cache_hits += 1
+            else:
+                # Build attributes from source path
+                fspath = source_data
+                zip_mode = self._get_zip_mode_for_path(entry_path)
+                
+                try:
+                    # Handle different path types
+                    if isinstance(fspath, tuple):
+                        # Zip internal file
+                        zip_path, internal_file = fspath
+                        import zippath
+                        full_internal = os.path.join(zip_path, internal_file)
+                        info = zippath.getinfo(full_internal)
+                        if info:
+                            now = int(os.path.getmtime(zip_path))
+                            stat_dict = {
+                                'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                'st_gid': 0, 'st_uid': 0,
+                                'st_mode': 0o040555 if info['is_dir'] else 0o100444,
+                                'st_nlink': 2 if info['is_dir'] else 1,
+                                'st_size': 0 if info['is_dir'] else info['size'],
+                            }
+                            cache_getattr(entry_path, parent_dir, stat_dict)
+                            entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                        else:
+                            continue
+                    elif isinstance(fspath, str) and fspath.lower().endswith('.zip'):
+                        # Zip file itself
+                        st = os.lstat(fspath)
+                        is_dir = zip_mode == "hierarchical"
+                        stat_dict = {
+                            'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                            'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                            'st_uid': st.st_uid,
+                            'st_mode': 0o040755 if is_dir else 0o100444,
+                            'st_nlink': 2 if is_dir else 1,
+                            'st_size': 4096 if is_dir else st.st_size,
+                        }
+                        cache_getattr(entry_path, parent_dir, stat_dict)
+                        entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                    elif isinstance(fspath, str) and os.path.exists(fspath):
+                        # Regular file
+                        st = os.lstat(fspath)
+                        stat_dict = {
+                            'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                            'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                            'st_uid': st.st_uid, 'st_mode': st.st_mode,
+                            'st_nlink': st.st_nlink, 'st_size': st.st_size,
+                        }
+                        cache_getattr(entry_path, parent_dir, stat_dict)
+                        entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                    elif entry_name.startswith('...') and entry_name.endswith('...'):
+                        # Virtual directory
+                        now = int(time.time())
+                        stat_dict = {
+                            'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                            'st_gid': 0, 'st_uid': 0, 'st_mode': 0o040755,
+                            'st_nlink': 2, 'st_size': 4096,
+                        }
+                        cache_getattr(entry_path, parent_dir, stat_dict)
+                        entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                    else:
+                        # Fallback: minimal attributes
+                        entry = pyfuse3.EntryAttributes()
+                        entry.st_ino = synthetic_inode
+                        entry.st_mode = 0o040755
+                        entry.st_nlink = 2
+                        entry.st_uid = 0
+                        entry.st_gid = 0
+                        entry.st_size = 4096
+                        now = int(time.time() * 1e9)
+                        entry.st_atime_ns = entry.st_mtime_ns = entry.st_ctime_ns = now
+                        entry.st_rdev = 0
+                        entry.generation = 0
+                        entry.entry_timeout = 5.0  # Cache for 5 seconds
+                        entry.attr_timeout = 5.0
+                        entry.st_blksize = 512
+                        entry.st_blocks = 8
+                except Exception as e:
+                    logger.warning(f"READDIR: failed to stat {entry_name}: {e}")
+                    continue
+            
+            # Send entry to client
             if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
                 logger.info(f"READDIR: client buffer full after {sent_count} entries")
-                break  # Client buffer full
+                break
             
             sent_count += 1
             entry_id += 1
         
         t_total = time.time() - t_start
-        logger.info(f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} parse={t_parse_elapsed:.4f}s total={t_total:.4f}s")
+        hit_rate = (cache_hits / len(virtual_entries) * 100) if virtual_entries else 0
+        logger.info(f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} "
+                   f"cache_hits={cache_hits} hit_rate={hit_rate:.1f}% "
+                   f"parse={t_parse:.4f}s batch={t_batch:.4f}s total={t_total:.4f}s")
 
 
     async def getattr(self, inode: InodeT, ctx=None):
@@ -343,8 +450,8 @@ class TransFS(Passthrough):
         entry.st_ctime_ns = stat_dict['st_ctime'] * 10**9
         entry.st_rdev = 0
         entry.generation = 0
-        entry.entry_timeout = 0
-        entry.attr_timeout = 0
+        entry.entry_timeout = 5.0  # Cache entry for 5 seconds
+        entry.attr_timeout = 5.0   # Cache attributes for 5 seconds
         entry.st_blksize = 512
         entry.st_blocks = (entry.st_size + entry.st_blksize - 1) // entry.st_blksize
         return entry
