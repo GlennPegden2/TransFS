@@ -89,13 +89,19 @@ class TestTransFSSnapshots:
         which system broke when a test fails.
         
         Uses max_depth=3 to avoid deep recursion into large ZIP collections.
+        Excludes large directories (CDT, Collections) for Amstrad CPC.
         """
         full_path = transfs_volume / system_path
         
         if not full_path.exists():
             pytest.skip(f"System path {system_path} not found")
         
-        state = filesystem_walker(full_path, max_depth=3, include_metadata=False)
+        # Exclude large directories for Amstrad CPC specifically
+        exclude_paths = []
+        if "Amstrad/CPC" in system_path:
+            exclude_paths = ['Software/CDT', 'Software/Collections']
+        
+        state = filesystem_walker(full_path, max_depth=3, include_metadata=False, exclude_paths=exclude_paths)
         assert state == snapshot
     
     def test_filestore_unchanged(self, filestore_volume, filesystem_walker, snapshot):
@@ -170,12 +176,17 @@ class TestComparativeAnalysis:
         """Compare file counts between source and transformed filesystem.
         
         Large deviations might indicate issues with virtual file generation.
+        Excludes large Amstrad directories for performance.
         """
         if not filestore_volume.exists() or not transfs_volume.exists():
             pytest.skip("Volumes not available")
         
-        filestore_state = filesystem_walker(filestore_volume, include_metadata=False)
-        transfs_state = filesystem_walker(transfs_volume, include_metadata=False)
+        # Exclude large directories for performance
+        filestore_exclusions = ['Native/Amstrad/CPC/Software/CDT', 'Native/Amstrad/CPC/Software/Collections']
+        transfs_exclusions = ['MiSTer/Amstrad/Tapes']
+        
+        filestore_state = filesystem_walker(filestore_volume, include_metadata=False, exclude_paths=filestore_exclusions)
+        transfs_state = filesystem_walker(transfs_volume, include_metadata=False, exclude_paths=transfs_exclusions)
         
         comparison = {
             "filestore_file_count": len(filestore_state["files"]),
