@@ -71,7 +71,8 @@ def filesystem_walker():
     def walk_and_capture(root_path: Path, 
                          max_depth: Optional[int] = None,
                          include_metadata: bool = False,
-                         max_entries_per_dir: Optional[int] = 10) -> Dict:
+                         max_entries_per_dir: Optional[int] = 10,
+                         exclude_paths: Optional[list] = None) -> Dict:
         """Walk a directory tree and capture its structure.
         
         Args:
@@ -81,13 +82,18 @@ def filesystem_walker():
             max_entries_per_dir: Maximum entries to sample per directory (None = unlimited)
                                 Useful for directories with thousands of files/ZIPs.
                                 Default is 10 for fast testing.
+            exclude_paths: List of path patterns to exclude (e.g., ['Amstrad/Tapes', 'Mame'])
+                          Paths are relative to root_path
             
         Returns:
             Dictionary containing directory structure and metadata
         """
         start_time = time.time()
+        exclude_paths = exclude_paths or []
         logger.info(f"Starting filesystem walk of: {root_path}")
         logger.info(f"  max_depth={max_depth}, max_entries_per_dir={max_entries_per_dir}")
+        if exclude_paths:
+            logger.info(f"  excluding paths: {exclude_paths}")
         
         result = {
             "root": str(root_path),
@@ -116,6 +122,18 @@ def filesystem_walker():
             rel_dir = os.path.relpath(dirpath, root_path)
             if rel_dir == ".":
                 rel_dir = ""
+            
+            # Check if this directory should be excluded
+            should_exclude = False
+            for exclude_pattern in exclude_paths:
+                if rel_dir.startswith(exclude_pattern) or rel_dir == exclude_pattern:
+                    should_exclude = True
+                    break
+            
+            if should_exclude:
+                logger.info(f"Excluding directory: {rel_dir}")
+                dirnames.clear()  # Don't descend into excluded paths
+                continue
             
             # Log directory processing
             dir_entry_count = len(dirnames) + len(filenames)

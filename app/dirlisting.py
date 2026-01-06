@@ -196,6 +196,9 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
+    # Some clients (like Mame) don't have a systems key
+    if 'systems' not in client:
+        return []
     return [system['name'] for system in client['systems']]
 
 def list_maps(config, path: Path, root_parts: tuple) -> list:
@@ -203,6 +206,8 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
+        return []
+    if 'systems' not in client:
         return []
     system_name = path.parts[len(root_parts) + 1]
     system = next((s for s in client['systems'] if s['name'] == system_name), None)
@@ -280,6 +285,8 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
+        return []
+    if 'systems' not in client:
         return []
     system_name = path.parts[len(root_parts) + 1]
     system = next((s for s in client['systems'] if s['name'] == system_name), None)

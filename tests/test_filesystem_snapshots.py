@@ -48,12 +48,19 @@ class TestTransFSSnapshots:
         NOTE: This test uses sampling (max_entries_per_dir=10) AND max_depth=4 to avoid
         performance issues with large directories containing thousands of ZIP files.
         The counts represent sampled data at limited depth. This is intentional for test speed.
+        
+        EXCLUDES: MiSTer/Amstrad/Tapes (3,537 CDT files - too slow for routine testing)
         """
         if not transfs_volume.exists():
             pytest.skip("TransFS volume not mounted")
         
-        # Use default sampling (10 entries per dir) and limit depth for performance
-        state = filesystem_walker(transfs_volume, max_depth=4, include_metadata=False)
+        # Exclude the huge Amstrad Tapes directory to speed up tests
+        state = filesystem_walker(
+            transfs_volume, 
+            max_depth=4, 
+            include_metadata=False,
+            exclude_paths=['MiSTer/Amstrad/Tapes']
+        )
         
         counts = {
             "sampled": state.get("sampled", True),  # Track if sampling was used
@@ -100,7 +107,13 @@ class TestTransFSSnapshots:
         if not filestore_volume.exists():
             pytest.skip("Filestore volume not found")
         
-        state = filesystem_walker(filestore_volume, max_depth=4, include_metadata=False)
+        # Exclude large directories that would make tests slow
+        state = filesystem_walker(
+            filestore_volume, 
+            max_depth=4, 
+            include_metadata=False,
+            exclude_paths=['Native/Amstrad/CPC/Software/CDT', 'Native/Amstrad/CPC/Software/Collections']
+        )
         assert state == snapshot
 
 
