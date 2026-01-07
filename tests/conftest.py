@@ -123,7 +123,7 @@ def filesystem_walker():
             if rel_dir == ".":
                 rel_dir = ""
             
-            # Check if this directory should be excluded
+            # Check if this directory itself should be excluded (skip it entirely)
             should_exclude = False
             for exclude_pattern in exclude_paths:
                 if rel_dir.startswith(exclude_pattern) or rel_dir == exclude_pattern:
@@ -134,6 +134,22 @@ def filesystem_walker():
                 logger.info(f"Excluding directory: {rel_dir}")
                 dirnames.clear()  # Don't descend into excluded paths
                 continue
+            
+            # Filter out child directories that match exclusion patterns
+            # This prevents os.walk from descending into them
+            if dirnames and exclude_paths:
+                original_dirnames = list(dirnames)
+                dirnames[:] = [
+                    d for d in dirnames 
+                    if not any(
+                        (os.path.join(rel_dir, d) if rel_dir else d).startswith(excl) or
+                        (os.path.join(rel_dir, d) if rel_dir else d) == excl
+                        for excl in exclude_paths
+                    )
+                ]
+                excluded = set(original_dirnames) - set(dirnames)
+                if excluded:
+                    logger.info(f"Filtering excluded subdirectories from {rel_dir or '(root)'}: {excluded}")
             
             # Log directory processing
             dir_entry_count = len(dirnames) + len(filenames)
