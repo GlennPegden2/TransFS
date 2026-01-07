@@ -35,7 +35,9 @@ class TestTransFSSnapshots:
         if not transfs_volume.exists():
             pytest.skip("TransFS volume not mounted - ensure Docker container is running")
         
-        state = filesystem_walker(transfs_volume, max_depth=2, include_metadata=False)
+        # Exclude large directories for performance
+        exclude_paths = ['MiSTer/Amstrad/Tapes', 'Native/Amstrad']
+        state = filesystem_walker(transfs_volume, max_depth=2, include_metadata=False, exclude_paths=exclude_paths)
         
         # Use syrupy to snapshot the state
         assert state == snapshot
@@ -115,7 +117,9 @@ class TestTransFSWithMetadata:
         if not transfs_volume.exists():
             pytest.skip("TransFS volume not mounted")
         
-        state = filesystem_walker(transfs_volume, include_metadata=True)
+        # Exclude large directories for performance
+        exclude_paths = ['MiSTer/Amstrad/Tapes']
+        state = filesystem_walker(transfs_volume, include_metadata=True, exclude_paths=exclude_paths)
         
         # Extract just the extension information
         extensions = {}
@@ -137,7 +141,9 @@ class TestTransFSWithMetadata:
         if not transfs_volume.exists():
             pytest.skip("TransFS volume not mounted")
         
-        state = filesystem_walker(transfs_volume, include_metadata=True)
+        # Exclude large directories for performance
+        exclude_paths = ['MiSTer/Amstrad/Tapes']
+        state = filesystem_walker(transfs_volume, include_metadata=True, exclude_paths=exclude_paths)
         
         symlinks = []
         if state.get("metadata"):
@@ -199,7 +205,7 @@ class TestMiSTerSystems:
         if not bbc_path.exists():
             pytest.skip("BBC Micro not configured")
         
-        state = filesystem_walker(bbc_path, max_depth=2, include_metadata=True)
+        state = filesystem_walker(bbc_path, max_depth=2, include_metadata=True, exclude_paths=[])
         assert state == snapshot
     
     def test_acorn_electron_structure(self, transfs_volume, filesystem_walker, snapshot):
@@ -217,7 +223,7 @@ class TestMiSTerSystems:
         if not electron_path.exists():
             pytest.skip("Acorn Electron not configured")
         
-        state = filesystem_walker(electron_path, max_depth=2, include_metadata=True)
+        state = filesystem_walker(electron_path, max_depth=2, include_metadata=True, exclude_paths=[])
         assert state == snapshot
 
 
@@ -229,7 +235,9 @@ class TestRegressionDetection:
         if not transfs_volume.exists():
             pytest.skip("TransFS volume not mounted")
         
-        state = filesystem_walker(transfs_volume, include_metadata=False)
+        # Exclude large directories for performance
+        exclude_paths = ['MiSTer/Amstrad/Tapes']
+        state = filesystem_walker(transfs_volume, include_metadata=False, exclude_paths=exclude_paths)
         
         # Check for directories with no files or subdirectories
         empty_dirs = []

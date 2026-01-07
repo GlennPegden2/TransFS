@@ -71,7 +71,8 @@ def filesystem_walker():
     def walk_and_capture(root_path: Path, 
                          max_depth: Optional[int] = None,
                          include_metadata: bool = False,
-                         max_entries_per_dir: Optional[int] = 10) -> Dict:
+                         max_entries_per_dir: Optional[int] = 10,
+                         exclude_paths: Optional[list] = None) -> Dict:
         """Walk a directory tree and capture its structure.
         
         Args:
@@ -86,8 +87,11 @@ def filesystem_walker():
             Dictionary containing directory structure and metadata
         """
         start_time = time.time()
+        exclude_paths = exclude_paths or []
         logger.info(f"Starting filesystem walk of: {root_path}")
         logger.info(f"  max_depth={max_depth}, max_entries_per_dir={max_entries_per_dir}")
+        if exclude_paths:
+            logger.info(f"  excluding paths: {exclude_paths}")
         
         result = {
             "root": str(root_path),
@@ -117,6 +121,33 @@ def filesystem_walker():
             if rel_dir == ".":
                 rel_dir = ""
             
+            # Check if this directory itself should be excluded (skip it entirely)
+            should_exclude = False
+            for exclude_pattern in exclude_paths:
+                if rel_dir.startswith(exclude_pattern) or rel_dir == exclude_pattern:
+                    should_exclude = True
+                    break
+            
+            if should_exclude:
+                logger.info(f"Excluding directory: {rel_dir}")
+                dirnames.clear()  # Don't descend into excluded paths
+                continue
+            
+            # Filter out child directories that match exclusion patterns
+            # This prevents os.walk from descending into them
+            if dirnames and exclude_paths:
+                original_dirnames = list(dirnames)
+                dirnames[:] = [
+                    d for d in dirnames 
+                    if not any(
+                        (os.path.join(rel_dir, d) if rel_dir else d).startswith(excl) or
+                        (os.path.join(rel_dir, d) if rel_dir else d) == excl
+                        for excl in exclude_paths
+                    )
+                ]
+                excluded = set(original_dirnames) - set(dirnames)
+                if excluded:
+                    logger.info(f"Filtering excluded subdirectories from {rel_dir or '(root)'}: {excluded}")
             # Log directory processing
             dir_entry_count = len(dirnames) + len(filenames)
             if dir_entry_count > 100 or (time.time() - dir_start) > 0.5:

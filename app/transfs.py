@@ -134,28 +134,73 @@ class TransFS(Passthrough):
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
         t_parse = time.time() - t_parse_start
         
-        # Add real directory entries
-        if os.path.isdir(xfull_path):
-            real_entries = os.listdir(xfull_path)
+        # Add real directory entries using scandir for better performance
+        # scandir() returns DirEntry objects with cached stat info, avoiding extra stat() calls
+        dir_entry_cache = {}
+        parent_dir_mtime = None
+        if os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
             existing = set(virtual_entries)
-            virtual_entries.extend([e for e in real_entries if e not in existing])
+            try:
+                # Get parent directory mtime once for cache validation
+                parent_dir_mtime = os.path.getmtime(parent_dir)
+                
+                with os.scandir(parent_dir) as entries:
+                    for entry in entries:
+                        if entry.name not in existing:
+                            virtual_entries.append(entry.name)
+                            # Cache the DirEntry object for later stat access
+                            dir_entry_cache[entry.name] = entry
+            except OSError as e:
+                logger.warning(f"READDIR: scandir failed for {parent_dir}: {e}")
         
-        logger.info(f"READDIR: {len(virtual_entries)} entries, parse={t_parse:.4f}s")
+        # Optimize for Native paths - skip expensive get_source_path() call
+        is_native_path = parent_dir.startswith("/mnt/filestorefs/Native/")
+        
+        logger.info(f"READDIR: {len(virtual_entries)} entries, parse={t_parse:.4f}s, native_path={is_native_path}, cached_entries={len(dir_entry_cache)}")
         
         # Batch get source paths for ALL entries (much faster than one-by-one)
         t_batch_start = time.time()
         source_paths = {}
+        t_cache_check = 0
+        t_path_resolve = 0
+        cache_checked = 0
+        
+        # Skip expensive cache lookups if we have DirEntry cache for all entries
+        skip_cache_lookup = len(dir_entry_cache) > 0 and len(dir_entry_cache) == len(virtual_entries)
+        
         for entry_name in virtual_entries:
             entry_path = os.path.join(xfull_path, entry_name)
-            # Check cache first
-            cached = get_cached_getattr(entry_path, parent_dir)
-            if cached:
-                source_paths[entry_name] = ('cached', cached)
-            else:
-                # Get source path for uncached entries
-                fspath = get_source_path(logger, self.config, self.root, entry_path)
+            
+            # For directories with full DirEntry cache, skip the expensive cache lookup
+            if skip_cache_lookup:
+                # Fast path: we'll use DirEntry stat later
+                if is_native_path:
+                    fspath = os.path.join(parent_dir, entry_name)
+                else:
+                    fspath = get_source_path(logger, self.config, self.root, entry_path)
                 source_paths[entry_name] = ('uncached', fspath)
+            else:
+                # Slow path: check cache first
+                t_check_start = time.time()
+                cached = get_cached_getattr(entry_path, parent_dir)
+                t_cache_check += time.time() - t_check_start
+                cache_checked += 1
+                
+                if cached:
+                    source_paths[entry_name] = ('cached', cached)
+                else:
+                    # Fast path for Native: source path is just the parent_dir + entry_name
+                    t_resolve_start = time.time()
+                    if is_native_path:
+                        fspath = os.path.join(parent_dir, entry_name)
+                    else:
+                        # Get source path for non-Native entries (may be expensive)
+                        fspath = get_source_path(logger, self.config, self.root, entry_path)
+                    t_path_resolve += time.time() - t_resolve_start
+                    source_paths[entry_name] = ('uncached', fspath)
+        
         t_batch = time.time() - t_batch_start
+        logger.info(f"BATCH TIMING: total={t_batch:.4f}s cache_check={t_cache_check:.4f}s ({cache_checked} calls) path_resolve={t_path_resolve:.4f}s skip_cache={skip_cache_lookup}")
         
         # Send entries with full attributes
         entry_id = 1
@@ -221,17 +266,37 @@ class TransFS(Passthrough):
                         }
                         cache_getattr(entry_path, parent_dir, stat_dict)
                         entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
-                    elif isinstance(fspath, str) and os.path.exists(fspath):
-                        # Regular file
-                        st = os.lstat(fspath)
-                        stat_dict = {
-                            'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
-                            'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
-                            'st_uid': st.st_uid, 'st_mode': st.st_mode,
-                            'st_nlink': st.st_nlink, 'st_size': st.st_size,
-                        }
-                        cache_getattr(entry_path, parent_dir, stat_dict)
-                        entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                    elif isinstance(fspath, str):
+                        # Regular file - use cached DirEntry stat if available (avoids extra stat!)
+                        if entry_name in dir_entry_cache:
+                            # Fast path: use cached stat from scandir (no syscalls!)
+                            de = dir_entry_cache[entry_name]
+                            try:
+                                st = de.stat(follow_symlinks=False)
+                                stat_dict = {
+                                    'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                                    'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                                    'st_uid': st.st_uid, 'st_mode': st.st_mode,
+                                    'st_nlink': st.st_nlink, 'st_size': st.st_size,
+                                }
+                                cache_getattr(entry_path, parent_dir, stat_dict)
+                                entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                            except OSError:
+                                continue
+                        elif os.path.exists(fspath):
+                            # Slow path: need to stat the file
+                            st = os.lstat(fspath)
+                            stat_dict = {
+                                'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                                'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                                'st_uid': st.st_uid, 'st_mode': st.st_mode,
+                                'st_nlink': st.st_nlink, 'st_size': st.st_size,
+                            }
+                            cache_getattr(entry_path, parent_dir, stat_dict)
+                            entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                        else:
+                            # File doesn't exist
+                            continue
                     elif entry_name.startswith('...') and entry_name.endswith('...'):
                         # Virtual directory
                         now = int(time.time())
