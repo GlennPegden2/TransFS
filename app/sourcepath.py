@@ -1,17 +1,65 @@
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import zipfile
 from pathutils import get_client, get_system_info, find_software_archive_entry
-from filetypes import get_filetype_maps
+from filetypes import get_filetype_maps, get_filetype_transforms
 from ziptutils import get_zip_mapping
 from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
+from transforms import build_transform_pipeline, TransformPipeline
+
+def get_transform_pipeline_for_file(logger, system_info: dict, filename: str, virtual_folder: str) -> Optional[TransformPipeline]:
+    """
+    Get transformation pipeline for a file based on its extension and virtual folder.
+    
+    Args:
+        logger: Logger instance
+        system_info: System configuration dict
+        filename: File name (e.g., "game.dsk")
+        virtual_folder: Virtual folder name (e.g., "Disks")
+    
+    Returns:
+        TransformPipeline if transforms are configured for this file type, else None
+    """
+    # Find the SoftwareArchives entry
+    sa_entry = find_software_archive_entry(system_info)
+    if not sa_entry:
+        return None
+    
+    # Get transform configuration
+    transform_map = get_filetype_transforms(sa_entry)
+    if not transform_map:
+        return None
+    
+    # Extract file extension
+    _, ext = os.path.splitext(filename)
+    ext = ext[1:].upper()  # Remove dot and uppercase
+    
+    # Check if transforms are configured for this extension
+    if ext not in transform_map:
+        return None
+    
+    # Build transform pipeline
+    transform_specs = transform_map[ext]
+    try:
+        pipeline = build_transform_pipeline(filename, transform_specs)
+        logger.debug(f"Built transform pipeline for {filename}: {pipeline}")
+        return pipeline
+    except Exception as e:
+        logger.error(f"Failed to build transform pipeline for {filename}: {e}")
+        return None
 
 def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]:
     """
     Given a translated path (as seen under the FUSE mount), return the corresponding
     source path in the filestore, using the translation logic from TransFS.
     Supports dynamic ...SoftwareArchives... mapping, including zip-as-folder logic and filetype mapping.
+    
+    Returns:
+        - String path for regular files
+        - Tuple (zip_path, internal_path) for files inside zips
+        - Dict {'path': path, 'transform_pipeline': pipeline} for files with transformations
+        - None if not found
     """
 
     logger.debug(f"DEBUG: get_source_path({translated_path}) called")
@@ -43,6 +91,13 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     # Try dynamic SoftwareArchives first
     dynamic_result = get_dynamic_source_path(logger, config, system_info, rel_parts)
     if dynamic_result is not None:
+        # Check if we need to add transformations for dynamic paths
+        if len(rel_parts) >= 4 and isinstance(dynamic_result, str):
+            virtual_folder = rel_parts[2]
+            filename = rel_parts[-1]
+            pipeline = get_transform_pipeline_for_file(logger, system_info, filename, virtual_folder)
+            if pipeline:
+                return {'path': dynamic_result, 'transform_pipeline': pipeline}
         return dynamic_result
 
     # Handle named maps (including nested paths like MMBs/beeb1_mmb.VHD)

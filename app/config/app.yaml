@@ -1,17 +1,28 @@
-# TransFS Application Configuration
-
-# FUSE mount point inside container
-mountpoint: /mnt/transfs
-
-# Physical file storage location
+cache:
+  dir_cache_enabled: true
+  dir_listing_cache_enabled: true
+  getattr_cache_enabled: true
+  getattr_cache_save_interval: 5.0
+cache_warmer:
+  batch_size: 3
+  check_interval_seconds: 10
+  cpu_threshold_percent: 20.0
+  enabled: true
+  io_threshold_percent: 20.0
+  max_depth: 8
 filestore: /mnt/filestorefs
-
-# Web UI/API Configuration
-web_api:
-  host: "0.0.0.0"
-  port: 8000
-
-# SSL Configuration
-# List of hostnames to bypass SSL certificate verification for legacy sites
+mountpoint: /mnt/transfs
 ssl_ignore_hosts:
-  - arcarc.nl
+- arcarc.nl
+ui:
+  advanced_options: true
+web_api:
+  host: ''
+  port: 8000
+zaparoo:
+  clients:
+  - enabled: true
+    host: 192.168.95.81
+    mount_path: /media/fat/cifs
+    name: MiSTer
+    port: 7497

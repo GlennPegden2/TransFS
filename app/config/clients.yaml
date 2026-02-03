@@ -15,7 +15,8 @@ clients:
               default_source:
                 source_filename: Software/VHD/hoglet67.vhd
           - ...SoftwareArchives...: 
-              supports_zip: false   
+              supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - HDs: VHD
@@ -31,7 +32,8 @@ clients:
               default_source:
                 source_filename: BIOS/risocs-3.71.rom
           - ...SoftwareArchives...: 
-              supports_zip: false   
+              supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - FDs: ADF
@@ -48,6 +50,7 @@ clients:
                 zip_internal_file: BEEB.MMB
           - ...SoftwareArchives...: 
               supports_zip: true
+              supports_zaparoo: true
               zip_mode: flatten
               source_dir: Software
               filetypes:
@@ -67,6 +70,7 @@ clients:
                 zip_internal_file: BEEB.MMB
           - ...SoftwareArchives...: 
               supports_zip: true
+              supports_zaparoo: true
               zip_mode: flatten
               source_dir: Software
               filetypes:
@@ -79,7 +83,8 @@ clients:
         local_base_path: Amstrad/PCW
         maps:
           - ...SoftwareArchives...: 
-              supports_zip: false   
+              supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - FDs: DSK
@@ -91,17 +96,21 @@ clients:
           - boot.rom:
               default_source:
                 source_filename: BIOS/boot.rom
-          - cpc464nd.eZ0:
+          - boot2.rom:
               default_source:
-                source_filename: BIOS/cpc464nd.eZ0
+                source_filename: BIOS/boot.rom
+# Removed as it removes disk functionality
+#          - cpc464nd.eZ0:
+#              default_source:
+#                source_filename: BIOS/cpc464nd.eZ0
           - ...SoftwareArchives...:
               supports_zip: true
+              supports_zaparoo: true
               zip_mode: file
               source_dir: Software
               filetypes:
-              - Disks: "DSK"
+              - FDs: "DSK"
               - Tapes: "CDT"
-              - Collections: "ZIP"
       # --- Apple ---
       - name: AppleII
         manufacturer: Apple
@@ -110,9 +119,17 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
-              - Disks: "DSK,DO"
+              - Disks: "DSK,DO,2MG"
+                transforms:
+                  DSK:
+                    - type: strip_header
+                      bytes: 64
+                  2MG:
+                    - type: strip_header
+                      bytes: 64
       # --- Atari ---
       - name: Atari2600
         manufacturer: Atari
@@ -121,6 +138,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN"
@@ -131,6 +149,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN"
@@ -141,6 +160,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "A78"
@@ -151,6 +171,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM"
@@ -162,6 +183,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "LNX"
@@ -173,6 +195,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "COL"
@@ -195,6 +218,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - Disks: "D64,D71,D81"
@@ -205,6 +229,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -216,6 +241,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -227,6 +253,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -239,6 +266,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN"
@@ -250,6 +278,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "INT"
@@ -261,6 +290,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM"
@@ -273,6 +303,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM, BIN:ROM, HEX:ROM"
@@ -284,6 +315,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "PCE"
@@ -294,6 +326,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "PCE"
@@ -305,6 +338,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "GB"
@@ -315,6 +349,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "GBA"
@@ -325,6 +360,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "GBC"
@@ -335,6 +371,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "NES"
@@ -345,6 +382,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "SFC,SMC,SFC:SMC"
@@ -356,6 +394,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "GG"
@@ -366,6 +405,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN,GEN,MD"
@@ -376,6 +416,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "SMS"
@@ -387,6 +428,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - Tapes: "TAP,TZX"
@@ -399,6 +441,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: true
               source_dir: Software
               filetypes:
               - ROMs: "ZIP"
@@ -410,6 +453,7 @@ clients:
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
+              supports_zaparoo: false
               source_dir: Software
               filetypes:
               - Tapes: c10

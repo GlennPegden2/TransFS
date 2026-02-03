@@ -18,7 +18,7 @@ import trio
 import pyfuse3
 from pyfuse3 import FUSEError, InodeT, FileHandleT
 
-from passthroughfs_pyfuse3 import Passthrough
+from passthroughfs import Passthrough
 from dirlisting import parse_trans_path, get_cached_getattr, cache_getattr
 from pathutils import full_path, is_virtual_path, map_virtual_to_real
 from sourcepath import get_source_path, get_source_path_for_write
@@ -43,12 +43,30 @@ class TransFS(Passthrough):
     _getattr_cache_misses = 0
     _last_stats_print = time.time()
 
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str, mount_path: str = None):
         super().__init__(root_path)
         logger.debug("Starting TransFS (pyfuse3)")
         self.root = root_path
+        self.mount_path = mount_path or root_path  # Store mount point for path mapping
         from config import read_config
         self.config = read_config()
+        try:
+            from dirlisting import set_cache_config
+            cache_config = self.config.get("cache", {})
+            if cache_config:
+                set_cache_config(cache_config)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f"Failed to apply cache config: {e}")
+
+    def _filestore_to_mount_path(self, filestore_path: str) -> str:
+        """Convert a filestore path to a mount-relative path for get_source_path()."""
+        try:
+            rel_path = os.path.relpath(filestore_path, self.root)
+            mount_path = os.path.join(self.mount_path, rel_path)
+            return mount_path
+        except ValueError:
+            # If relpath fails, return as-is
+            return filestore_path
     
     def _maybe_print_stats(self):
         """Print profiling stats every 10 seconds."""
@@ -134,11 +152,21 @@ class TransFS(Passthrough):
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
         t_parse = time.time() - t_parse_start
         
+        # Determine hierarchy level to decide if implicit mappings are allowed
+        # Level 0 (root): /mnt/transfs - only show clients from config
+        # Level 1: /mnt/transfs/MiSTer - only show systems from config  
+        # Level 2: /mnt/transfs/MiSTer/Amstrad - only show maps from config
+        # Level 3+: Allow implicit real files/dirs to appear
+        root_parts = Path(self.root).parts
+        path_parts = Path(xfull_path).parts
+        hierarchy_level = len(path_parts) - len(root_parts)
+        allow_implicit_entries = hierarchy_level >= 3
+        
         # Add real directory entries using scandir for better performance
         # scandir() returns DirEntry objects with cached stat info, avoiding extra stat() calls
         dir_entry_cache = {}
         parent_dir_mtime = None
-        if os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
+        if allow_implicit_entries and os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
             existing = set(virtual_entries)
             try:
                 # Get parent directory mtime once for cache validation
@@ -146,12 +174,26 @@ class TransFS(Passthrough):
                 
                 with os.scandir(parent_dir) as entries:
                     for entry in entries:
+                        # Skip hidden files (starting with .) - includes cache files
+                        if entry.name.startswith('.'):
+                            continue
                         if entry.name not in existing:
                             virtual_entries.append(entry.name)
                             # Cache the DirEntry object for later stat access
                             dir_entry_cache[entry.name] = entry
             except OSError as e:
                 logger.warning(f"READDIR: scandir failed for {parent_dir}: {e}")
+        
+        # Deduplicate entries while preserving order
+        if virtual_entries:
+            deduped_entries = []
+            seen_entries = set()
+            for entry_name in virtual_entries:
+                if entry_name in seen_entries:
+                    continue
+                seen_entries.add(entry_name)
+                deduped_entries.append(entry_name)
+            virtual_entries = deduped_entries
         
         # Optimize for Native paths - skip expensive get_source_path() call
         is_native_path = parent_dir.startswith("/mnt/filestorefs/Native/")
@@ -177,7 +219,7 @@ class TransFS(Passthrough):
                 if is_native_path:
                     fspath = os.path.join(parent_dir, entry_name)
                 else:
-                    fspath = get_source_path(logger, self.config, self.root, entry_path)
+                    fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
                 source_paths[entry_name] = ('uncached', fspath)
             else:
                 # Slow path: check cache first
@@ -195,7 +237,7 @@ class TransFS(Passthrough):
                         fspath = os.path.join(parent_dir, entry_name)
                     else:
                         # Get source path for non-Native entries (may be expensive)
-                        fspath = get_source_path(logger, self.config, self.root, entry_path)
+                        fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
                     t_path_resolve += time.time() - t_resolve_start
                     source_paths[entry_name] = ('uncached', fspath)
         
@@ -203,13 +245,11 @@ class TransFS(Passthrough):
         logger.info(f"BATCH TIMING: total={t_batch:.4f}s cache_check={t_cache_check:.4f}s ({cache_checked} calls) path_resolve={t_path_resolve:.4f}s skip_cache={skip_cache_lookup}")
         
         # Send entries with full attributes
-        entry_id = 1
         sent_count = 0
         cache_hits = 0
         
-        for entry_name in virtual_entries:
+        for entry_id, entry_name in enumerate(virtual_entries, start=1):
             if entry_id <= start_id:
-                entry_id += 1
                 continue
             
             entry_path = os.path.join(xfull_path, entry_name)
@@ -295,8 +335,18 @@ class TransFS(Passthrough):
                             cache_getattr(entry_path, parent_dir, stat_dict)
                             entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
                         else:
-                            # File doesn't exist
-                            continue
+                            # File doesn't exist; if it's a virtual path, expose as empty directory
+                            if is_virtual_path(self.config, self.mount_path, entry_path):
+                                now = int(time.time())
+                                stat_dict = {
+                                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                    'st_gid': 0, 'st_uid': 0, 'st_mode': 0o040755,
+                                    'st_nlink': 2, 'st_size': 4096,
+                                }
+                                cache_getattr(entry_path, parent_dir, stat_dict)
+                                entry = self._dict_to_entry_attributes(stat_dict, synthetic_inode)
+                            else:
+                                continue
                     elif entry_name.startswith('...') and entry_name.endswith('...'):
                         # Virtual directory
                         now = int(time.time())
@@ -334,7 +384,6 @@ class TransFS(Passthrough):
                 break
             
             sent_count += 1
-            entry_id += 1
         
         t_total = time.time() - t_start
         hit_rate = (cache_hits / len(virtual_entries) * 100) if virtual_entries else 0
@@ -377,7 +426,9 @@ class TransFS(Passthrough):
         logger.debug("GETATTR CACHE MISS: inode=%s (cache_lookup=%.4fs)", inode, t_cache_elapsed)
         
         t_source_start = time.time()
-        fspath = get_source_path(logger, self.config, self.root, xfull_path)
+        # Convert filestore path to mount path for get_source_path()
+        virtual_path = self._filestore_to_mount_path(xfull_path)
+        fspath = get_source_path(logger, self.config, self.mount_path, virtual_path)
         t_source_elapsed = time.time() - t_source_start
         logger.debug("GETATTR get_source_path took %.4fs for inode=%s", t_source_elapsed, inode)
         logger.debug("DEBUG: getattr full_path=%s, fspath=%s", xfull_path, fspath)
@@ -385,6 +436,34 @@ class TransFS(Passthrough):
         # Determine zip_mode
         zip_mode = self._get_zip_mode_for_path(xfull_path)
         logger.debug("DEBUG: getattr zip_mode=%s for path=%s", zip_mode, path)
+
+        # Handle files with transformation pipelines
+        if isinstance(fspath, dict) and 'transform_pipeline' in fspath:
+            source_path = fspath['path']
+            pipeline = fspath['transform_pipeline']
+            
+            if not os.path.exists(source_path):
+                raise FUSEError(errno.ENOENT)
+            
+            # Get source file stats and adjust size for transformation
+            st = os.lstat(source_path)
+            source_size = st.st_size
+            transformed_size = pipeline.get_output_size(source_size)
+            
+            result = {
+                'st_atime': int(st.st_atime),
+                'st_ctime': int(st.st_ctime),
+                'st_mtime': int(st.st_mtime),
+                'st_gid': st.st_gid,
+                'st_uid': st.st_uid,
+                'st_mode': 0o100444,
+                'st_nlink': 1,
+                'st_size': transformed_size if transformed_size >= 0 else source_size,
+            }
+            logger.debug("DEBUG: getattr with transform: source_size=%d, transformed_size=%d", 
+                        source_size, result['st_size'])
+            cache_getattr(xfull_path, parent_dir, result)
+            return self._dict_to_entry_attributes(result, inode)
 
         # Handle file inside a zip
         if isinstance(fspath, tuple):
@@ -428,7 +507,7 @@ class TransFS(Passthrough):
         # Handle virtual directories
         if fspath is None:
             parent_path = str(Path(xfull_path).parent)
-            entries = set(parse_trans_path(self.config, self.root, parent_path))
+            entries = set(parse_trans_path(self.config, self.mount_path, parent_path))
             name = os.path.basename(xfull_path)
             logger.debug("DEBUG getattr fallback: parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
 
@@ -450,7 +529,8 @@ class TransFS(Passthrough):
                     return self._dict_to_entry_attributes(result, inode)
                 
                 # Retry get_source_path
-                retry_fspath = get_source_path(logger, self.config, self.root, xfull_path)
+                retry_virtual_path = self._filestore_to_mount_path(xfull_path)
+                retry_fspath = get_source_path(logger, self.config, self.mount_path, retry_virtual_path)
                 logger.debug("DEBUG getattr retry_fspath: %s", retry_fspath)
                 
                 if retry_fspath and isinstance(retry_fspath, str) and os.path.exists(retry_fspath):
@@ -526,13 +606,15 @@ class TransFS(Passthrough):
         path = self._inode_to_path(inode)
         logger.info("OPEN: inode=%s, flags=%s, path=%s", inode, flags, path)
         
-        xfull_path = path
-        trans_path = get_source_path(logger, self.config, self.root, xfull_path)
+        # Convert filestore path to mount path for get_source_path()
+        xfull_path = self._filestore_to_mount_path(path)
+        logger.debug("OPEN: converted path=%s -> virtual_path=%s", path, xfull_path)
+        trans_path = get_source_path(logger, self.config, self.mount_path, xfull_path)
         logger.info("OPEN: trans_path=%s", trans_path)
 
         if trans_path is None:
             if flags & os.O_CREAT:
-                trans_path = get_source_path_for_write(logger, self.config, self.root, xfull_path)
+                trans_path = get_source_path_for_write(logger, self.config, self.mount_path, xfull_path)
                 logger.debug("DEBUG: open write trans_path=%s", trans_path)
                 if trans_path is None:
                     logger.debug("DEBUG: open: no mapping for write")
@@ -565,6 +647,48 @@ class TransFS(Passthrough):
             except Exception as e:
                 logger.error("open: error extracting %s from %s: %s", internal_file, zip_path, e)
                 raise FUSEError(errno.ENOENT)
+
+        # Handle files with transformation pipelines
+        if isinstance(trans_path, dict) and 'transform_pipeline' in trans_path:
+            source_path = trans_path['path']
+            pipeline = trans_path['transform_pipeline']
+            logger.debug("DEBUG: open applying transform pipeline: %s", pipeline)
+            
+            if not os.path.exists(source_path):
+                logger.error("open: source file %s does not exist for transformation", source_path)
+                raise FUSEError(errno.ENOENT)
+            
+            try:
+                # Read source file and apply transformations
+                with open(source_path, 'rb') as source_file:
+                    # Get source file size
+                    source_file.seek(0, os.SEEK_END)
+                    source_size = source_file.tell()
+                    source_file.seek(0)
+                    
+                    # Calculate output size
+                    output_size = pipeline.get_output_size(source_size)
+                    
+                    # Read and transform all data
+                    # For now, read entire file - could optimize for large files later
+                    transformed_data = pipeline.apply_transforms(source_file, 0, output_size if output_size >= 0 else source_size)
+                    
+                    # Write to temp file
+                    temp = tempfile.NamedTemporaryFile(mode='wb', delete=False)
+                    temp.write(transformed_data)
+                    temp.close()
+                    logger.debug("DEBUG: open created transformed temp file at %s (size: %d -> %d)", 
+                                temp.name, source_size, len(transformed_data))
+                    
+                    # Open temp file
+                    fd = os.open(temp.name, flags)
+                    self._fd_inode_map[fd] = inode
+                    self._inode_fd_map[inode] = fd
+                    self._fd_open_count[fd] = 1
+                    return pyfuse3.FileInfo(fh=fd)
+            except Exception as e:
+                logger.error("open: error applying transform pipeline for %s: %s", source_path, e)
+                raise FUSEError(errno.EIO)
 
         # Handle regular files
         if isinstance(trans_path, str):
@@ -624,7 +748,7 @@ class TransFS(Passthrough):
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
         logger.info(f"LOOKUP: '{name_str}' in inode {parent_inode}, parent_path={parent_path}, full_path={path}")
-        
+
         # Special handling for . and ..
         if name_str == '.':
             logger.info(f"LOOKUP: returning parent inode for '.'")
@@ -639,11 +763,11 @@ class TransFS(Passthrough):
             # Fallback: use ROOT_INODE if we're at the top
             logger.info(f"LOOKUP: returning ROOT_INODE for '..'")
             return await self.getattr(pyfuse3.ROOT_INODE, ctx)
-        
+
         # Try to get source path (handles virtual translation)
         source_path = get_source_path(logger, self.config, self.root, path)
         logger.info(f"LOOKUP: source_path={source_path}")
-        
+
         # Generate inode for this path
         # Use hash of path for synthetic inode (deterministic)
         synthetic_inode = abs(hash(path)) & 0x7FFFFFFF
@@ -651,7 +775,7 @@ class TransFS(Passthrough):
             synthetic_inode = 1
         if synthetic_inode == pyfuse3.ROOT_INODE:
             synthetic_inode += 1
-        
+
         # Check if it's a real file that exists
         if source_path and isinstance(source_path, str) and os.path.exists(source_path):
             # Real file - use its actual inode
@@ -660,40 +784,36 @@ class TransFS(Passthrough):
             self._add_path(actual_inode, path)
             logger.info(f"LOOKUP: SUCCESS - real file, inode={actual_inode}")
             return await self.getattr(actual_inode, ctx)
-        
+
         # Check if it's a file in a zip
         if source_path and isinstance(source_path, tuple):
             # File in zip - use synthetic inode
             self._add_path(synthetic_inode, path)
             logger.info(f"LOOKUP: SUCCESS - zip file, synthetic_inode={synthetic_inode}")
             return await self.getattr(synthetic_inode, ctx)
-        
+
         # Check if it's a virtual directory/file by checking if it would be listed
         parent_entries = set(parse_trans_path(self.config, self.root, parent_path))
         logger.info(f"LOOKUP: parent_entries={parent_entries}")
         
-        # Try exact match first
+        # First try exact match
         if name_str in parent_entries:
             # It's a virtual entry - use synthetic inode
             self._add_path(synthetic_inode, path)
             logger.info(f"LOOKUP: SUCCESS - virtual entry in parent, synthetic_inode={synthetic_inode}")
             return await self.getattr(synthetic_inode, ctx)
         
-        # Try case-insensitive match (for SMB/CIFS clients like MiSTer)
+        # Try case-insensitive match for compatibility with case-insensitive clients
+        # (e.g., MiSTer looking for 'ARCHIE' when config has 'Archie')
         name_lower = name_str.lower()
         for entry in parent_entries:
             if entry.lower() == name_lower:
                 # Found case-insensitive match - use the actual entry name
                 actual_path = os.path.join(parent_path, entry)
-                actual_synthetic_inode = abs(hash(actual_path)) & 0x7FFFFFFF
-                if actual_synthetic_inode == 0:
-                    actual_synthetic_inode = 1
-                if actual_synthetic_inode == pyfuse3.ROOT_INODE:
-                    actual_synthetic_inode += 1
-                self._add_path(actual_synthetic_inode, actual_path)
-                logger.info(f"LOOKUP: SUCCESS - case-insensitive match '{entry}' for '{name_str}', synthetic_inode={actual_synthetic_inode}")
-                return await self.getattr(actual_synthetic_inode, ctx)
-        
+                self._add_path(synthetic_inode, actual_path)
+                logger.info(f"LOOKUP: SUCCESS - case-insensitive match '{name_str}' -> '{entry}', synthetic_inode={synthetic_inode}")
+                return await self.getattr(synthetic_inode, ctx)
+
         # Not found
         logger.info(f"LOOKUP: FAILED - not found: {name_str}")
         raise FUSEError(errno.ENOENT)
@@ -705,7 +825,7 @@ class TransFS(Passthrough):
         
         parent_path = self._inode_to_path(parent_inode)
         trans_path = os.path.join(parent_path, name_str)
-        real_path = get_source_path_for_write(logger, self.config, self.root, trans_path)
+        real_path = get_source_path_for_write(logger, self.config, self.mount_path, trans_path)
         logger.debug("CREATE: path=%s, real_path=%s", trans_path, real_path)
         
         if real_path is None:
@@ -787,21 +907,43 @@ class TransFS(Passthrough):
 
 async def main_async(mount_path: str, root_path: str):
     """Async main function for pyfuse3."""
-    fs = TransFS(root_path=root_path)
-    
+    from config import read_app_config
+    from cache_warmer import CacheWarmer
+    from dirlisting import set_cache_config
+
+    fs = TransFS(root_path=root_path, mount_path=mount_path)
+
+    # Initialize cache configuration from app.yaml
+    app_config = read_app_config()
+    cache_config = app_config.get('cache', {})
+    set_cache_config(cache_config)
+
     fuse_options = set(pyfuse3.default_options)
     fuse_options.add('fsname=transfs')
     fuse_options.add('allow_other')
     fuse_options.discard('default_permissions')
-    
+
     logger.info(f"Mounting TransFS at {mount_path} with root {root_path}")
     pyfuse3.init(fs, mount_path, fuse_options)
-    
+
+    # Start cache warmer (only if caching is enabled)
+    warmer_config = app_config.get("cache_warmer", {})
+    if not cache_config.get('dir_cache_enabled', True):
+        warmer_config = {'enabled': False}
+
+    warmer = CacheWarmer(
+        mount_point=mount_path,
+        readdir_func=fs.readdir,
+        config=warmer_config
+    )
+    warmer.start()
+
     try:
         logger.info("Starting pyfuse3 main loop")
         await pyfuse3.main()
     finally:
         logger.info("Unmounting TransFS")
+        warmer.stop()
         pyfuse3.close(unmount=True)
 
 
