@@ -635,9 +635,35 @@ def cache_info():
 
 
 @app.get("/config")
-def config_get():
-    """Get current application configuration."""
+def config_get(fields: str = None):
+    """Get current application configuration.
+    
+    Args:
+        fields: Comma-separated list of fields to return (e.g., 'ui,web_api').
+                If not specified, returns all fields.
+    """
     try:
+        # If fields specified, only load what's needed
+        if fields:
+            field_list = [f.strip() for f in fields.split(',')]
+            from app.config import read_app_config
+            
+            # For ui and web_api, we only need app.yaml
+            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore'] for f in field_list):
+                app_config = read_app_config()
+                result = {}
+                for field in field_list:
+                    if field == 'ui':
+                        result['ui'] = app_config.get('ui', {'advanced_options': False})
+                    elif field == 'web_api':
+                        result['web_api'] = app_config.get('web_api', {'host': '0.0.0.0', 'port': 8000})
+                    elif field == 'mountpoint':
+                        result['mountpoint'] = app_config.get('mountpoint', '/mnt/transfs')
+                    elif field == 'filestore':
+                        result['filestore'] = app_config.get('filestore', '/mnt/filestorefs')
+                return result
+        
+        # Otherwise, load full config (expensive)
         config = read_config()
         return {
             "mountpoint": config.get("mountpoint", "/mnt/transfs"),
@@ -725,6 +751,11 @@ def get_test_suites():
                 "description": "System-specific configuration tests"
             },
             {
+                "id": "performance",
+                "label": "Performance Tests",
+                "description": "Performance thresholds and timing validation"
+            },
+            {
                 "id": "snapshots",
                 "label": "Snapshot Tests",
                 "description": "Filesystem snapshot validation tests"
@@ -751,6 +782,7 @@ def run_tests(test_type: str = "snapshot"):
             "snapshot": "/tests/test_filesystem_snapshots.py",
             "snapshots": "/tests/test_snapshots.py",
             "systems": "/tests/test_systems.py",
+            "performance": "/tests/test_systems.py::TestSystemPerformance",
             "foundation": "/tests/test_foundation.py",
             "all": "/tests/test_*.py"
         }
@@ -758,8 +790,13 @@ def run_tests(test_type: str = "snapshot"):
         test_file = test_files.get(test_type, test_files["snapshot"])
         
         # Start pytest in a background subprocess
+        pytest_args = ["python", "-m", "pytest", test_file, "-vv", "--tb=short", "-rs"]
+        if test_type == "performance":
+            # Allow PERF lines to appear in stdout for UI parsing
+            pytest_args.append("-s")
+
         test_process = subprocess.Popen(
-              ["python", "-m", "pytest", test_file, "-vv", "--tb=short", "-rs"],
+              pytest_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -814,29 +851,60 @@ def get_test_results(task_id: str):
             # Parse individual tests from output
             import re
             tests_list = []
-            # Updated pattern to handle parametrized tests like test_name[param0]
-            test_pattern = r'^(.+?)::([\w_:]+(?:\[[\w_0-9,\s]+\])?)\s+(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$'
             
-            # First pass: collect all test results from test summary lines
+            # Pattern for test start line (may have PERF lines after on same line)
+            # Match: ../tests/file.py::ClassName::test_name[param] PERF|...
+            # Stop at PERF or status keywords
+            test_start_pattern = r'^(\.\./tests/[^\s]+)::(.+?)(?:\s+(?:PERF|PASSED|FAILED|SKIPPED|XPASS|XFAIL))'
+            status_pattern = r'^\s*(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$'
+            perf_pattern = r'PERF\|test=(.+?)\|op=(.+?)\|path=(.+?)\|actual=([\d.]+)\|target=([\d.]+)'
+            
+            # Parse test output line by line
             test_results = {}
-            for line in run["output"].split('\n'):
-                match = re.match(test_pattern, line)
-                if match:
-                    test_file = match.group(1).strip()
-                    test_name = match.group(2).strip()
-                    status = match.group(3)
-                    reason = match.group(4) if match.group(4) else ""
+            current_test = None
+            current_perf_data = []
+            
+            lines = run["output"].split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                
+                # Check for test start
+                test_match = re.search(test_start_pattern, line)
+                if test_match:
+                    test_file = test_match.group(1).strip()
+                    test_name = test_match.group(2).strip()
                     
                     test_key = f"{test_file}::{test_name}"
+                    current_test = test_key
+                    current_perf_data = []
                     
-                    # Strip trailing progress indicator like "[ 25% ]" from ALL test lines
-                    reason = re.sub(r'\s*\[\s*\d+%\s*\]\s*$', '', reason).strip()
+                    # Check if status is on same line
+                    inline_status_match = re.search(r'\s(PASSED|FAILED|SKIPPED|XPASS|XFAIL)', line)
+                    if inline_status_match:
+                        status = inline_status_match.group(1)
+                    else:
+                        # Look ahead for status on next lines
+                        status = None
+                        j = i + 1
+                        while j < len(lines) and j < i + 10:  # Look ahead max 10 lines
+                            next_line = lines[j]
+                            status_match = re.match(status_pattern, next_line)
+                            if status_match:
+                                status = status_match.group(1)
+                                break
+                            # Check if we hit another test (stop looking)
+                            if re.search(test_start_pattern, next_line):
+                                break
+                            j += 1
+                        
+                        if not status:
+                            status = "UNKNOWN"
                     
                     # Set default output based on status
                     if status == "SKIPPED":
                         default_output = "(Skipped test)"
-                        if not reason:
-                            reason = "Skipped (fixture or condition not met)"
+                        reason = "Skipped (fixture or condition not met)"
                     elif status == "PASSED":
                         default_output = "(Test passed - no output captured)"
                         reason = ""
@@ -852,8 +920,32 @@ def get_test_results(task_id: str):
                         "name": test_key,
                         "status": status,
                         "reason": reason,
-                        "output": default_output
+                        "output": default_output,
+                        "perfDetails": []
                     }
+                
+                # Check for PERF line anywhere in the line
+                for perf_match in re.finditer(perf_pattern, line):
+                    perf_test = perf_match.group(1).strip()
+                    operation = perf_match.group(2).strip()
+                    path = perf_match.group(3).strip()
+                    actual = float(perf_match.group(4))
+                    target = float(perf_match.group(5))
+                    
+                    # Match PERF line to current test
+                    # The PERF test= value might not have the path prefix
+                    if current_test:
+                        # Check if PERF test matches current test (with or without path)
+                        perf_test_normalized = perf_test.replace('test_systems.py::', '../tests/test_systems.py::')
+                        if perf_test in current_test or current_test.endswith(perf_test) or current_test == perf_test_normalized:
+                            test_results[current_test]["perfDetails"].append({
+                                "operation": operation,
+                                "path": path,
+                                "actual": actual,
+                                "target": target
+                            })
+                
+                i += 1
             
             # Second pass: extract failure details from FAILURES section
             failures_section = False

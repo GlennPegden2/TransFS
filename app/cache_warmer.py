@@ -193,6 +193,15 @@ class CacheWarmer:
             logger.info("Cache warmer: disabled in configuration")
             return
 
+        # Safety guard: avoid scanning the mounted FUSE path from inside the same process.
+        # This can lead to deadlocks/hangs if the filesystem implementation re-enters itself.
+        if os.getenv("TRANSFS_ALLOW_MOUNT_WARMER", "0") != "1":
+            logger.warning(
+                "Cache warmer disabled: mount scan is unsafe in-process. "
+                "Set TRANSFS_ALLOW_MOUNT_WARMER=1 to override."
+            )
+            return
+
         if self.running:
             logger.warning("Cache warmer: already running")
             return

@@ -11,7 +11,7 @@ cache_warmer:
   batch_size: 10
   check_interval_seconds: 5
   cpu_threshold_percent: 20.0
-  enabled: true
+  enabled: false
   io_threshold_percent: 20.0
   max_depth: 12
 filestore: /mnt/filestorefs

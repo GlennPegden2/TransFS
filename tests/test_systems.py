@@ -322,7 +322,8 @@ class TestSystemFileAccess:
 class TestSystemPerformance:
     """Test performance of directory operations."""
     
-    def test_directory_readdir_performance(self, system_config: SystemTestConfig):
+    @pytest.mark.performance(target_seconds=15.0)
+    def test_directory_readdir_performance(self, system_config: SystemTestConfig, request):
         """Verify directory listing performance meets thresholds."""
         root = system_config.get_transfs_path()
         
@@ -333,6 +334,13 @@ class TestSystemPerformance:
             try:
                 entries = list(path.iterdir())
                 elapsed = time.time() - start
+
+                # Emit structured performance detail for UI parsing
+                test_id = request.node.nodeid
+                print(
+                    f"PERF|test={test_id}|op=readdir|path={threshold.path}|"
+                    f"actual={elapsed:.6f}|target={threshold.max_readdir_seconds:.6f}"
+                )
                 
                 assert elapsed <= threshold.max_readdir_seconds, \
                     f"Directory listing too slow for {threshold.path}: {elapsed:.2f}s > {threshold.max_readdir_seconds}s"
@@ -347,7 +355,8 @@ class TestSystemPerformance:
             except Exception as e:
                 pytest.skip(f"Could not test performance of {path}: {e}")
     
-    def test_directory_stat_performance(self, system_config: SystemTestConfig):
+    @pytest.mark.performance(target_seconds=30.0)
+    def test_directory_stat_performance(self, system_config: SystemTestConfig, request):
         """Verify stat operations on directory contents meet thresholds."""
         root = system_config.get_transfs_path()
         
@@ -363,6 +372,13 @@ class TestSystemPerformance:
                 for entry in entries:
                     entry.stat()
                 elapsed = time.time() - start
+
+                # Emit structured performance detail for UI parsing
+                test_id = request.node.nodeid
+                print(
+                    f"PERF|test={test_id}|op=stat|path={threshold.path}|"
+                    f"actual={elapsed:.6f}|target={threshold.max_stat_all_seconds:.6f}"
+                )
                 
                 assert elapsed <= threshold.max_stat_all_seconds, \
                     f"Stat operations too slow for {threshold.path}: {elapsed:.2f}s > {threshold.max_stat_all_seconds}s"

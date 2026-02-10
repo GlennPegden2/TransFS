@@ -345,7 +345,8 @@
                 <div style="display: flex; gap: 0.5em; flex-wrap: wrap;">
                     <button onclick="runTests('foundation')" style="padding: 0.6em 1.2em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Foundation</button>
                     <button onclick="runTests('systems')" style="padding: 0.6em 1.2em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Systems</button>
-                    <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
+                    <button onclick="runTests('performance')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚡ Performance</button>
+                    <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
                 </div>
                 <div style="display: flex; gap: 0.5em;">
                     <button onclick="loadLastTestResults()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Results</button>
@@ -2316,6 +2317,7 @@
         const testRunHistory = [];
         let activeRunId = null;
         const activeTestTabs = {};
+        const activeTestCategories = {};
         const expandedOutputs = {};
 
         async function runTests(testType = 'snapshots') {
@@ -2323,6 +2325,7 @@
                 const testTypeLabel = {
                     'foundation': 'Foundation Tests',
                     'systems': 'Systems Tests',
+                    'performance': 'Performance Tests',
                     'snapshots': 'Snapshot Tests'
                 }[testType] || testType;
                 
@@ -2425,7 +2428,8 @@
                     name: t.name || t.fullName || 'Unknown test',
                     status: t.status || 'UNKNOWN',
                     reason: t.reason || '',
-                    output: t.output || ''
+                    output: t.output || '',
+                    perfDetails: t.perfDetails || []
                 }))
                 : [];
             const parsedTests = backendTests.length > 0 ? backendTests : parseTestOutput(normalizedStdout);
@@ -2461,41 +2465,136 @@
              renderTestRunsUI();
          }
 
-         function parseTestOutput(stdout) {
+        function parseTestOutput(stdout) {
             const lines = (stdout || '').split(/\r?\n/);
             const tests = [];
             const seenNames = new Set();
+            const perfMap = {};
             
-            // Match completed tests: path::test_name STATUS
-            const completedRegex = /^(.+?)::([\w_]+)\s+(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$/;
+            // PERF detail lines: PERF|test=...|op=readdir|path=...|actual=...|target=...
+            const perfPrefix = 'PERF|';
+
+            // Match completed tests: full_nodeid STATUS
+            const completedRegex = /^(.+?)\s+(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$/;
             
             for (const line of lines) {
+                if (line.startsWith(perfPrefix)) {
+                    const parts = line.split('|').slice(1);
+                    const kv = {};
+                    parts.forEach(p => {
+                        const [k, ...rest] = p.split('=');
+                        kv[k] = rest.join('=');
+                    });
+                    const testName = kv.test;
+                    if (testName) {
+                        if (!perfMap[testName]) perfMap[testName] = [];
+                        perfMap[testName].push({
+                            op: kv.op || '',
+                            path: kv.path || '',
+                            actual: parseFloat(kv.actual || '0'),
+                            target: parseFloat(kv.target || '0')
+                        });
+                    }
+                    continue;
+                }
+
                 const match = line.match(completedRegex);
                 if (match) {
-                    const testFile = match[1].trim();
-                    const testName = match[2].trim();
-                    const fullName = `${testFile}::${testName}`;
-                    
+                    const fullName = match[1].trim();
                     if (!seenNames.has(fullName)) {
                         seenNames.add(fullName);
                         tests.push({
                             id: tests.length,
                             name: fullName,
-                            status: match[3],
-                            reason: match[4] ? match[4].replace(/[()]/g, '').trim() : '',
+                            status: match[2],
+                            reason: match[3] ? match[3].replace(/[()]/g, '').trim() : '',
                             output: ''
                         });
                     }
                 }
             }
 
+            // Attach perf details to tests
+            tests.forEach(test => {
+                if (perfMap[test.name]) {
+                    test.perfDetails = perfMap[test.name];
+                }
+            });
+
             return tests;
         }
 
         function buildTestTabs(tests, runId) {
-            // Group tests by file
-            const fileGroups = {};
+            // First group tests by category (foundation, systems, performance, snapshots)
+            const categoryGroups = {
+                'foundation': [],
+                'systems': [],
+                'performance': [],
+                'snapshots': [],
+                'other': []
+            };
+            
             tests.forEach(test => {
+                const testPath = test.name.toLowerCase();
+                if (testPath.includes('test_foundation')) {
+                    categoryGroups['foundation'].push(test);
+                } else if (testPath.includes('test_systems')) {
+                    categoryGroups['systems'].push(test);
+                } else if (testPath.includes('performance') || testPath.includes('perf_')) {
+                    categoryGroups['performance'].push(test);
+                } else if (testPath.includes('snapshot') || testPath.includes('test_snapshots')) {
+                    categoryGroups['snapshots'].push(test);
+                } else {
+                    categoryGroups['other'].push(test);
+                }
+            });
+            
+            // Filter out empty categories
+            const activeCategories = Object.entries(categoryGroups)
+                .filter(([_, tests]) => tests.length > 0)
+                .map(([cat, _]) => cat);
+            
+            // Track active category
+            if (!activeTestCategories) {
+                activeTestCategories = {};
+            }
+            const activeCategory = activeTestCategories[runId] || activeCategories[0] || null;
+            if (activeCategory && !activeTestCategories[runId]) {
+                activeTestCategories[runId] = activeCategory;
+            }
+            
+            // Build category buttons
+            const categoryButtonColor = {
+                'foundation': '#4CAF50',
+                'systems': '#2196F3',
+                'performance': '#FF9800',
+                'snapshots': '#9C27B0',
+                'other': '#607D8B'
+            };
+            
+            const categoryLabels = {
+                'foundation': 'Foundation',
+                'systems': 'Systems',
+                'performance': 'Performance',
+                'snapshots': 'Snapshots',
+                'other': 'Other'
+            };
+            
+            const categoryButtons = activeCategories.map(cat => {
+                const categoryTests = categoryGroups[cat];
+                const passed = categoryTests.filter(t => t.status === 'PASSED' || t.status === 'XPASS').length;
+                const failed = categoryTests.filter(t => t.status === 'FAILED').length;
+                const total = categoryTests.length;
+                const isActive = activeCategory === cat;
+                
+                return `<button class="test-category-tab${isActive ? ' active' : ''}" data-run="${runId}" data-category="${cat}" style="padding: 0.7em 1.2em; background: ${isActive ? categoryButtonColor[cat] : '#f1f3f4'}; color: ${isActive ? 'white' : '#333'}; border: 2px solid ${categoryButtonColor[cat]}; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">`+
+                    `${categoryLabels[cat]} (${passed}/${total})`+
+                `</button>`;
+            }).join('');
+            
+            // Build file tabs for the active category
+            const fileGroups = {};
+            (categoryGroups[activeCategory] || []).forEach(test => {
                 const parts = test.name.split('::');
                 const fileName = parts[0] || 'unknown';
                 if (!fileGroups[fileName]) {
@@ -2510,7 +2609,7 @@
                 activeTestTabs[runId] = fileNames[0];
             }
 
-            // Build tabs - one per file
+            // Build file tabs - one per file
             const tabButtons = fileNames.map((fileName, idx) => {
                 const testsInFile = fileGroups[fileName];
                 const passed = testsInFile.filter(t => t.status === 'PASSED' || t.status === 'XPASS').length;
@@ -2544,6 +2643,45 @@
                     const testFunctionName = test.name.split('::').slice(1).join('::') || test.name;
                     const outputKey = `${runId}::${test.name}`;
                     const isExpanded = expandedOutputs[outputKey] || false;
+
+                    const perfDetails = Array.isArray(test.perfDetails) && test.perfDetails.length
+                        ? (() => {
+                            const rows = test.perfDetails.map(detail => {
+                                const actual = Number.isFinite(detail.actual) ? detail.actual : 0;
+                                const target = Number.isFinite(detail.target) ? detail.target : 0;
+                                const delta = target > 0 ? ((actual - target) / target) * 100 : 0;
+                                const deltaLabel = target > 0 ? `${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%` : 'n/a';
+                                const deltaColor = target > 0 && actual <= target ? '#2e7d32' : '#ef6c00';
+                                return `
+                                    <tr>
+                                        <td style="padding: 0.4em 0.6em; font-weight: 600;">${escapeHtml(detail.op || '')}</td>
+                                        <td style="padding: 0.4em 0.6em;">${escapeHtml(detail.path || '')}</td>
+                                        <td style="padding: 0.4em 0.6em; text-align: right;">${actual.toFixed(3)}s</td>
+                                        <td style="padding: 0.4em 0.6em; text-align: right;">${target.toFixed(3)}s</td>
+                                        <td style="padding: 0.4em 0.6em; text-align: right; color: ${deltaColor}; font-weight: 600;">${deltaLabel}</td>
+                                    </tr>`;
+                            }).join('');
+
+                            return `
+                                <div style="margin-top: 0.6em; border: 1px solid #e0e0e0; border-radius: 6px; background: #fff;">
+                                    <div style="padding: 0.6em 0.8em; font-weight: 700; background: #f8f9fb; border-bottom: 1px solid #e0e0e0;">
+                                        Performance Details
+                                    </div>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                        <thead style="background: #fafafa; color: #555;">
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5em 0.6em;">Op</th>
+                                                <th style="text-align: left; padding: 0.5em 0.6em;">Folder</th>
+                                                <th style="text-align: right; padding: 0.5em 0.6em;">Actual</th>
+                                                <th style="text-align: right; padding: 0.5em 0.6em;">Target</th>
+                                                <th style="text-align: right; padding: 0.5em 0.6em;">Delta</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>${rows}</tbody>
+                                    </table>
+                                </div>`;
+                        })()
+                        : '';
                     
                     return `<div style="border: 1px solid #ddd; border-radius: 6px; padding: 0.9em; background: #fafafa; margin-bottom: 0.6em;">`+
                         `<div style="display: flex; align-items: center; justify-content: space-between; gap: 0.6em;">`+
@@ -2553,6 +2691,7 @@
                             `<span style="display: inline-flex; align-items: center; gap: 0.35em; padding: 0.3em 0.6em; border-radius: 999px; background: ${meta.bg}; color: ${meta.fg}; font-size: 0.85em; font-weight: 600; white-space: nowrap;">${meta.icon}<span>${meta.label}</span></span>`+
                         `</div>`+
                         `${reason}`+
+                        `${perfDetails}`+
                         `<details data-output-key="${escapeHtml(outputKey)}" ${isExpanded ? 'open' : ''} style="margin-top: 0.6em;"><summary style="cursor: pointer; color: #555; font-size: 0.9em; user-select: none;">Show output</summary>`+
                             `<pre style="background: #1e1e1e; color: #d4d4d4; padding: 1em; border-radius: 4px; overflow-x: auto; border: 1px solid #333; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 0.85em; line-height: 1.4; white-space: pre-wrap; margin-top: 0.5em;">${output || '(no output captured)'}</pre>`+
                         `</details>`+
@@ -2564,7 +2703,8 @@
                 `</div>`;
             }).join('');
 
-            return `<div class="test-tab-wrapper" style="display: grid; gap: 0.75em;">`+
+            return `<div class="test-tab-wrapper" style="display: grid; gap: 1em;">`+
+                `<div class="test-category-tabs" data-run="${runId}" style="display: flex; flex-wrap: wrap; gap: 0.7em; padding: 1em; background: #f5f5f5; border-radius: 8px;">${categoryButtons}</div>`+
                 `<div class="test-file-tabs" data-run="${runId}" tabindex="0" style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 0; padding-bottom: 0; margin: 0;">${tabButtons}</div>`+
                 `<div class="test-file-contents" style="display: grid; gap: 0.75em;">${tabPanels}</div>`+
             `</div>`;
@@ -2611,6 +2751,36 @@
                     const fileName = btn.getAttribute('data-file');
                     const runId = btn.getAttribute('data-run');
                     activate(runId, fileName, btn);
+                });
+            });
+            
+            // Add category button handlers
+            const categoryButtons = container.querySelectorAll('.test-category-tab');
+            categoryButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const runId = btn.getAttribute('data-run');
+                    const category = btn.getAttribute('data-category');
+                    if (!activeTestCategories) activeTestCategories = {};
+                    activeTestCategories[runId] = category;
+                    
+                    // Clear active file so it resets to first file in new category
+                    activeTestTabs[runId] = null;
+                    
+                    // Re-render the tabs for this run
+                    const run = testRunHistory.find(r => r.id === runId);
+                    if (run && run.parsedTests) {
+                        displayTestResults({
+                            taskId: runId,
+                            status: run.status,
+                            summary: run.summary,
+                            results: {
+                                return_code: run.returnCode,
+                                tests: run.parsedTests,
+                                stdout: run.rawStdout
+                            },
+                            label: run.label
+                        });
+                    }
                 });
             });
 
@@ -2842,7 +3012,7 @@
         // Check for advanced options and show/hide tabs accordingly
         async function updateAdvancedOptionsVisibility() {
             try {
-                const response = await fetch('/api/config');
+                const response = await fetch('/api/config?fields=ui');
                 const data = await response.json();
                 const advancedEnabled = data.ui?.advanced_options || false;
                 

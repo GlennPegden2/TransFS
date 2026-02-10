@@ -261,3 +261,102 @@ def pytest_runtest_setup(item):
 def pytest_runtest_call(item):
     """Hook called during test execution."""
     pass
+
+
+# ============================================================================
+# Performance Test Reporting Plugin
+# ============================================================================
+
+class PerformanceReporter:
+    """Pytest plugin to report performance test results with target times."""
+    
+    def __init__(self):
+        self.performance_tests = []
+    
+    def pytest_runtest_makereport(self, item, call):
+        """Capture test execution time and performance markers."""
+        if call.when == 'call':
+            # Check if this is a performance test
+            is_perf = item.get_closest_marker('performance') is not None
+            
+            # Try to extract target time from marker
+            target_seconds = None
+            marker = item.get_closest_marker('performance')
+            if marker and marker.kwargs.get('target_seconds'):
+                target_seconds = marker.kwargs['target_seconds']
+            
+            # Try to extract target from test name pattern: test_name_perf_Ns
+            if not target_seconds:
+                import re
+                match = re.search(r'_perf_(\d+(?:\.\d+)?)s', item.name)
+                if match:
+                    target_seconds = float(match.group(1))
+                    is_perf = True
+            
+            test_info = {
+                'name': item.name,
+                'is_performance': is_perf,
+                'target_seconds': target_seconds,
+                'actual_seconds': call.duration,
+                'passed': call.excinfo is None,
+            }
+            
+            if is_perf:
+                self.performance_tests.append(test_info)
+    
+    def pytest_terminal_summary(self, terminalreporter, exitstatus, config):
+        """Print performance summary at end of test run."""
+        if not self.performance_tests:
+            return
+        
+        terminalreporter.section('PERFORMANCE TEST SUMMARY', sep='=')
+        
+        # Group by status
+        perf_passed = [t for t in self.performance_tests if t['passed']]
+        perf_failed = [t for t in self.performance_tests if not t['passed']]
+        
+        # Print passed performance tests
+        if perf_passed:
+            terminalreporter.line('')
+            terminalreporter.write_sep('_', '✓ Performance Tests (Passed)', bold=True, green=True)
+            
+            for test in perf_passed:
+                actual = test['actual_seconds']
+                target = test['target_seconds']
+                name = test['name']
+                
+                if target:
+                    ratio = actual / target
+                    pct_diff = (ratio - 1.0) * 100
+                    if ratio <= 1.0:
+                        msg = f"  {name}: {actual:.3f}s / {target:.1f}s target ✓ ({-pct_diff:.0f}% faster)"
+                        terminalreporter.line(msg, green=True)
+                    else:
+                        msg = f"  {name}: {actual:.3f}s / {target:.1f}s target ⚠ (+{pct_diff:.0f}% slower)"
+                        terminalreporter.line(msg, yellow=True)
+                else:
+                    msg = f"  {name}: {actual:.3f}s (no target)"
+                    terminalreporter.line(msg)
+        
+        # Print failed performance tests
+        if perf_failed:
+            terminalreporter.line('')
+            terminalreporter.write_sep('_', '✗ Performance Tests (Failed)', bold=True, red=True)
+            for test in perf_failed:
+                actual = test['actual_seconds']
+                target = test['target_seconds']
+                name = test['name']
+                
+                if target:
+                    ratio = actual / target
+                    pct_diff = (ratio - 1.0) * 100
+                    msg = f"  {name}: {actual:.3f}s / {target:.1f}s target (test failed)"
+                    terminalreporter.line(msg, red=True)
+                else:
+                    msg = f"  {name}: {actual:.3f}s (test failed)"
+                    terminalreporter.line(msg, red=True)
+
+
+def pytest_configure(config):
+    """Register custom performance reporter plugin."""
+    config.pluginmanager.register(PerformanceReporter(), name='performance_reporter')
