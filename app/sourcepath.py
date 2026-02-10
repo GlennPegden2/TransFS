@@ -8,7 +8,22 @@ from ziptutils import get_zip_mapping
 from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 from transforms import build_transform_pipeline, TransformPipeline
 
-def get_transform_pipeline_for_file(logger, system_info: dict, filename: str, virtual_folder: str) -> Optional[TransformPipeline]:
+
+_transform_pipeline_cache: dict[tuple[str, str, str], Optional[TransformPipeline]] = {}
+
+
+def _get_transform_cache_key(system_info: dict, virtual_folder: str, ext: str) -> tuple[str, str, str]:
+    manufacturer = system_info.get("manufacturer", "")
+    canonical = system_info.get("cananonical_system_name", "")
+    return (f"{manufacturer}/{canonical}", virtual_folder, ext)
+
+def get_transform_pipeline_for_file(
+    logger,
+    system_info: dict,
+    filename: str,
+    virtual_folder: str,
+    cache_config: Optional[dict] = None,
+) -> Optional[TransformPipeline]:
     """
     Get transformation pipeline for a file based on its extension and virtual folder.
     
@@ -31,6 +46,10 @@ def get_transform_pipeline_for_file(logger, system_info: dict, filename: str, vi
     if not transform_map:
         return None
     
+    cache_config = cache_config or {}
+    pipeline_cache_enabled = cache_config.get("transform_pipeline_cache_enabled", True)
+    output_size_cache_enabled = cache_config.get("transform_output_size_cache_enabled", True)
+
     # Extract file extension
     _, ext = os.path.splitext(filename)
     ext = ext[1:].upper()  # Remove dot and uppercase
@@ -38,15 +57,30 @@ def get_transform_pipeline_for_file(logger, system_info: dict, filename: str, vi
     # Check if transforms are configured for this extension
     if ext not in transform_map:
         return None
+
+    cache_key = None
+    if pipeline_cache_enabled:
+        cache_key = _get_transform_cache_key(system_info, virtual_folder, ext)
+        if cache_key in _transform_pipeline_cache:
+            return _transform_pipeline_cache[cache_key]
     
     # Build transform pipeline
     transform_specs = transform_map[ext]
     try:
         pipeline = build_transform_pipeline(filename, transform_specs)
         logger.debug(f"Built transform pipeline for {filename}: {pipeline}")
+        if pipeline and output_size_cache_enabled and not hasattr(pipeline, "_output_size_cache"):
+            try:
+                setattr(pipeline, "_output_size_cache", {})
+            except Exception:
+                pass
+        if pipeline_cache_enabled and cache_key:
+            _transform_pipeline_cache[cache_key] = pipeline
         return pipeline
     except Exception as e:
         logger.error(f"Failed to build transform pipeline for {filename}: {e}")
+        if pipeline_cache_enabled and cache_key:
+            _transform_pipeline_cache[cache_key] = None
         return None
 
 def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]:
@@ -95,7 +129,8 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         if len(rel_parts) >= 4 and isinstance(dynamic_result, str):
             virtual_folder = rel_parts[2]
             filename = rel_parts[-1]
-            pipeline = get_transform_pipeline_for_file(logger, system_info, filename, virtual_folder)
+            cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+            pipeline = get_transform_pipeline_for_file(logger, system_info, filename, virtual_folder, cache_config)
             if pipeline:
                 return {'path': dynamic_result, 'transform_pipeline': pipeline}
         return dynamic_result

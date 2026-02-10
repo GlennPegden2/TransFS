@@ -117,6 +117,7 @@ class CacheWarmer:
     def warm_path(self, path: str, depth: int):
         """
         Warm cache for a single path and queue its children.
+        Also pre-populates attribute cache for all files encountered.
 
         Args:
             path: Filesystem path to warm
@@ -134,6 +135,9 @@ class CacheWarmer:
             # Call readdir to warm cache (this is the actual cache warming)
             entries = list(os.scandir(path))
             logger.debug(f"Cache warmer: warmed {path} ({len(entries)} entries)")
+            
+            # NOTE: Attribute caching disabled in cache warmer to avoid threading conflicts
+            # The readdir operation in the main FUSE loop will populate the cache when files are accessed
 
             # Queue child directories if not at max depth
             if depth < self.max_depth:

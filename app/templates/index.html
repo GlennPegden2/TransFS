@@ -160,6 +160,22 @@
                         Getattr Cache (caches file attributes)
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                        <input type="checkbox" id="transform-pipeline-cache-toggle" onchange="updateCacheConfig('transform_pipeline_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                        Transform Pipeline Cache (reuse transform pipelines by file type)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                        <input type="checkbox" id="transform-output-size-cache-toggle" onchange="updateCacheConfig('transform_output_size_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                        Transform Output Size Cache (reuse size calculations)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                        <input type="checkbox" id="readdir-direntry-cache-toggle" onchange="updateCacheConfig('readdir_direntry_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                        Readdir DirEntry Cache (use scandir cached stats)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                        <input type="checkbox" id="readdir-skip-cache-lookup-toggle" onchange="updateCacheConfig('readdir_skip_cache_lookup')" style="width: 18px; height: 18px; cursor: pointer;">
+                        Readdir Skip Cache Lookup (when DirEntry cache is sufficient)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
                         Getattr Save Interval: <input type="number" id="getattr-save-interval" min="1" max="60" step="0.5" onchange="updateCacheConfig('interval')" style="width: 60px; padding: 0.3em; margin-left: 0.5em;"> seconds
                     </label>
                 </div>
@@ -281,6 +297,22 @@
                             <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
                                 <input type="checkbox" id="getattr-cache-toggle-config" onchange="updateCacheConfigFromConfig('getattr_cache')" style="width: 18px; height: 18px; cursor: pointer;">
                                 Enable Getattr Cache (caches file attributes)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                                <input type="checkbox" id="transform-pipeline-cache-toggle-config" onchange="updateCacheConfigFromConfig('transform_pipeline_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                                Enable Transform Pipeline Cache (reuse transform pipelines)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                                <input type="checkbox" id="transform-output-size-cache-toggle-config" onchange="updateCacheConfigFromConfig('transform_output_size_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                                Enable Transform Output Size Cache
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                                <input type="checkbox" id="readdir-direntry-cache-toggle-config" onchange="updateCacheConfigFromConfig('readdir_direntry_cache')" style="width: 18px; height: 18px; cursor: pointer;">
+                                Enable Readdir DirEntry Cache (use scandir cached stats)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer; font-weight: 500;">
+                                <input type="checkbox" id="readdir-skip-cache-lookup-toggle-config" onchange="updateCacheConfigFromConfig('readdir_skip_cache_lookup')" style="width: 18px; height: 18px; cursor: pointer;">
+                                Enable Readdir Skip Cache Lookup
                             </label>
                             <div style="display: flex; align-items: center; gap: 0.5em;">
                                 <label style="font-weight: 500;">Getattr Save Interval:</label>
@@ -543,9 +575,10 @@
                     const rightMeta = document.createElement('div');
                     rightMeta.className = 'right-meta';
                     
-                    // Add launch button for files in virtual tab if Zaparoo is configured AND system supports it
+                    // Add launch button for files/transforms in virtual tab if Zaparoo is configured AND system supports it
+                    // Note: Transform directories (like .dsk/.2mg with strip_header) appear as directories but are launchable
                     let launchBtn = null;
-                    if (type === 'virtual' && entryType === 'file' && supportsZaparoo) {
+                    if (type === 'virtual' && supportsZaparoo) {
                         // Get enabled and reachable clients
                         const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
                         const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
@@ -1956,6 +1989,10 @@
                 if (data.cache) {
                     document.getElementById('dir-cache-toggle').checked = data.cache.dir_cache_enabled;
                     document.getElementById('getattr-cache-toggle').checked = data.cache.getattr_cache_enabled;
+                    document.getElementById('transform-pipeline-cache-toggle').checked = data.cache.transform_pipeline_cache_enabled ?? true;
+                    document.getElementById('transform-output-size-cache-toggle').checked = data.cache.transform_output_size_cache_enabled ?? true;
+                    document.getElementById('readdir-direntry-cache-toggle').checked = data.cache.readdir_direntry_cache_enabled ?? true;
+                    document.getElementById('readdir-skip-cache-lookup-toggle').checked = data.cache.readdir_skip_cache_lookup_with_direntry ?? true;
                     document.getElementById('getattr-save-interval').value = data.cache.getattr_cache_save_interval;
                 }
             } catch (e) {
@@ -1967,18 +2004,34 @@
             try {
                 const dirCacheEnabled = document.getElementById('dir-cache-toggle').checked;
                 const getattrCacheEnabled = document.getElementById('getattr-cache-toggle').checked;
+                const transformPipelineCacheEnabled = document.getElementById('transform-pipeline-cache-toggle').checked;
+                const transformOutputSizeCacheEnabled = document.getElementById('transform-output-size-cache-toggle').checked;
+                const readdirDirentryCacheEnabled = document.getElementById('readdir-direntry-cache-toggle').checked;
+                const readdirSkipCacheLookupEnabled = document.getElementById('readdir-skip-cache-lookup-toggle').checked;
                 const saveInterval = parseFloat(document.getElementById('getattr-save-interval').value) || 5.0;
 
                 const params = new URLSearchParams();
                 params.append('dir_cache_enabled', dirCacheEnabled);
                 params.append('getattr_cache_enabled', getattrCacheEnabled);
                 params.append('getattr_cache_save_interval', saveInterval);
+                params.append('transform_pipeline_cache_enabled', transformPipelineCacheEnabled);
+                params.append('transform_output_size_cache_enabled', transformOutputSizeCacheEnabled);
+                params.append('readdir_direntry_cache_enabled', readdirDirentryCacheEnabled);
+                params.append('readdir_skip_cache_lookup_with_direntry', readdirSkipCacheLookupEnabled);
 
                 const response = await fetch('/api/cache/config?' + params.toString(), { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.updated) {
-                    const typeNames = { 'dir_cache': 'Directory', 'getattr_cache': 'Getattr', 'interval': 'Save Interval' };
+                    const typeNames = {
+                        'dir_cache': 'Directory',
+                        'getattr_cache': 'Getattr',
+                        'interval': 'Save Interval',
+                        'transform_pipeline_cache': 'Transform Pipeline',
+                        'transform_output_size_cache': 'Transform Output Size',
+                        'readdir_direntry_cache': 'Readdir DirEntry',
+                        'readdir_skip_cache_lookup': 'Readdir Skip Cache Lookup'
+                    };
                     console.log(`${typeNames[type] || 'Cache'} config updated`);
                     refreshCacheDashboard();
                 } else if (data.error) {
@@ -1998,6 +2051,10 @@
                 if (data.cache) {
                     document.getElementById('dir-cache-toggle-config').checked = data.cache.dir_cache_enabled;
                     document.getElementById('getattr-cache-toggle-config').checked = data.cache.getattr_cache_enabled;
+                    document.getElementById('transform-pipeline-cache-toggle-config').checked = data.cache.transform_pipeline_cache_enabled ?? true;
+                    document.getElementById('transform-output-size-cache-toggle-config').checked = data.cache.transform_output_size_cache_enabled ?? true;
+                    document.getElementById('readdir-direntry-cache-toggle-config').checked = data.cache.readdir_direntry_cache_enabled ?? true;
+                    document.getElementById('readdir-skip-cache-lookup-toggle-config').checked = data.cache.readdir_skip_cache_lookup_with_direntry ?? true;
                     document.getElementById('getattr-save-interval-config').value = data.cache.getattr_cache_save_interval;
                 }
             } catch (e) {
@@ -2009,23 +2066,43 @@
             try {
                 const dirCacheEnabled = document.getElementById('dir-cache-toggle-config').checked;
                 const getattrCacheEnabled = document.getElementById('getattr-cache-toggle-config').checked;
+                const transformPipelineCacheEnabled = document.getElementById('transform-pipeline-cache-toggle-config').checked;
+                const transformOutputSizeCacheEnabled = document.getElementById('transform-output-size-cache-toggle-config').checked;
+                const readdirDirentryCacheEnabled = document.getElementById('readdir-direntry-cache-toggle-config').checked;
+                const readdirSkipCacheLookupEnabled = document.getElementById('readdir-skip-cache-lookup-toggle-config').checked;
                 const saveInterval = parseFloat(document.getElementById('getattr-save-interval-config').value) || 5.0;
 
                 const params = new URLSearchParams();
                 params.append('dir_cache_enabled', dirCacheEnabled);
                 params.append('getattr_cache_enabled', getattrCacheEnabled);
                 params.append('getattr_cache_save_interval', saveInterval);
+                params.append('transform_pipeline_cache_enabled', transformPipelineCacheEnabled);
+                params.append('transform_output_size_cache_enabled', transformOutputSizeCacheEnabled);
+                params.append('readdir_direntry_cache_enabled', readdirDirentryCacheEnabled);
+                params.append('readdir_skip_cache_lookup_with_direntry', readdirSkipCacheLookupEnabled);
 
                 const response = await fetch('/api/cache/config?' + params.toString(), { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.updated) {
-                    const typeNames = { 'dir_cache': 'Directory', 'getattr_cache': 'Getattr', 'interval': 'Save Interval' };
+                    const typeNames = {
+                        'dir_cache': 'Directory',
+                        'getattr_cache': 'Getattr',
+                        'interval': 'Save Interval',
+                        'transform_pipeline_cache': 'Transform Pipeline',
+                        'transform_output_size_cache': 'Transform Output Size',
+                        'readdir_direntry_cache': 'Readdir DirEntry',
+                        'readdir_skip_cache_lookup': 'Readdir Skip Cache Lookup'
+                    };
                     showConfigStatus(`${typeNames[type] || 'Cache'} configuration updated successfully`, 'success');
                     // Also update cache tab controls if present
                     if (document.getElementById('dir-cache-toggle')) {
                         document.getElementById('dir-cache-toggle').checked = dirCacheEnabled;
                         document.getElementById('getattr-cache-toggle').checked = getattrCacheEnabled;
+                        document.getElementById('transform-pipeline-cache-toggle').checked = transformPipelineCacheEnabled;
+                        document.getElementById('transform-output-size-cache-toggle').checked = transformOutputSizeCacheEnabled;
+                        document.getElementById('readdir-direntry-cache-toggle').checked = readdirDirentryCacheEnabled;
+                        document.getElementById('readdir-skip-cache-lookup-toggle').checked = readdirSkipCacheLookupEnabled;
                         document.getElementById('getattr-save-interval').value = saveInterval;
                     }
                 } else if (data.error) {

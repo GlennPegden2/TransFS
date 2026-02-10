@@ -1,6 +1,7 @@
 import os
 import time
 import pickle
+import threading
 from pathlib import Path
 from filetypes import get_filetype_maps
 from pathutils import find_software_archive_entry
@@ -19,12 +20,19 @@ _cache_hits = 0
 _cache_misses = 0
 _cache_loaded = False
 
+# Thread-safe lock for getattr cache (used by FUSE main loop + cache warmer thread)
+_getattr_cache_lock = threading.Lock()
+
 # Cache configuration (set via app.yaml and /cache/config endpoint)
 _cache_config = {
     "dir_cache_enabled": True,
     "dir_listing_cache_enabled": True,
     "getattr_cache_enabled": True,
     "getattr_cache_save_interval": 5.0,
+    "transform_pipeline_cache_enabled": True,
+    "transform_output_size_cache_enabled": True,
+    "readdir_direntry_cache_enabled": True,
+    "readdir_skip_cache_lookup_with_direntry": True,
 }
 
 # getattr cache: {path: (dir_mtime, stat_dict)}
@@ -110,8 +118,9 @@ def cache_getattr(path: str, parent_dir: str, stat_dict: dict):
             except Exception:
                 parent_mtime = 0
         
-        _getattr_cache[path] = (parent_mtime, stat_dict)
-        _getattr_cache_dirty = True
+        with _getattr_cache_lock:
+            _getattr_cache[path] = (parent_mtime, stat_dict)
+            _getattr_cache_dirty = True
         
         # Save periodically (every N seconds) instead of after every call
         now = time.time()
@@ -126,8 +135,9 @@ def flush_getattr_cache():
     """Flush getattr cache to disk. Call this periodically or after bulk operations."""
     global _getattr_cache_dirty
     if _getattr_cache_dirty:
-        _save_getattr_cache()
-        _getattr_cache_dirty = False
+        with _getattr_cache_lock:
+            _save_getattr_cache()
+            _getattr_cache_dirty = False
 
 def get_cached_getattr(path: str, parent_dir: str):
     """Get cached getattr result if valid. Uses dir cache mtime to avoid recursion."""
@@ -135,24 +145,25 @@ def get_cached_getattr(path: str, parent_dir: str):
         return None
     try:
         _load_getattr_cache()
-        if path in _getattr_cache:
-            cached_parent_mtime, stat_dict = _getattr_cache[path]
-            
-            # Get parent directory mtime from the directory cache to avoid filesystem access
-            _load_cache()
-            if parent_dir in _dir_cache:
-                current_parent_mtime, _ = _dir_cache[parent_dir]
-                if cached_parent_mtime == current_parent_mtime:
-                    return stat_dict
-            else:
-                # Parent not in directory cache - check filesystem
-                # But this might trigger FUSE recursion!
-                try:
-                    current_parent_mtime = os.path.getmtime(parent_dir) if os.path.isdir(parent_dir) else 0
+        with _getattr_cache_lock:
+            if path in _getattr_cache:
+                cached_parent_mtime, stat_dict = _getattr_cache[path]
+        
+                # Get parent directory mtime from the directory cache to avoid filesystem access
+                _load_cache()
+                if parent_dir in _dir_cache:
+                    current_parent_mtime, _ = _dir_cache[parent_dir]
                     if cached_parent_mtime == current_parent_mtime:
                         return stat_dict
-                except Exception:
-                    pass
+                else:
+                    # Parent not in directory cache - check filesystem
+                    # But this might trigger FUSE recursion!
+                    try:
+                        current_parent_mtime = os.path.getmtime(parent_dir) if os.path.isdir(parent_dir) else 0
+                        if cached_parent_mtime == current_parent_mtime:
+                            return stat_dict
+                    except Exception:
+                        pass
     except Exception:
         pass
     return None

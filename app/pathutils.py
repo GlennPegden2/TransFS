@@ -55,17 +55,20 @@ def client_exists(config, name_to_check: str) -> bool:
 
 def get_system_info(client: dict, rel_parts: list, path_template_parts: tuple) -> Optional[dict]:
     """Extract system info from the config."""
+    systems = client.get('systems', []) if client else []
+    if not systems:
+        return None
     system_name = None
     if "{system_name}" in path_template_parts:
         idx = path_template_parts.index("{system_name}")
         if len(rel_parts) > idx:
             system_name = rel_parts[idx]
     else:
-        for sys in client['systems']:
+        for sys in systems:
             if sys['name'] in rel_parts:
                 system_name = sys['name']
                 break
-    return next((s for s in client['systems'] if s['name'] == system_name), None)
+    return next((s for s in systems if s['name'] == system_name), None)
 
 def get_client(config, rel_parts: tuple) -> Optional[dict]:
     """Return the client dict for the given rel_parts."""

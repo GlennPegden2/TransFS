@@ -13,9 +13,11 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -183,6 +185,48 @@ def _validate_outbound_url(url: str, allowed_hosts: set[str]):
     host = parsed.hostname.lower()
     if allowed_hosts and host not in allowed_hosts:
         raise ValueError(f"Host '{host}' not in allowlist")
+
+
+def _is_transfs_cmd(cmd: str) -> bool:
+    """Detect TransFS FUSE process command line."""
+    if "python3 -m transfs" in cmd or "python -m transfs" in cmd:
+        return True
+    if "transfs.py" in cmd and "debugpy" in cmd:
+        return True
+    return False
+
+
+def _find_transfs_pids() -> tuple[list[int], str | None]:
+    """Return PIDs of TransFS FUSE process(es)."""
+    try:
+        output = subprocess.check_output(["ps", "-eo", "pid,args"], text=True)
+    except Exception as exc:  # pylint: disable=broad-except
+        return [], str(exc)
+
+    pids: list[int] = []
+    for line in output.splitlines()[1:]:
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid_str, cmd = parts
+        if _is_transfs_cmd(cmd):
+            try:
+                pids.append(int(pid_str))
+            except ValueError:
+                continue
+    return pids, None
+
+
+def _unmount_fuse(mountpoint: str) -> dict:
+    """Best-effort unmount of FUSE mountpoint."""
+    for cmd in ("fusermount3", "fusermount"):
+        if shutil.which(cmd):
+            result = subprocess.run([cmd, "-u", mountpoint], capture_output=True, text=True, check=False)
+            return {"command": cmd, "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+    if shutil.which("umount"):
+        result = subprocess.run(["umount", mountpoint], capture_output=True, text=True, check=False)
+        return {"command": "umount", "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+    return {"command": None, "returncode": -1, "stdout": "", "stderr": "No unmount command available"}
 
 
 # ============================================================================
@@ -454,6 +498,88 @@ def cache_clear_all():
         return {"error": str(e)}
 
 
+@app.get("/fuse/status")
+def fuse_status():
+    """Get TransFS FUSE process status."""
+    pids, err = _find_transfs_pids()
+    if err:
+        return {"status": "error", "detail": err}
+    return {"status": "running" if pids else "stopped", "pids": pids}
+
+
+@app.post("/fuse/stop")
+def fuse_stop():
+    """Stop the TransFS FUSE process and unmount the filesystem."""
+    config = read_config()
+    mountpoint = config.get("mountpoint", "/mnt/transfs") if isinstance(config, dict) else "/mnt/transfs"
+
+    pids, err = _find_transfs_pids()
+    if err:
+        return {"status": "error", "detail": err}
+    if not pids:
+        return {"status": "stopped", "pids": []}
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            continue
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        remaining, _ = _find_transfs_pids()
+        if not remaining:
+            break
+        time.sleep(0.2)
+
+    remaining, _ = _find_transfs_pids()
+    if remaining:
+        for pid in remaining:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                continue
+
+    unmount_result = _unmount_fuse(mountpoint)
+    final_pids, _ = _find_transfs_pids()
+    return {
+        "status": "stopped" if not final_pids else "error",
+        "pids": final_pids,
+        "unmount": unmount_result,
+    }
+
+
+@app.post("/fuse/start")
+def fuse_start():
+    """Start the TransFS FUSE process if not already running."""
+    config = read_config()
+    mountpoint = config.get("mountpoint", "/mnt/transfs") if isinstance(config, dict) else "/mnt/transfs"
+
+    pids, err = _find_transfs_pids()
+    if err:
+        return {"status": "error", "detail": err}
+    if pids:
+        return {"status": "running", "pids": pids}
+
+    log_path = "/tmp/transfs.log"
+    try:
+        log_file = open(log_path, "ab")
+    except Exception:
+        log_file = subprocess.DEVNULL
+
+    try:
+        subprocess.Popen(
+            ["python3", "-m", "transfs"],
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        return {"status": "error", "detail": str(e)}
+
+    return {"status": "starting", "mountpoint": mountpoint, "log": log_path}
+
+
 @app.get("/cache/config")
 def cache_config_get():
     """Get current cache configuration."""
@@ -465,7 +591,15 @@ def cache_config_get():
 
 
 @app.post("/cache/config")
-def cache_config_set(dir_cache_enabled: bool | None = None, getattr_cache_enabled: bool | None = None, getattr_cache_save_interval: float | None = None):
+def cache_config_set(
+    dir_cache_enabled: bool | None = None,
+    getattr_cache_enabled: bool | None = None,
+    getattr_cache_save_interval: float | None = None,
+    transform_pipeline_cache_enabled: bool | None = None,
+    transform_output_size_cache_enabled: bool | None = None,
+    readdir_direntry_cache_enabled: bool | None = None,
+    readdir_skip_cache_lookup_with_direntry: bool | None = None,
+):
     """Update cache configuration at runtime."""
     try:
         from dirlisting import set_cache_config, get_cache_config
@@ -476,6 +610,14 @@ def cache_config_set(dir_cache_enabled: bool | None = None, getattr_cache_enable
             current['getattr_cache_enabled'] = getattr_cache_enabled
         if getattr_cache_save_interval is not None:
             current['getattr_cache_save_interval'] = getattr_cache_save_interval
+        if transform_pipeline_cache_enabled is not None:
+            current['transform_pipeline_cache_enabled'] = transform_pipeline_cache_enabled
+        if transform_output_size_cache_enabled is not None:
+            current['transform_output_size_cache_enabled'] = transform_output_size_cache_enabled
+        if readdir_direntry_cache_enabled is not None:
+            current['readdir_direntry_cache_enabled'] = readdir_direntry_cache_enabled
+        if readdir_skip_cache_lookup_with_direntry is not None:
+            current['readdir_skip_cache_lookup_with_direntry'] = readdir_skip_cache_lookup_with_direntry
         set_cache_config(current)
         return {"updated": True, "cache": current}
     except Exception as e:  # pylint: disable=broad-except

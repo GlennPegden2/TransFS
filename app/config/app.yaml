@@ -3,13 +3,17 @@ cache:
   dir_listing_cache_enabled: true
   getattr_cache_enabled: true
   getattr_cache_save_interval: 5.0
+  transform_pipeline_cache_enabled: true
+  transform_output_size_cache_enabled: true
+  readdir_direntry_cache_enabled: true
+  readdir_skip_cache_lookup_with_direntry: true
 cache_warmer:
-  batch_size: 3
-  check_interval_seconds: 10
+  batch_size: 10
+  check_interval_seconds: 5
   cpu_threshold_percent: 20.0
   enabled: true
   io_threshold_percent: 20.0
-  max_depth: 8
+  max_depth: 12
 filestore: /mnt/filestorefs
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:
