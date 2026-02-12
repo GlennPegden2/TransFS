@@ -112,9 +112,10 @@ class TransFS(Passthrough):
         """Check if database can be used for this path (database mode + path is suitable)."""
         if not self.data_adapter:
             return False
-        # Only use database for Native paths for now
-        # TODO: Expand to other paths once database is populated
-        return path.startswith(os.path.join(self.mount_path, "Native"))
+        # Use database for Native and MiSTer paths (both have comprehensive metadata)
+        mount_path = self.mount_path
+        return (path.startswith(os.path.join(mount_path, "Native")) or 
+                path.startswith(os.path.join(mount_path, "MiSTer")))
 
     def _get_zip_mode_for_path(self, xfull_path: str) -> str:
         """
