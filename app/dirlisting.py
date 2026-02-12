@@ -563,9 +563,12 @@ def list_dynamic_map(
         # If we're inside a ZIP, we don't need to check dir_path existence
         # Otherwise, build dir_path and apply fallback logic
         if not in_zip:
-            path_components = subpath[:-1] if subpath else []
+            # Use all of subpath to build the directory path we're listing
+            path_components = subpath if subpath else []
             dir_path = os.path.join(source_dir, real_ext, *path_components)
             actual_folder = real_ext
+            
+            logger.info(f"DEBUG list_dynamic_map: subpath={subpath}, path_components={path_components}, dir_path={dir_path}")
             
             # If extension folder doesn't exist, try map_name as folder
             if not os.path.isdir(dir_path):

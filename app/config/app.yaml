@@ -3,10 +3,16 @@ cache:
   dir_listing_cache_enabled: true
   getattr_cache_enabled: true
   getattr_cache_save_interval: 5.0
-  transform_pipeline_cache_enabled: true
-  transform_output_size_cache_enabled: true
   readdir_direntry_cache_enabled: true
   readdir_skip_cache_lookup_with_direntry: true
+  transform_output_size_cache_enabled: true
+  transform_pipeline_cache_enabled: true
+database:
+  enabled: true
+  mode: hybrid  # disabled | enabled | hybrid
+  path: /mnt/filestorefs/.transfs_metadata.db
+  auto_sync: false  # Automatically sync filesystem changes
+  sync_on_startup: false  # Scan filesystem on startup
 cache_warmer:
   batch_size: 10
   check_interval_seconds: 5
@@ -26,7 +32,7 @@ web_api:
 zaparoo:
   clients:
   - enabled: true
-    host: 192.168.95.81
+    host: 192.168.95.78
     mount_path: /media/fat/cifs
     name: MiSTer
     port: 7497

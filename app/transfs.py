@@ -24,6 +24,8 @@ from pathutils import full_path, is_virtual_path, map_virtual_to_real
 from sourcepath import get_source_path, get_source_path_for_write
 from zippath import open_file as zippath_open_file
 from logging_setup import setup_logging
+from data_provider_init import initialize_data_provider, get_data_provider_manager
+from fuse_adapter import FUSEOperationAdapter
 
 setup_logging(logging.INFO)
 logger = logging.getLogger("transfs")
@@ -58,6 +60,21 @@ class TransFS(Passthrough):
                 set_cache_config(cache_config)
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f"Failed to apply cache config: {e}")
+        
+        # Initialize DataProvider if database is enabled
+        self.data_adapter = None
+        try:
+            if self.config.get('database', {}).get('enabled', False):
+                logger.info("Database mode enabled - initializing DataProvider")
+                manager = initialize_data_provider(self.config)
+                self.data_adapter = FUSEOperationAdapter(manager.get_provider())
+                logger.info(f"DataProvider initialized: mode={self.data_adapter.get_provider_mode()}")
+            else:
+                logger.info("Database mode disabled - using cache-only mode")
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"Failed to initialize DataProvider: {e}", exc_info=True)
+            logger.warning("Falling back to cache-only mode")
+            self.data_adapter = None
 
     def _filestore_to_mount_path(self, filestore_path: str) -> str:
         """Convert a filestore path to a mount-relative path for get_source_path()."""
@@ -86,6 +103,18 @@ class TransFS(Passthrough):
                     TransFS._getattr_total_time
                 )
             TransFS._last_stats_print = now
+    
+    def _is_database_mode_enabled(self) -> bool:
+        """Check if database mode is enabled and adapter is available."""
+        return self.data_adapter is not None and self.data_adapter.is_database_mode()
+    
+    def _can_use_database(self, path: str) -> bool:
+        """Check if database can be used for this path (database mode + path is suitable)."""
+        if not self.data_adapter:
+            return False
+        # Only use database for Native paths for now
+        # TODO: Expand to other paths once database is populated
+        return path.startswith(os.path.join(self.mount_path, "Native"))
 
     def _get_zip_mode_for_path(self, xfull_path: str) -> str:
         """
@@ -205,8 +234,8 @@ class TransFS(Passthrough):
             logger.warning(f"Failed to build system transform map for {xfull_path}: {e}")
             return {}
 
-    def _dict_to_entry_attributes(self, stat_dict: dict, inode: int) -> pyfuse3.EntryAttributes:
-        """Convert stat dict to pyfuse3 EntryAttributes."""
+    def _dict_to_entry_attributes(self, stat_dict: dict, inode: InodeT, cache_timeout: float = 60.0) -> pyfuse3.EntryAttributes:
+        """Convert fusepy-style stat dict to pyfuse3 EntryAttributes."""
         entry = pyfuse3.EntryAttributes()
         entry.st_ino = inode
         entry.st_mode = stat_dict['st_mode']
@@ -219,8 +248,8 @@ class TransFS(Passthrough):
         entry.st_ctime_ns = int(stat_dict['st_ctime'] * 1e9)
         entry.st_rdev = 0
         entry.generation = 0
-        entry.entry_timeout = 60.0  # Cache for 60 seconds - reduces SMB client re-stats
-        entry.attr_timeout = 60.0
+        entry.entry_timeout = cache_timeout  # Cache entry - use 0 for placeholder attrs
+        entry.attr_timeout = cache_timeout   # Cache attributes
         entry.st_blksize = 512
         entry.st_blocks = (stat_dict.get('st_size', 0) + 511) // 512
         return entry
@@ -264,6 +293,29 @@ class TransFS(Passthrough):
         path = self._normalize_to_virtual_path(path)
         logger.info("READDIR START: path=%s start_id=%d", path, start_id)
         
+        # Try database mode first if enabled and path is suitable
+        if self._can_use_database(path):
+            try:
+                logger.info(f"READDIR: using database mode for {path}")
+                db_entries = self.data_adapter.readdir_entries(path)
+                if db_entries:
+                    sent_count = 0
+                    for entry_id, (entry_name, stat_dict) in enumerate(db_entries, start=1):
+                        if entry_id <= start_id:
+                            continue
+                        entry_path = os.path.join(path, entry_name)
+                        entry_inode = self._make_synthetic_inode(entry_path)
+                        self._add_path(entry_inode, entry_path)
+                        entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+                        if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                            break
+                        sent_count += 1
+                    t_total = time.time() - t_start
+                    logger.info(f"READDIR DATABASE: sent {sent_count} entries in {t_total:.4f}s")
+                    return
+            except Exception as e:
+                logger.warning(f"READDIR: database mode failed, falling back to cache: {e}")
+        
         xfull_path = path
         # Get the real source path for this directory (handles virtual mappings)
         parent_source = get_source_path(logger, self.config, self.mount_path, xfull_path)
@@ -301,8 +353,58 @@ class TransFS(Passthrough):
         # scandir() returns DirEntry objects with cached stat info, avoiding extra stat() calls
         dir_entry_cache = {}
         parent_dir_mtime = None
+        
+        # Determine if we need to scan multiple extension subdirectories
+        # This happens when filetypes like "A52,BIN,ROM" map to subdirs A52/, BIN/, ROM/
+        # CRITICAL: Only process KNOWN extension subdirectories to avoid scanning non-extension dirs
+        extension_subdirs = []
+        known_extension_subdirs = {'A52', 'BIN', 'ROM', 'TMP', 'CDT', 'CRT', 'CAS', 'TAP'}
+        if allow_implicit_entries and os.path.isdir(parent_dir):
+            parent_parent = os.path.dirname(parent_dir)
+            current_subdir_name = os.path.basename(parent_dir)
+            
+            # Only process if current dir is in the whitelist of known extension subdirectories
+            is_known_extension_subdir = current_subdir_name in known_extension_subdirs
+            parent_is_known_extension_subdir = False
+            relative_subpath = ""
+            
+            if not is_known_extension_subdir:
+                # Check if parent directory is a known extension subdir (for nested cases like A52/Prototype Games/)
+                parent_of_parent = os.path.basename(parent_parent)
+                if parent_of_parent in known_extension_subdirs:
+                    parent_is_known_extension_subdir = True
+                    relative_subpath = current_subdir_name
+                    parent_parent = os.path.dirname(parent_parent)
+                    current_subdir_name = parent_of_parent
+            
+            if is_known_extension_subdir or parent_is_known_extension_subdir:
+                try:
+                    # Use scandir for efficiency - it returns DirEntry with cached is_dir info
+                    with os.scandir(parent_parent) as entries:
+                        siblings = []
+                        for entry in entries:
+                            if (entry.name != current_subdir_name and 
+                                entry.name in known_extension_subdirs and
+                                entry.is_dir()):
+                                siblings.append(entry.name)
+                        
+                        if siblings:
+                            if relative_subpath:
+                                # We're in a nested directory, so scan sibling extension dirs + relative path
+                                extension_subdirs = [os.path.join(parent_parent, s, relative_subpath) 
+                                                    for s in siblings
+                                                    if os.path.isdir(os.path.join(parent_parent, s, relative_subpath))]
+                            else:
+                                # We're at the top level of extension dirs
+                                extension_subdirs = [os.path.join(parent_parent, s) for s in siblings]
+                            logger.debug(f"READDIR: found extension subdirs to merge: {siblings} (relative_subpath={relative_subpath})")
+                except OSError as e:
+                    logger.debug(f"READDIR: failed to list extension subdirs: {e}")
+        
         if allow_implicit_entries and os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
             existing = set(virtual_entries)
+            
+            # Scan the main directory
             try:
                 # Get parent directory mtime once for cache validation
                 parent_dir_mtime = os.path.getmtime(parent_dir)
@@ -310,8 +412,11 @@ class TransFS(Passthrough):
                 with os.scandir(parent_dir) as entries:
                     for entry in entries:
                         # Skip hidden files (starting with .) - includes cache files
+                        # Skip subdirectories that are extension folders (they'll be merged)
                         if entry.name.startswith('.'):
                             continue
+                        if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
+                            continue  # Skip extension subdirs like BIN/, ROM/, A52/
                         if direntry_cache_enabled:
                             dir_entry_cache[entry.name] = entry
                         if entry.name not in existing:
@@ -321,6 +426,25 @@ class TransFS(Passthrough):
                                 dir_entry_cache[entry.name] = entry
             except OSError as e:
                 logger.warning(f"READDIR: scandir failed for {parent_dir}: {e}")
+            
+            # Also scan extension subdirectories if found
+            for ext_subdir in extension_subdirs:
+                try:
+                    with os.scandir(ext_subdir) as entries:
+                        for entry in entries:
+                            if entry.name.startswith('.'):
+                                continue
+                            if entry.name not in existing:
+                                logger.debug(f"READDIR: adding {entry.name} from extension subdir")
+                                virtual_entries.append(entry.name)
+                                existing.add(entry.name)
+                                # Important: cache DirEntry for files from extension subdirs
+                                # BUT we need to adjust the path resolution later
+                                if direntry_cache_enabled or entry.name not in dir_entry_cache:
+                                    # Store with a marker that this came from an extension subdir
+                                    dir_entry_cache[entry.name] = entry
+                except OSError as e:
+                    logger.debug(f"READDIR: scandir failed for extension subdir: {e}")
         
         # Deduplicate entries while preserving order
         if virtual_entries:
@@ -342,7 +466,7 @@ class TransFS(Passthrough):
         system_transform_map = self._build_system_transform_map(xfull_path)
         t_transform_map = time.time() - t_transform_map_start
         
-        logger.info(f"READDIR: {len(virtual_entries)} entries, parse={t_parse:.4f}s, transform_map={t_transform_map:.4f}s, native_path={is_native_path}, cached_entries={len(dir_entry_cache)}")
+        logger.debug(f"READDIR: {len(virtual_entries)} entries parsed from {parent_dir}")
         
         # Batch get source paths for ALL entries (much faster than one-by-one)
         t_batch_start = time.time()
@@ -381,7 +505,16 @@ class TransFS(Passthrough):
                         # Direct transform application without get_source_path!
                         # Build proper source path - different extensions may be in different subdirectories
                         # e.g., DSK files in Software/DSK/, 2MG files in Software/2MG/
-                        if parent_dir.endswith('/DSK') and ext == '2MG':
+                        # Or BIN files in Software/BIN/, ROM files in Software/ROM/ (Atari 5200)
+                        
+                        # Check if there's a subdirectory matching the extension
+                        ext_subdir = os.path.join(parent_dir, ext)
+                        if os.path.isdir(ext_subdir):
+                            fspath = os.path.join(ext_subdir, entry_name)
+                        elif parent_dir.endswith(f'/{ext}'):
+                            # Already in the extension-specific directory, use as-is
+                            fspath = os.path.join(parent_dir, entry_name)
+                        elif parent_dir.endswith('/DSK') and ext == '2MG':
                             # .2mg file is actually in the 2MG sibling directory
                             source_dir = parent_dir[:-3] + '2MG'
                             fspath = os.path.join(source_dir, entry_name)
@@ -390,7 +523,9 @@ class TransFS(Passthrough):
                             source_dir = parent_dir[:-3] + 'DSK'
                             fspath = os.path.join(source_dir, entry_name)
                         else:
+                            # Fallback: file in parent directory directly
                             fspath = os.path.join(parent_dir, entry_name)
+                        
                         pipeline = system_transform_map[ext]
                         source_paths[entry_name] = ('uncached', {'path': fspath, 'transform_pipeline': pipeline})
                         continue
@@ -528,6 +663,7 @@ class TransFS(Passthrough):
                         if not pipeline and entry_name in dir_entry_cache:
                             # Fast path: use cached DirEntry info; skip stat in large directories
                             de = dir_entry_cache[entry_name]
+                            logger.debug(f"READDIR: using DirEntry cache for {entry_name}")
                             try:
                                 if fast_listing:
                                     is_dir = de.is_dir(follow_symlinks=False)
@@ -549,9 +685,11 @@ class TransFS(Passthrough):
                                     }
                                 cache_getattr(entry_path, parent_dir, stat_dict)
                                 entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
-                            except OSError:
+                            except OSError as e:
+                                logger.warning(f"READDIR: DirEntry.stat() failed for {entry_name}: {e}")
                                 continue
                         elif os.path.exists(fspath):
+                            logger.debug(f"READDIR: statting {entry_name} at {fspath}")
                             # Stat the actual source file
                             st = os.lstat(fspath)
                             
@@ -572,19 +710,76 @@ class TransFS(Passthrough):
                             cache_getattr(entry_path, parent_dir, stat_dict)
                             entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
                         else:
-                            # File doesn't exist; if it's a virtual path, return placeholder with short timeout
-                            # getattr will detect placeholder and resolve actual attributes via get_source_path
-                            if is_virtual_path(self.config, self.mount_path, entry_path):
-                                now = int(time.time())
-                                stat_dict = {
-                                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
-                                    'st_gid': 0, 'st_uid': 0, 'st_mode': 0o040755,
-                                    'st_nlink': 2, 'st_size': 4096,
-                                }
-                                # Short timeout so getattr is called and placeholder is detected
-                                entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
+                            logger.debug(f"READDIR FALLBACK: {entry_name} - fspath does not exist")
+                            # File doesn't exist at expected path - might be in extension subdir
+                            # Try checking extension-based subdirectory
+                            _, ext = os.path.splitext(entry_name)
+                            if ext:
+                                ext_upper = ext[1:].upper()  # Remove dot and uppercase
+                                parent_parent = os.path.dirname(parent_dir)
+                                current_subdir = os.path.basename(parent_dir)
+                                
+                                # Check if we're in a nested directory within an extension subdir
+                                # Pattern 1: /Software/A52/ -> check /Software/BIN/
+                                # Pattern 2: /Software/A52/Prototype Games/ -> check /Software/BIN/Prototype Games/
+                                relative_subpath = ""
+                                if not (current_subdir.isupper() and 2 <= len(current_subdir) <= 4):
+                                    # We might be in a subdirectory of an extension dir
+                                    grandparent = os.path.dirname(parent_parent)
+                                    parent_of_parent = os.path.basename(parent_parent)
+                                    if parent_of_parent.isupper() and 2 <= len(parent_of_parent) <= 4:
+                                        # We're nested, adjust paths
+                                        relative_subpath = current_subdir
+                                        parent_parent = grandparent
+                                
+                                if relative_subpath:
+                                    ext_subdir_path = os.path.join(parent_parent, ext_upper, relative_subpath, entry_name)
+                                else:
+                                    ext_subdir_path = os.path.join(parent_parent, ext_upper, entry_name)
+                                    
+                                if os.path.exists(ext_subdir_path):
+                                    logger.debug(f"READDIR: FOUND {entry_name} in extension subdir")
+                                    st = os.lstat(ext_subdir_path)
+                                    if pipeline:
+                                        st_mode = 0o100444
+                                        st_size = self._get_transform_output_size(pipeline, st.st_size)
+                                    else:
+                                        st_mode = st.st_mode
+                                        st_size = st.st_size
+                                    stat_dict = {
+                                        'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                                        'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                                        'st_uid': st.st_uid, 'st_mode': st_mode,
+                                        'st_nlink': 1, 'st_size': st_size,
+                                    }
+                                    cache_getattr(entry_path, parent_dir, stat_dict)
+                                    entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+                                    # Don't continue - fall through to send entry
+                                else:
+                                    # Extension subdir doesn't have the file either
+                                    # Create placeholder if virtual path
+                                    if is_virtual_path(self.config, self.mount_path, entry_path):
+                                        now = int(time.time())
+                                        stat_dict = {
+                                            'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                            'st_gid': 0, 'st_uid': 0, 'st_mode': 0o040755,
+                                            'st_nlink': 2, 'st_size': 4096,
+                                        }
+                                        entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
+                                    else:
+                                        continue
                             else:
-                                continue
+                                # No extension, file doesn't exist
+                                if is_virtual_path(self.config, self.mount_path, entry_path):
+                                    now = int(time.time())
+                                    stat_dict = {
+                                        'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                        'st_gid': 0, 'st_uid': 0, 'st_mode': 0o040755,
+                                        'st_nlink': 2, 'st_size': 4096,
+                                    }
+                                    entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
+                                else:
+                                    continue
                     elif entry_name.startswith('...') and entry_name.endswith('...'):
                         # Virtual directory
                         now = int(time.time())
@@ -645,6 +840,20 @@ class TransFS(Passthrough):
         
         logger.info(f"GETATTR: inode={inode} path={path}")
         logger.debug("DEBUG: getattr(inode=%s) path=%s", inode, path)
+        
+        # Try database mode first if enabled and path is suitable
+        if self._can_use_database(path):
+            try:
+                logger.info(f"GETATTR: using database mode for {path}")
+                stat_dict = self.data_adapter.getattr_stat(path)
+                if stat_dict:
+                    t_total = time.time() - t_start
+                    TransFS._getattr_count += 1
+                    TransFS._getattr_total_time += t_total
+                    logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
+                    return self._dict_to_entry_attributes(stat_dict, inode)
+            except Exception as e:
+                logger.warning(f"GETATTR: database mode failed, falling back to cache: {e}")
         
         xfull_path = path  # Already full path from inode map
         logger.info(f"GETATTR: about to compute parent_dir from {xfull_path}")
@@ -888,27 +1097,6 @@ class TransFS(Passthrough):
         logger.error(f"GETATTR: unhandled case for inode={inode} fspath={fspath}")
         raise FUSEError(errno.ENOENT)
     
-    def _dict_to_entry_attributes(self, stat_dict: dict, inode: InodeT, cache_timeout: float = 60.0) -> pyfuse3.EntryAttributes:
-        """Convert fusepy-style stat dict to pyfuse3 EntryAttributes."""
-        entry = pyfuse3.EntryAttributes()
-        entry.st_ino = inode
-        entry.st_mode = stat_dict['st_mode']
-        entry.st_nlink = stat_dict['st_nlink']
-        entry.st_uid = stat_dict['st_uid']
-        entry.st_gid = stat_dict['st_gid']
-        entry.st_size = stat_dict['st_size']
-        entry.st_atime_ns = stat_dict['st_atime'] * 10**9
-        entry.st_mtime_ns = stat_dict['st_mtime'] * 10**9
-        entry.st_ctime_ns = stat_dict['st_ctime'] * 10**9
-        entry.st_rdev = 0
-        entry.generation = 0
-        entry.entry_timeout = cache_timeout  # Cache entry - use 0 for placeholder attrs
-        entry.attr_timeout = cache_timeout   # Cache attributes
-        entry.st_blksize = 512
-        entry.st_blocks = (entry.st_size + entry.st_blksize - 1) // entry.st_blksize
-        logger.info(f"GETATTR RETURN: inode={inode} mode={oct(entry.st_mode)} size={entry.st_size}")
-        return entry
-
     async def open(self, inode: InodeT, flags: int, ctx):
         """Open a file (pyfuse3 async version)."""
         path = self._inode_to_path(inode)

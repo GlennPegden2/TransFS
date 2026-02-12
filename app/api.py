@@ -646,7 +646,7 @@ def config_get(fields: str = None):
         # If fields specified, only load what's needed
         if fields:
             field_list = [f.strip() for f in fields.split(',')]
-            from app.config import read_app_config
+            from config import read_app_config
             
             # For ui and web_api, we only need app.yaml
             if all(f in ['ui', 'web_api', 'mountpoint', 'filestore'] for f in field_list):

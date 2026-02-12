@@ -152,7 +152,7 @@ clients:
               supports_zaparoo: true
               source_dir: Software
               filetypes:
-              - ROMs: "BIN"
+              - ROMs: "A52,BIN,ROM"
       - name: Atari7800
         manufacturer: Atari
         cananonical_system_name: Atari7800
