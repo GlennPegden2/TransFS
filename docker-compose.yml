@@ -24,6 +24,7 @@ services:
       - ./content:/mnt/filestorefs   # Mount point on the host
       - ./app:/app                      # Mount project root for code and static/templates
       - ./tests:/tests                      # Not needed in production, but useful for testing
+      - ./tests:/app/tests                  # Make tests visible under /app for pytest
       # - ./transfs:/mnt/transfs # COMMENTED OUT: This prevents FUSE from mounting. Only uncomment for specific unit testing needs
 
     environment:

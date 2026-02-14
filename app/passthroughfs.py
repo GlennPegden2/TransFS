@@ -307,66 +307,72 @@ class Passthrough(pyfuse3.Operations):
         return await self.getattr(inode)
     
     async def setattr(self, inode: InodeT, attr, fields, fh, ctx):
-        """Set file attributes."""
+        """Set file attributes (async with thread offloading)."""
+        import trio
+        
         try:
             if fields.update_size:
                 if fh is None:
-                    os.truncate(self._inode_to_path(inode), attr.st_size)
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.truncate(path, attr.st_size))
                 else:
-                    os.ftruncate(fh, attr.st_size)
+                    await trio.to_thread.run_sync(lambda: os.ftruncate(fh, attr.st_size))
             
             if fields.update_mode:
                 # chmod always resolves symlinks
                 assert not stat_m.S_ISLNK(attr.st_mode)
+                mode = stat_m.S_IMODE(attr.st_mode)
                 if fh is None:
-                    os.chmod(self._inode_to_path(inode), stat_m.S_IMODE(attr.st_mode))
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.chmod(path, mode))
                 else:
-                    os.fchmod(fh, stat_m.S_IMODE(attr.st_mode))
+                    await trio.to_thread.run_sync(lambda: os.fchmod(fh, mode))
             
             if fields.update_uid and fields.update_gid:
+                uid, gid = attr.st_uid, attr.st_gid
                 if fh is None:
-                    os.chown(self._inode_to_path(inode), attr.st_uid, attr.st_gid,
-                            follow_symlinks=False)
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.chown(path, uid, gid, follow_symlinks=False))
                 else:
-                    os.fchown(fh, attr.st_uid, attr.st_gid)
+                    await trio.to_thread.run_sync(lambda: os.fchown(fh, uid, gid))
             elif fields.update_uid:
+                uid = attr.st_uid
                 if fh is None:
-                    os.chown(self._inode_to_path(inode), attr.st_uid, -1,
-                            follow_symlinks=False)
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.chown(path, uid, -1, follow_symlinks=False))
                 else:
-                    os.fchown(fh, attr.st_uid, -1)
+                    await trio.to_thread.run_sync(lambda: os.fchown(fh, uid, -1))
             elif fields.update_gid:
+                gid = attr.st_gid
                 if fh is None:
-                    os.chown(self._inode_to_path(inode), -1, attr.st_gid,
-                            follow_symlinks=False)
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.chown(path, -1, gid, follow_symlinks=False))
                 else:
-                    os.fchown(fh, -1, attr.st_gid)
+                    await trio.to_thread.run_sync(lambda: os.fchown(fh, -1, gid))
             
             if fields.update_atime and fields.update_mtime:
                 if fh is None:
-                    os.utime(self._inode_to_path(inode), None,
-                            follow_symlinks=False,
-                            ns=(attr.st_atime_ns, attr.st_mtime_ns))
+                    path = self._inode_to_path(inode)
+                    await trio.to_thread.run_sync(lambda: os.utime(path, None, follow_symlinks=False, ns=(attr.st_atime_ns, attr.st_mtime_ns)))
                 else:
-                    os.utime(fh, None, ns=(attr.st_atime_ns, attr.st_mtime_ns))
+                    # Skip timestamp updates on open file handles to avoid deadlocks
+                    # The timestamps will be updated when the file is closed
+                    pass
             elif fields.update_atime or fields.update_mtime:
                 # Need to retrieve the other value
                 if fh is None:
                     path = self._inode_to_path(inode)
-                    oldstat = os.stat(path, follow_symlinks=False)
-                else:
-                    oldstat = os.fstat(fh)
+                    oldstat = await trio.to_thread.run_sync(lambda: os.stat(path, follow_symlinks=False))
                 
-                if not fields.update_atime:
-                    attr.st_atime_ns = oldstat.st_atime_ns
-                else:
-                    attr.st_mtime_ns = oldstat.st_mtime_ns
+                    if not fields.update_atime:
+                        attr.st_atime_ns = oldstat.st_atime_ns
+                    else:
+                        attr.st_mtime_ns = oldstat.st_mtime_ns
                 
-                if fh is None:
-                    os.utime(path, None, follow_symlinks=False,
-                            ns=(attr.st_atime_ns, attr.st_mtime_ns))
+                    await trio.to_thread.run_sync(lambda: os.utime(path, None, follow_symlinks=False, ns=(attr.st_atime_ns, attr.st_mtime_ns)))
                 else:
-                    os.utime(fh, None, ns=(attr.st_atime_ns, attr.st_mtime_ns))
+                    # Skip timestamp updates on open file handles to avoid deadlocks
+                    pass
         
         except OSError as exc:
             assert exc.errno is not None

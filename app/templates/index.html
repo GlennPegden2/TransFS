@@ -272,6 +272,36 @@
                         </div>
                     </div>
 
+                    <!-- Database Configuration -->
+                    <div style="border: 1px solid #2196F3; padding: 1.5em; border-radius: 8px; background: #f0f7ff;">
+                        <h3 style="margin-top: 0; color: #1565c0;">Database Configuration</h3>
+                        <p style="margin: 0.5em 0 1em 0; color: #666; font-size: 0.9em;">
+                            <strong>Database Mode:</strong> Controls how filesystem metadata is tracked and cached.
+                        </p>
+                        <div style="display: grid; gap: 1em;">
+                            <div>
+                                <label>Mode:</label><br>
+                                <select id="config_database_mode" style="width: 100%; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                                    <option value="disabled">Disabled - No database (fastest, no persistence)</option>
+                                    <option value="enabled">Enabled - Database only (uses SQLite metadata)</option>
+                                    <option value="hybrid">Hybrid - Filesystem + Database (best of both)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Database Path:</label><br>
+                                <input type="text" id="config_database_path" placeholder="/mnt/filestorefs/.transfs_metadata.db" style="width: 100%; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                            </div>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer;">
+                                <input type="checkbox" id="config_database_auto_sync" style="width: 18px; height: 18px; cursor: pointer;">
+                                Auto-sync filesystem changes to database
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.5em; cursor: pointer;">
+                                <input type="checkbox" id="config_database_sync_on_startup" style="width: 18px; height: 18px; cursor: pointer;">
+                                Scan filesystem on startup
+                            </label>
+                        </div>
+                    </div>
+
                     <!-- UI Settings -->
                     <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px;">
                         <h3 style="margin-top: 0;">UI Settings</h3>
@@ -576,10 +606,9 @@
                     const rightMeta = document.createElement('div');
                     rightMeta.className = 'right-meta';
                     
-                    // Add launch button for files/transforms in virtual tab if Zaparoo is configured AND system supports it
-                    // Note: Transform directories (like .dsk/.2mg with strip_header) appear as directories but are launchable
+                    // Add launch button for files in virtual tab if Zaparoo is configured AND system supports it
                     let launchBtn = null;
-                    if (type === 'virtual' && supportsZaparoo) {
+                    if (type === 'virtual' && supportsZaparoo && entryType !== 'directory') {
                         // Get enabled and reachable clients
                         const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
                         const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
@@ -2240,6 +2269,12 @@
                 document.getElementById('config_web_port').value = data.web_api?.port || '';
                 document.getElementById('config_advanced_options').checked = data.ui?.advanced_options || false;
                 
+                // Load database configuration
+                document.getElementById('config_database_mode').value = data.database?.mode || 'hybrid';
+                document.getElementById('config_database_path').value = data.database?.path || '/mnt/filestorefs/.transfs_metadata.db';
+                document.getElementById('config_database_auto_sync').checked = data.database?.auto_sync || false;
+                document.getElementById('config_database_sync_on_startup').checked = data.database?.sync_on_startup || false;
+                
                 // Load cache configuration
                 await loadCacheConfigForConfigTab();
                 
@@ -2260,6 +2295,12 @@
                     },
                     ui: {
                         advanced_options: document.getElementById('config_advanced_options').checked
+                    },
+                    database: {
+                        mode: document.getElementById('config_database_mode').value,
+                        path: document.getElementById('config_database_path').value,
+                        auto_sync: document.getElementById('config_database_auto_sync').checked,
+                        sync_on_startup: document.getElementById('config_database_sync_on_startup').checked
                     }
                 };
 

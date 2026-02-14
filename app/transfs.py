@@ -37,6 +37,9 @@ class TransFS(Passthrough):
     FUSE filesystem for translating virtual paths to real files with zip support.
     Async version using pyfuse3.
     """
+
+    # Disable kernel writeback caching to reduce write-related hangs with SMB clients
+    enable_writeback_cache = False
     
     # Profiling stats (class variables for global tracking)
     _getattr_count = 0
@@ -51,6 +54,7 @@ class TransFS(Passthrough):
         self.root = root_path
         self.mount_path = mount_path or root_path  # Store mount point for path mapping
         self._source_path_cache = {}  # Cache virtual_path -> source_path to avoid re-computation
+        self._pending_utime = {}  # inode -> (atime_ns, mtime_ns) deferred for open fh
         from config import read_config
         self.config = read_config()
         try:
@@ -103,6 +107,15 @@ class TransFS(Passthrough):
                     TransFS._getattr_total_time
                 )
             TransFS._last_stats_print = now
+
+    def _log_fh_state(self, fh: int, context: str) -> None:
+        """Log current file-handle state for debugging SMB/FUSE deadlocks."""
+        try:
+            inode = self._fd_inode_map.get(fh)
+            count = self._fd_open_count.get(fh)
+            logger.info("FH_STATE: %s fh=%s inode=%s open_count=%s", context, fh, inode, count)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("FH_STATE: failed to log state for fh=%s (%s)", fh, exc)
     
     def _is_database_mode_enabled(self) -> bool:
         """Check if database mode is enabled and adapter is available."""
@@ -112,7 +125,19 @@ class TransFS(Passthrough):
         """Check if database can be used for this path (database mode + path is suitable)."""
         if not self.data_adapter:
             return False
-        # Use database for Native and MiSTer paths (both have comprehensive metadata)
+        # Only use database for deep paths (level 3+)
+        # Level 0 (/mnt/transfs): Show clients from config
+        # Level 1 (/mnt/transfs/MiSTer): Show systems from config
+        # Level 2 (/mnt/transfs/MiSTer/Amstrad): Show maps from config
+        # Level 3+ (/mnt/transfs/MiSTer/Amstrad/Tapes): Can use database
+        root_parts = Path(self.root).parts
+        path_parts = Path(path).parts
+        hierarchy_level = len(path_parts) - len(root_parts)
+        
+        if hierarchy_level < 3:
+            return False
+        
+        # Only use database for Native and MiSTer paths (both have comprehensive metadata)
         mount_path = self.mount_path
         return (path.startswith(os.path.join(mount_path, "Native")) or 
                 path.startswith(os.path.join(mount_path, "MiSTer")))
@@ -305,6 +330,37 @@ class TransFS(Passthrough):
                         if entry_id <= start_id:
                             continue
                         entry_path = os.path.join(path, entry_name)
+                        # Fix misclassified directory entries for file-like names
+                        if (
+                            "." in entry_name
+                            and stat_dict.get('st_nlink') == 2
+                            and stat_dict.get('st_mode', 0) & 0o040000
+                        ):
+                            resolved = get_source_path(logger, self.config, self.mount_path, entry_path)
+                            if isinstance(resolved, dict):
+                                resolved = resolved.get('path')
+                            if isinstance(resolved, tuple):
+                                zip_path, internal_file = resolved
+                                import zippath
+                                full_internal = os.path.join(zip_path, internal_file)
+                                info = zippath.getinfo(full_internal)
+                                if info and not info.get('is_dir', False):
+                                    now = int(os.path.getmtime(zip_path))
+                                    stat_dict = {
+                                        'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                        'st_gid': 0, 'st_uid': 0,
+                                        'st_mode': 0o100444,
+                                        'st_nlink': 1,
+                                        'st_size': info.get('size', 0),
+                                    }
+                            elif isinstance(resolved, str) and os.path.exists(resolved) and not os.path.isdir(resolved):
+                                st = os.lstat(resolved)
+                                stat_dict = {
+                                    'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                                    'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                                    'st_uid': st.st_uid, 'st_mode': st.st_mode,
+                                    'st_nlink': 1, 'st_size': st.st_size,
+                                }
                         entry_inode = self._make_synthetic_inode(entry_path)
                         self._add_path(entry_inode, entry_path)
                         entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
@@ -349,6 +405,10 @@ class TransFS(Passthrough):
         skip_cache_lookup_enabled = cache_config.get("readdir_skip_cache_lookup_with_direntry", True)
         max_readdir_getattr_cache = cache_config.get("readdir_getattr_cache_max_entries", 300)
         fast_listing_threshold = cache_config.get("readdir_fast_listing_threshold", 500)
+        virtual_fast_listing_threshold = cache_config.get(
+            "readdir_fast_listing_threshold_virtual",
+            fast_listing_threshold,
+        )
 
         # Add real directory entries using scandir for better performance
         # scandir() returns DirEntry objects with cached stat info, avoiding extra stat() calls
@@ -490,7 +550,14 @@ class TransFS(Passthrough):
                     for name in missing_entries
                 )
         
-        fast_listing = len(virtual_entries) > fast_listing_threshold
+        is_virtual_browse = (
+            path.startswith(self.mount_path)
+            and not path.startswith(os.path.join(self.mount_path, "Native"))
+        )
+        threshold = virtual_fast_listing_threshold if is_virtual_browse else fast_listing_threshold
+        fast_listing = len(virtual_entries) > threshold
+        # Skip getattr cache for very large directories to reduce cache churn
+        skip_getattr_cache = len(virtual_entries) > max_readdir_getattr_cache
 
         for entry_name in virtual_entries:
             entry_path = os.path.join(xfull_path, entry_name)
@@ -549,7 +616,26 @@ class TransFS(Passthrough):
                 cache_checked += 1
                 
                 if cached:
-                    source_paths[entry_name] = ('cached', cached)
+                    is_placeholder = (
+                        cached.get('st_mode') == 0o040755
+                        and cached.get('st_size') == 4096
+                        and cached.get('st_nlink') == 2
+                    )
+                    if is_placeholder and "." in entry_name:
+                        # Placeholder directories can become real files (e.g., zip-internal mappings).
+                        # Re-resolve to avoid stale folder attributes for file-like entries.
+                        t_resolve_start = time.time()
+                        if is_native_path:
+                            fspath = os.path.join(parent_dir, entry_name)
+                        else:
+                            t_gsp = time.time()
+                            fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
+                            t_get_source_path += time.time() - t_gsp
+                            get_source_path_calls += 1
+                        t_path_resolve += time.time() - t_resolve_start
+                        source_paths[entry_name] = ('uncached', fspath)
+                    else:
+                        source_paths[entry_name] = ('cached', cached)
                 else:
                     # Fast path for Native: source path is just the parent_dir + entry_name
                     t_resolve_start = time.time()
@@ -811,6 +897,41 @@ class TransFS(Passthrough):
                 except Exception as e:
                     logger.warning(f"READDIR: failed to stat {entry_name}: {e}")
                     continue
+
+            # Final safety: fix misclassified file-like entries (e.g., boot.rom) showing as directories
+            try:
+                if "." in entry_name and (entry.st_mode & 0o040000):
+                    resolved = get_source_path(logger, self.config, self.mount_path, entry_path)
+                    if isinstance(resolved, dict):
+                        resolved = resolved.get('path')
+                    if isinstance(resolved, tuple):
+                        zip_path, internal_file = resolved
+                        import zippath
+                        full_internal = os.path.join(zip_path, internal_file)
+                        info = zippath.getinfo(full_internal)
+                        if info and not info.get('is_dir', False):
+                            now = int(os.path.getmtime(zip_path))
+                            stat_dict = {
+                                'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                'st_gid': 0, 'st_uid': 0,
+                                'st_mode': 0o100444,
+                                'st_nlink': 1,
+                                'st_size': info.get('size', 0),
+                            }
+                            cache_getattr(entry_path, parent_dir, stat_dict)
+                            entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+                    elif isinstance(resolved, str) and os.path.exists(resolved) and not os.path.isdir(resolved):
+                        st = os.lstat(resolved)
+                        stat_dict = {
+                            'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime),
+                            'st_mtime': int(st.st_mtime), 'st_gid': st.st_gid,
+                            'st_uid': st.st_uid, 'st_mode': st.st_mode,
+                            'st_nlink': 1, 'st_size': st.st_size,
+                        }
+                        cache_getattr(entry_path, parent_dir, stat_dict)
+                        entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+            except Exception as e:
+                logger.debug(f"READDIR: correction failed for {entry_name}: {e}")
             
             # Send entry to client
             if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
@@ -848,11 +969,24 @@ class TransFS(Passthrough):
                 logger.info(f"GETATTR: using database mode for {path}")
                 stat_dict = self.data_adapter.getattr_stat(path)
                 if stat_dict:
-                    t_total = time.time() - t_start
-                    TransFS._getattr_count += 1
-                    TransFS._getattr_total_time += t_total
-                    logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
-                    return self._dict_to_entry_attributes(stat_dict, inode)
+                    # Guard against incorrect DB directory entries for file-like paths
+                    name = os.path.basename(path)
+                    is_dir = stat_dict.get('st_nlink') == 2 and stat_dict.get('st_mode', 0) & 0o040000
+                    if is_dir and "." in name:
+                        logger.info(f"GETATTR DATABASE: possible misclassified dir for {path}, verifying source")
+                        resolved = get_source_path(logger, self.config, self.mount_path, path)
+                        if isinstance(resolved, tuple):
+                            logger.info(f"GETATTR DATABASE: override to zip file for {path}")
+                            stat_dict = None
+                        elif isinstance(resolved, str) and os.path.exists(resolved) and not os.path.isdir(resolved):
+                            logger.info(f"GETATTR DATABASE: override to file for {path}")
+                            stat_dict = None
+                    if stat_dict:
+                        t_total = time.time() - t_start
+                        TransFS._getattr_count += 1
+                        TransFS._getattr_total_time += t_total
+                        logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
+                        return self._dict_to_entry_attributes(stat_dict, inode)
             except Exception as e:
                 logger.warning(f"GETATTR: database mode failed, falling back to cache: {e}")
         
@@ -1233,6 +1367,200 @@ class TransFS(Passthrough):
 
         logger.debug("DEBUG: open: unknown mapping")
         raise FUSEError(errno.ENOENT)
+
+    async def read(self, fh, off, size):
+        """
+        Read data from an open file.
+        Uses trio thread offloading to avoid blocking the async event loop.
+        """
+        logger.info("READ: fh=%s off=%s size=%s", fh, off, size)
+        try:
+            # Use trio.to_thread.run_sync to offload blocking I/O to a thread
+            def _do_read():
+                os.lseek(fh, off, os.SEEK_SET)
+                return os.read(fh, size)
+            
+            data = await trio.to_thread.run_sync(_do_read)
+            logger.info("READ: fh=%s off=%s size=%s -> %d bytes", fh, off, size, len(data))
+            return data
+        except OSError as exc:
+            logger.error("READ: failed fh=%s off=%s size=%s: %s", fh, off, size, exc)
+            raise FUSEError(exc.errno if exc.errno else errno.EIO)
+
+    async def write(self, fh, off, buf):
+        """
+        Write data to an open file.
+        Uses trio thread offloading to avoid blocking the async event loop.
+        """
+        logger.info("WRITE: fh=%s off=%s size=%s", fh, off, len(buf))
+        try:
+            # Use trio.to_thread.run_sync to offload blocking I/O to a thread
+            def _do_write():
+                os.lseek(fh, off, os.SEEK_SET)
+                return os.write(fh, buf)
+            
+            written = await trio.to_thread.run_sync(_do_write)
+            logger.info("WRITE: fh=%s off=%s -> %d bytes written", fh, off, written)
+            return written
+        except OSError as exc:
+            logger.error("WRITE: failed fh=%s off=%s: %s", fh, off, exc)
+            raise FUSEError(exc.errno if exc.errno else errno.EIO)
+
+    async def release(self, fh):
+        """
+        Close an open file.
+        Uses trio thread offloading for the close operation.
+        """
+        logger.info("RELEASE: fh=%s", fh)
+        self._log_fh_state(fh, "release-start")
+        try:
+            if self._fd_open_count[fh] > 1:
+                self._fd_open_count[fh] -= 1
+                logger.info("RELEASE: fh=%s decremented count to %d", fh, self._fd_open_count[fh])
+                self._log_fh_state(fh, "release-decrement")
+                return
+            
+            del self._fd_open_count[fh]
+            inode = self._fd_inode_map[fh]
+            del self._inode_fd_map[inode]
+            del self._fd_inode_map[fh]
+
+            pending_times = self._pending_utime.pop(inode, None)
+            if pending_times:
+                atime_ns, mtime_ns = pending_times
+                path = self._inode_to_path(inode)
+                def _do_utime():
+                    os.utime(path, None, follow_symlinks=False, ns=(atime_ns, mtime_ns))
+                try:
+                    with trio.move_on_after(1) as cancel_scope:
+                        await trio.to_thread.run_sync(_do_utime)
+                    if cancel_scope.cancelled_caught:
+                        logger.warning("RELEASE: deferred utime timed out inode=%s", inode)
+                    else:
+                        logger.info("RELEASE: applied deferred utime inode=%s", inode)
+                except OSError as exc:
+                    logger.warning("RELEASE: deferred utime failed inode=%s: %s", inode, exc)
+            
+            # Use trio.to_thread.run_sync to offload blocking close to a thread
+            def _do_close():
+                os.close(fh)
+            
+            await trio.to_thread.run_sync(_do_close)
+            logger.info("RELEASE: fh=%s closed successfully", fh)
+            self._log_fh_state(fh, "release-closed")
+        except OSError as exc:
+            logger.error("RELEASE: failed fh=%s: %s", fh, exc)
+            raise FUSEError(exc.errno if exc.errno else errno.EIO)
+
+    async def flush(self, fh):
+        """Flush file data to storage (FUSE flush)."""
+        logger.info("FLUSH: fh=%s", fh)
+        self._log_fh_state(fh, "flush-start")
+        try:
+            def _do_fsync():
+                os.fsync(fh)
+
+            await trio.to_thread.run_sync(_do_fsync)
+            logger.info("FLUSH: fh=%s completed", fh)
+        except OSError as exc:
+            logger.error("FLUSH: failed fh=%s: %s", fh, exc)
+            raise FUSEError(exc.errno if exc.errno else errno.EIO)
+
+    async def fsync(self, fh, datasync):
+        """Synchronize file contents to disk."""
+        logger.info("FSYNC: fh=%s datasync=%s", fh, datasync)
+        self._log_fh_state(fh, "fsync-start")
+        try:
+            def _do_fsync():
+                if datasync:
+                    os.fdatasync(fh)
+                else:
+                    os.fsync(fh)
+
+            await trio.to_thread.run_sync(_do_fsync)
+            logger.info("FSYNC: fh=%s completed", fh)
+        except OSError as exc:
+            logger.error("FSYNC: failed fh=%s: %s", fh, exc)
+            raise FUSEError(exc.errno if exc.errno else errno.EIO)
+
+    async def _apply_deferred_utime(self, inode: InodeT, path: str, atime_ns: int, mtime_ns: int):
+        try:
+            with trio.move_on_after(1) as cancel_scope:
+                await trio.to_thread.run_sync(
+                    lambda: os.utime(path, None, follow_symlinks=False, ns=(atime_ns, mtime_ns))
+                )
+            if cancel_scope.cancelled_caught:
+                logger.warning("SETATTR DEFERRED TIMEOUT: inode=%s", inode)
+            else:
+                logger.info("SETATTR DEFERRED DONE: inode=%s", inode)
+        except OSError as exc:
+            logger.warning("SETATTR DEFERRED FAILED: inode=%s: %s", inode, exc)
+
+    async def setattr(self, inode: InodeT, attr, fields, fh, ctx):
+        """Set file attributes with logging."""
+        path = self._inode_to_path(inode) if fh is None else f"fh={fh}"
+        ops = []
+        if fields.update_size:
+            ops.append(f"size={attr.st_size}")
+        if fields.update_mode:
+            ops.append(f"mode={oct(attr.st_mode)}")
+        if fields.update_uid:
+            ops.append(f"uid={attr.st_uid}")
+        if fields.update_gid:
+            ops.append(f"gid={attr.st_gid}")
+        if fields.update_atime:
+            ops.append("atime")
+        if fields.update_mtime:
+            ops.append("mtime")
+        
+        logger.info("SETATTR START: inode=%s %s ops=[%s]", inode, path, ",".join(ops))
+        try:
+            has_times = fields.update_atime or fields.update_mtime
+            has_other = fields.update_size or fields.update_mode or fields.update_uid or fields.update_gid
+
+            if has_times:
+                atime_ns = attr.st_atime_ns
+                mtime_ns = attr.st_mtime_ns
+                if fh is not None:
+                    self._pending_utime[inode] = (atime_ns, mtime_ns)
+                    logger.info("SETATTR DEFERRED: inode=%s fh=%s", inode, fh)
+                else:
+                    real_path = self._inode_to_path(inode)
+                    logger.info("SETATTR DEFERRED: inode=%s path=%s", inode, real_path)
+                    trio.lowlevel.spawn_system_task(self._apply_deferred_utime, inode, real_path, atime_ns, mtime_ns)
+
+                if not has_other:
+                    entry_path = self._inode_to_path(inode)
+                    parent_dir = os.path.dirname(entry_path)
+                    cached = get_cached_getattr(entry_path, parent_dir)
+                    if cached:
+                        cached = dict(cached)
+                        cached['st_atime'] = atime_ns / 1e9
+                        cached['st_mtime'] = mtime_ns / 1e9
+                        result = self._dict_to_entry_attributes(cached, inode)
+                    else:
+                        result = await self.getattr(inode, ctx)
+                    logger.info("SETATTR DONE: inode=%s", inode)
+                    return result
+
+            if has_other:
+                orig_atime = fields.update_atime
+                orig_mtime = fields.update_mtime
+                if has_times:
+                    fields.update_atime = False
+                    fields.update_mtime = False
+                try:
+                    result = await super().setattr(inode, attr, fields, fh, ctx)
+                finally:
+                    fields.update_atime = orig_atime
+                    fields.update_mtime = orig_mtime
+            else:
+                result = await self.getattr(inode, ctx)
+            logger.info("SETATTR DONE: inode=%s", inode)
+            return result
+        except Exception as exc:
+            logger.error("SETATTR FAILED: inode=%s: %s", inode, exc)
+            raise
 
     async def lookup(self, parent_inode: InodeT, name: bytes, ctx=None):
         """

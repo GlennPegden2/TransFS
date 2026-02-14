@@ -4,6 +4,7 @@ These tests ensure the core infrastructure is operational:
 - Volume mounts are accessible (/mnt/transfs, /mnt/filestorefs)
 - Expected client mappings (MiSTer, Retrobat) exist
 - No unexpected additional files/directories at top level
+- Client folders show ONLY configured systems (regression test for database mode)
 - Filesystem structure is clean and organized
 
 All other tests depend on these passing.
@@ -12,7 +13,7 @@ All other tests depend on these passing.
 import os
 import pytest
 from pathlib import Path
-from typing import List, Set
+import yaml
 
 
 class TestVolumeMounts:
@@ -71,6 +72,95 @@ class TestClientMappings:
                 continue  # Allow hidden files
             assert item_name in expected_clients, \
                 f"Unexpected top-level item in /mnt/transfs: {item_name}\nExpected: {expected_clients}"
+
+
+class TestClientSystemMappings:
+    """Test that client folders show ONLY configured systems (regression test for database mode bug).
+
+    Validates that browsing a client folder (e.g., /mnt/transfs/MiSTer)
+    only shows configured system names from clients.yaml.
+    """
+
+    @staticmethod
+    def _load_clients_config():
+        """Load the clients.yaml configuration."""
+        config_path = Path("/app/config/clients.yaml")
+        if not config_path.exists():
+            pytest.skip(f"clients.yaml not found at {config_path}")
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        return config
+
+    def test_client_folders_show_configured_systems_only(self):
+        """Verify each client folder shows exactly its configured systems, nothing more."""
+        config = self._load_clients_config()
+
+        transfs_root = Path("/mnt/transfs")
+
+        for client_config in config.get("clients", []):
+            client_name = client_config.get("name")
+            client_systems = {s.get("name") for s in client_config.get("systems", [])}
+
+            if not client_systems:
+                continue  # Skip clients with no systems configured
+
+            client_path = transfs_root / client_name
+            if not client_path.exists():
+                continue  # Skip clients that aren't mounted
+
+            actual_entries = {
+                entry.name for entry in client_path.iterdir()
+                if not entry.name.startswith(".")
+            }
+
+            assert actual_entries == client_systems, (
+                f"Client folder '{client_name}' has mismatched entries.\n"
+                f"Expected systems (from config): {sorted(client_systems)}\n"
+                f"Actual entries (from filesystem): {sorted(actual_entries)}\n"
+                f"Missing: {sorted(client_systems - actual_entries)}\n"
+                f"Extra (should not exist): {sorted(actual_entries - client_systems)}\n"
+                "This suggests database mode or implicit file listing is active at the wrong hierarchy level."
+            )
+
+    def test_mister_systems_match_config(self):
+        """Regression test: MiSTer should show systems, not thousands of files."""
+        config = self._load_clients_config()
+
+        mister_config = next(
+            (c for c in config.get("clients", []) if c.get("name") == "MiSTer"),
+            None
+        )
+
+        if not mister_config:
+            pytest.skip("MiSTer not configured")
+
+        configured_systems = {s.get("name") for s in mister_config.get("systems", [])}
+
+        mister_path = Path("/mnt/transfs/MiSTer")
+        assert mister_path.exists(), "MiSTer path does not exist"
+
+        actual_entries = {
+            entry.name for entry in mister_path.iterdir()
+            if entry.is_dir() and not entry.name.startswith(".")
+        }
+
+        assert len(actual_entries) < 100, (
+            f"MiSTer has too many entries ({len(actual_entries)}). "
+            "This suggests it's showing files instead of systems. "
+            "Database mode may be active at wrong hierarchy level."
+        )
+
+        assert len(actual_entries) > 5, (
+            f"MiSTer has suspiciously few entries ({len(actual_entries)}). "
+            "Check if configuration is loaded correctly."
+        )
+
+        assert actual_entries == configured_systems, (
+            "MiSTer systems don't match configuration.\n"
+            f"Expected: {sorted(configured_systems)}\n"
+            f"Actual: {sorted(actual_entries)}"
+        )
 
 
 class TestMiSTerStructure:

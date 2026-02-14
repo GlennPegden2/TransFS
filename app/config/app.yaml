@@ -7,12 +7,6 @@ cache:
   readdir_skip_cache_lookup_with_direntry: true
   transform_output_size_cache_enabled: true
   transform_pipeline_cache_enabled: true
-database:
-  enabled: true
-  mode: hybrid  # disabled | enabled | hybrid
-  path: /mnt/filestorefs/.transfs_metadata.db
-  auto_sync: false  # Automatically sync filesystem changes
-  sync_on_startup: false  # Scan filesystem on startup
 cache_warmer:
   batch_size: 10
   check_interval_seconds: 5
@@ -20,6 +14,12 @@ cache_warmer:
   enabled: false
   io_threshold_percent: 20.0
   max_depth: 12
+database:
+  auto_sync: false
+  enabled: true
+  mode: hybrid
+  path: /mnt/filestorefs/.transfs_metadata.db
+  sync_on_startup: false
 filestore: /mnt/filestorefs
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:

@@ -649,7 +649,7 @@ def config_get(fields: str = None):
             from config import read_app_config
             
             # For ui and web_api, we only need app.yaml
-            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore'] for f in field_list):
+            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore', 'database'] for f in field_list):
                 app_config = read_app_config()
                 result = {}
                 for field in field_list:
@@ -661,6 +661,14 @@ def config_get(fields: str = None):
                         result['mountpoint'] = app_config.get('mountpoint', '/mnt/transfs')
                     elif field == 'filestore':
                         result['filestore'] = app_config.get('filestore', '/mnt/filestorefs')
+                    elif field == 'database':
+                        result['database'] = app_config.get('database', {
+                            'enabled': True,
+                            'mode': 'hybrid',
+                            'path': '/mnt/filestorefs/.transfs_metadata.db',
+                            'auto_sync': False,
+                            'sync_on_startup': False
+                        })
                 return result
         
         # Otherwise, load full config (expensive)
@@ -669,7 +677,14 @@ def config_get(fields: str = None):
             "mountpoint": config.get("mountpoint", "/mnt/transfs"),
             "filestore": config.get("filestore", "/mnt/filestorefs"),
             "web_api": config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
-            "ui": config.get("ui", {"advanced_options": False})
+            "ui": config.get("ui", {"advanced_options": False}),
+            "database": config.get("database", {
+                "enabled": True,
+                "mode": "hybrid",
+                "path": "/mnt/filestorefs/.transfs_metadata.db",
+                "auto_sync": False,
+                "sync_on_startup": False
+            })
         }
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -681,6 +696,7 @@ class ConfigUpdate(BaseModel):
     filestore: str | None = None
     web_api: dict | None = None
     ui: dict | None = None
+    database: dict | None = None
 
 
 @app.post("/config")
@@ -699,6 +715,8 @@ def config_set(config_update: ConfigUpdate):
             config.setdefault("web_api", {}).update(config_update.web_api)
         if config_update.ui is not None:
             config.setdefault("ui", {}).update(config_update.ui)
+        if config_update.database is not None:
+            config.setdefault("database", {}).update(config_update.database)
         
         # Write updated app.yaml (only the top-level config keys that belong there)
         app_config_path = "config/app.yaml"
@@ -714,6 +732,8 @@ def config_set(config_update: ConfigUpdate):
             app_config.setdefault("web_api", {}).update(config_update.web_api)
         if config_update.ui is not None:
             app_config.setdefault("ui", {}).update(config_update.ui)
+        if config_update.database is not None:
+            app_config.setdefault("database", {}).update(config_update.database)
         
         with open(app_config_path, "w", encoding="utf-8") as f:
             yaml.dump(app_config, f, default_flow_style=False)
@@ -724,7 +744,14 @@ def config_set(config_update: ConfigUpdate):
                 "mountpoint": app_config.get("mountpoint", "/mnt/transfs"),
                 "filestore": app_config.get("filestore", "/mnt/filestorefs"),
                 "web_api": app_config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
-                "ui": app_config.get("ui", {"advanced_options": False})
+                "ui": app_config.get("ui", {"advanced_options": False}),
+                "database": app_config.get("database", {
+                    "enabled": True,
+                    "mode": "hybrid",
+                    "path": "/mnt/filestorefs/.transfs_metadata.db",
+                    "auto_sync": False,
+                    "sync_on_startup": False
+                })
             }
         }
     except Exception as e:  # pylint: disable=broad-except
