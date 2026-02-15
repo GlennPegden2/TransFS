@@ -8,6 +8,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - `/sync/client/{client}/system/{system}` API endpoint for manual system cache population
 - Comprehensive logging to track getattr cache hits, database lookups, and transform calculations
 - Support for `display_name` field in clients.yaml for custom UI display names independent of filesystem paths
+- Real filestore path tooltips in Virtual browse UI - shows actual filestore location when hovering over files
+- `/api/source-paths` endpoint for resolving virtual paths to their real filestore locations using clients.yaml mapping rules
+- UI configuration option `show_real_path_tooltips` (enabled by default) to toggle path tooltips in Config tab
 
 ### Changed
 - **PERF**: Getattr cache validation now uses file's own mtime instead of parent directory mtime (prevents false invalidations)

@@ -15,7 +15,7 @@ cache_warmer:
   io_threshold_percent: 20.0
   max_depth: 12
 database:
-  auto_sync: false
+  auto_sync: true
   enabled: true
   mode: hybrid
   path: /mnt/filestorefs/.transfs_metadata.db
@@ -26,6 +26,7 @@ ssl_ignore_hosts:
 - arcarc.nl
 ui:
   advanced_options: true
+  show_real_path_tooltips: true
 web_api:
   host: ''
   port: 8000

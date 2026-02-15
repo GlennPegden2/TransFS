@@ -305,9 +305,15 @@
                     <!-- UI Settings -->
                     <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px;">
                         <h3 style="margin-top: 0;">UI Settings</h3>
-                        <div style="display: flex; align-items: center; gap: 1em;">
-                            <input type="checkbox" id="config_advanced_options">
-                            <label for="config_advanced_options">Show Advanced Options (enables Debug and Test tabs)</label>
+                        <div style="display: flex; flex-direction: column; gap: 1em;">
+                            <div style="display: flex; align-items: center; gap: 1em;">
+                                <input type="checkbox" id="config_advanced_options">
+                                <label for="config_advanced_options">Show Advanced Options (enables Debug and Test tabs)</label>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 1em;">
+                                <input type="checkbox" id="config_show_real_path_tooltips">
+                                <label for="config_show_real_path_tooltips">Show Real Filestore Path Tooltips (hover over files in Virtual browse)</label>
+                            </div>
                         </div>
                     </div>
 
@@ -474,6 +480,18 @@
             fileList.textContent = 'Loading...';
             breadcrumb.textContent = path;
             
+            // Fetch tooltip setting for virtual browse
+            let showRealPathTooltips = false;
+            if (type === 'virtual') {
+                try {
+                    const configResponse = await fetch('/api/config?fields=ui');
+                    const configData = await configResponse.json();
+                    showRealPathTooltips = configData.ui?.show_real_path_tooltips || false;
+                } catch (e) {
+                    console.error('Failed to load tooltip setting:', e);
+                }
+            }
+            
             // Hide timing bar during load for virtual
             if (type === 'virtual') {
                 const timingBar = document.getElementById('virtual-timing');
@@ -599,6 +617,13 @@
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'name';
                     nameSpan.textContent = name;
+                    
+                    // Add tooltip for virtual browse showing real filestore path
+                    if (type === 'virtual' && showRealPathTooltips && window.currentSourcePaths && window.currentSourcePaths.length > 0) {
+                        const sourcePath = window.currentSourcePaths[0];
+                        nameSpan.title = `📁 ${sourcePath}/${name}`;
+                    }
+                    
                     const sizeSpan = document.createElement('span');
                     sizeSpan.className = 'size';
                     sizeSpan.textContent = size || '';
@@ -2268,6 +2293,7 @@
                 document.getElementById('config_web_host').value = data.web_api?.host || '';
                 document.getElementById('config_web_port').value = data.web_api?.port || '';
                 document.getElementById('config_advanced_options').checked = data.ui?.advanced_options || false;
+                document.getElementById('config_show_real_path_tooltips').checked = data.ui?.show_real_path_tooltips || false;
                 
                 // Load database configuration
                 document.getElementById('config_database_mode').value = data.database?.mode || 'hybrid';
@@ -2294,7 +2320,8 @@
                         port: parseInt(document.getElementById('config_web_port').value) || 8000
                     },
                     ui: {
-                        advanced_options: document.getElementById('config_advanced_options').checked
+                        advanced_options: document.getElementById('config_advanced_options').checked,
+                        show_real_path_tooltips: document.getElementById('config_show_real_path_tooltips').checked
                     },
                     database: {
                         mode: document.getElementById('config_database_mode').value,

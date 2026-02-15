@@ -314,6 +314,52 @@ def get_logs():
     except Exception as e:  # pylint: disable=broad-except
         return f"Could not read log: {e}"
 
+@app.get("/source-paths")
+def api_source_paths(path: str):
+    """Get the real filestore path(s) that back a virtual path.
+    
+    For tooltips and debugging, returns the actual filestore location(s)
+    that a virtual path maps to via clients.yaml configuration.
+    """
+    try:
+        import logging
+        from sourcepath import get_source_path
+        
+        logger = logging.getLogger("api")
+        config = read_config()
+        
+        # Only allow virtual paths
+        if not path.startswith("/mnt/transfs"):
+            return {"error": "Only virtual paths (/mnt/transfs/...) are supported"}
+        
+        # Get the source path using the same resolution logic as the filesystem
+        source_path = get_source_path(logger, config, "/mnt/transfs", path)
+        
+        if source_path is None:
+            # Path doesn't exist yet or can't be resolved
+            # Return best guess based on standard mapping
+            return {"source_paths": [], "error": "Path could not be resolved"}
+        
+        # Handle different return types from get_source_path
+        source_paths = []
+        if isinstance(source_path, str):
+            # Simple string path
+            source_paths = [source_path]
+        elif isinstance(source_path, tuple):
+            # ZIP tuple (zip_path, internal_path)
+            zip_path, internal_path = source_path
+            source_paths = [f"{zip_path}/{internal_path}"]
+        elif isinstance(source_path, dict) and 'path' in source_path:
+            # Transform pipeline dict
+            source_paths = [source_path['path']]
+        
+        return {"source_paths": source_paths, "path": path}
+    except Exception as e:  # pylint: disable=broad-except
+        import logging
+        logger = logging.getLogger("api")
+        logger.error(f"Error resolving source paths for {path}: {e}", exc_info=True)
+        return {"error": str(e), "source_paths": []}
+
 @app.get("/browse")
 def api_browse_directory(path: str):
     """Browse a directory and return its contents."""
@@ -654,7 +700,7 @@ def config_get(fields: str = None):
                 result = {}
                 for field in field_list:
                     if field == 'ui':
-                        result['ui'] = app_config.get('ui', {'advanced_options': False})
+                        result['ui'] = app_config.get('ui', {'advanced_options': False, 'show_real_path_tooltips': True})
                     elif field == 'web_api':
                         result['web_api'] = app_config.get('web_api', {'host': '0.0.0.0', 'port': 8000})
                     elif field == 'mountpoint':
@@ -677,7 +723,7 @@ def config_get(fields: str = None):
             "mountpoint": config.get("mountpoint", "/mnt/transfs"),
             "filestore": config.get("filestore", "/mnt/filestorefs"),
             "web_api": config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
-            "ui": config.get("ui", {"advanced_options": False}),
+            "ui": config.get("ui", {"advanced_options": False, "show_real_path_tooltips": True}),
             "database": config.get("database", {
                 "enabled": True,
                 "mode": "hybrid",
