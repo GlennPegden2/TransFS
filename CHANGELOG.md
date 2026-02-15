@@ -22,6 +22,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Catastrophic slowdown for systems with file transforms (38-45x speedup for Apple-II: 76s → 2s)
 - Cache hits now properly reflected in batch phase instead of only in send phase
 - Unbound variable error in readdir cache_hits initialization
+- Apple-II DSK image loading - removed incorrect 64-byte header strip transform (only 2MG files need 512-byte strip)
 
 ## [2026-02-14] - Display Name System Implementation
 
