@@ -16,6 +16,7 @@ When you want to start work on a feature, just mention any of these keywords and
 | **Storage Strategy Configuration** | Feature Request | Medium |
 | **Reprocessing Downloaded Files** | Design Discussion | Medium |
 | **Archive Extraction Skip Logic** | Issue Identified | Medium |
+| **App Configuration Reload Endpoint** | Feature Request | Medium |
 | **Nested ZIP Support** | Feature Request | Low |
 | **Download Resume Support** | Idea | Low |
 | **Checksum Verification** | Idea | Low |
@@ -54,6 +55,20 @@ When you want to start work on a feature, just mention any of these keywords and
 - Browser back/forward buttons work naturally for directory navigation
 - Directory paths are bookmarkable and shareable
 - Better user experience matching OS file browsers
+
+### App Configuration Reload Endpoint
+**Status**: Feature Request  
+**Priority**: Medium  
+**Description**: Add `/api/restart` (or `/api/reload-config`) endpoint to reload app configuration without requiring full Docker container restart.  
+**Use Case**: When editing `clients.yaml` or `app.yaml`, users need to restart the container for changes to take effect. A simple HTTP endpoint would allow reloading config from the Settings tab.  
+**Requested by**: Needed when debugging config issues (e.g., fixing Apple-II DSK transform mappings).  
+**Implementation Notes**:
+- Endpoint should reload all configuration files (app.yaml, clients.yaml, source files)
+- Clear any in-memory caches (transform pipeline cache, system info cache)
+- Reset FUSE inode cache if possible
+- Return success/failure status and log any config validation errors
+- Add confirmation dialog in Settings tab before restart
+- Provide feedback on which configs were reloaded
 
 ### MEGA Download Progress Indicator
 **Status**: Deferred  
