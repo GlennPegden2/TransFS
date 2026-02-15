@@ -112,7 +112,8 @@ clients:
               - FDs: "DSK"
               - Tapes: "CDT"
       # --- Apple ---
-      - name: AppleII
+      - name: Apple-II
+        display_name: "Apple ]["
         manufacturer: Apple
         cananonical_system_name: AppleII
         local_base_path: Apple/AppleII

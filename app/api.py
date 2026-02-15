@@ -1417,6 +1417,62 @@ def api_get_manufacturers_and_canonical_names():
     return get_manufacturers_and_canonical_names()
 
 
+@app.post("/sync/client/{client_name}/system/{system_name}")
+def sync_system_cache(client_name: str, system_name: str):
+    """
+    Manually trigger cache population for a specific system.
+    This walks the virtual filesystem and pre-populates getattr cache,
+    which is especially useful for systems with transforms.
+    """
+    import os
+    import time
+    mount_path = "/mnt/transfs"
+    system_path = os.path.join(mount_path, client_name, system_name)
+    
+    if not os.path.exists(system_path):
+        return {"error": f"System path not found: {system_path}", "success": False}
+    
+    # Walk the system directory and stat all files
+    file_count = 0
+    dir_count = 0
+    error_count = 0
+    start_time = time.time()
+    
+    try:
+        for root, dirs, files in os.walk(system_path):
+            dir_count += len(dirs)
+            for filename in files:
+                try:
+                    file_path = os.path.join(root, filename)
+                    os.stat(file_path)  # Triggers getattr, populates cache
+                    file_count += 1
+                    
+                    # Progress logging every 100 files
+                    if file_count % 100 == 0:
+                        elapsed = time.time() - start_time
+                        logger.info(f"Sync progress: {file_count} files cached in {elapsed:.1f}s")
+                except Exception as e:
+                    error_count += 1
+                    logger.debug(f"Sync error on {filename}: {e}")
+        
+        elapsed = time.time() - start_time
+        return {
+            "success": True,
+            "client": client_name,
+            "system": system_name,
+            "files_cached": file_count,
+            "directories": dir_count,
+            "errors": error_count,
+            "elapsed_seconds": round(elapsed, 2)
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "success": False,
+            "files_cached": file_count
+        }
+
+
 @app.get("/clients/{client_name}/systems/{system_name}/packs")
 def api_get_packs(client_name: str, system_name: str):
     """Return available packs for a specific system."""

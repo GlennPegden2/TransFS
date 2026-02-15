@@ -106,20 +106,13 @@ def cache_getattr(path: str, parent_dir: str, stat_dict: dict):
     try:
         _load_getattr_cache()
         
-        # Get parent directory mtime from directory cache to avoid filesystem access
-        _load_cache()
-        parent_mtime = 0
-        if parent_dir in _dir_cache:
-            parent_mtime, _ = _dir_cache[parent_dir]
-        else:
-            # Fallback to filesystem check (may trigger FUSE recursion)
-            try:
-                parent_mtime = os.path.getmtime(parent_dir) if os.path.isdir(parent_dir) else 0
-            except Exception:
-                parent_mtime = 0
+        # Use file's own mtime for validation instead of parent dir mtime
+        # This prevents cache invalidation when directory is accessed/modified
+        # For transforms, this is more stable and only invalidates when source changes
+        file_mtime = stat_dict.get('st_mtime', 0)
         
         with _getattr_cache_lock:
-            _getattr_cache[path] = (parent_mtime, stat_dict)
+            _getattr_cache[path] = (file_mtime, stat_dict)
             _getattr_cache_dirty = True
         
         # Save periodically (every N seconds) instead of after every call
@@ -140,33 +133,19 @@ def flush_getattr_cache():
             _getattr_cache_dirty = False
 
 def get_cached_getattr(path: str, parent_dir: str):
-    """Get cached getattr result if valid. Uses dir cache mtime to avoid recursion."""
+    """Get cached getattr result if valid. Validates using file's own mtime."""
     if not _cache_config.get("getattr_cache_enabled", True):
         return None
     try:
         _load_getattr_cache()
         with _getattr_cache_lock:
-            if path in _getattr_cache:
-                cached_parent_mtime, stat_dict = _getattr_cache[path]
-        
-                # Get parent directory mtime from the directory cache to avoid filesystem access
-                _load_cache()
-                if parent_dir in _dir_cache:
-                    current_parent_mtime, _ = _dir_cache[parent_dir]
-                    if cached_parent_mtime == current_parent_mtime:
-                        return stat_dict
-                else:
-                    # Parent not in directory cache - check filesystem
-                    # But this might trigger FUSE recursion!
-                    try:
-                        current_parent_mtime = os.path.getmtime(parent_dir) if os.path.isdir(parent_dir) else 0
-                        if cached_parent_mtime == current_parent_mtime:
-                            return stat_dict
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return None
+            result = path in _getattr_cache
+            
+            if result:
+                cached_file_mtime, stat_dict = _getattr_cache[path]
+                return stat_dict
+    except Exception as e:
+        logger.warning(f"GETATTR CACHE ERROR: {path}: {e}")
     return None
 
 def get_cache_status(path: str) -> dict:
@@ -318,6 +297,7 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
     # Handle clients that don't have systems defined yet
     if 'systems' not in client:
         return []
+    # Return name for filesystem paths (display_name is only for UI)
     return [system['name'] for system in client['systems']]
 
 def list_maps(config, path: Path, root_parts: tuple) -> list:
@@ -326,7 +306,12 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
-    system_name = path.parts[len(root_parts) + 1]
+    display_or_actual_name = path.parts[len(root_parts) + 1]
+    # Resolve display name to actual system name
+    from pathutils import resolve_system_name
+    system_name = resolve_system_name(client, display_or_actual_name)
+    if not system_name:
+        return []
     system = next((s for s in client['systems'] if s['name'] == system_name), None)
     if not system:
         return []
@@ -402,7 +387,12 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
-    system_name = path.parts[len(root_parts) + 1]
+    display_or_actual_name = path.parts[len(root_parts) + 1]
+    # Resolve display name to actual system name
+    from pathutils import resolve_system_name
+    system_name = resolve_system_name(client, display_or_actual_name)
+    if not system_name:
+        return []
     system = next((s for s in client['systems'] if s['name'] == system_name), None)
     if not system:
         return []

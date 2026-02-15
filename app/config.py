@@ -86,7 +86,7 @@ def get_systems_for_client(client_name, config_dir="config"):
     clients_config = read_clients_config(config_dir)
     for client in clients_config.get("clients", []):
         if client.get("name") == client_name:
-            return [system["name"] for system in client.get("systems", []) if "name" in system]
+            return [system.get("display_name", system["name"]) for system in client.get("systems", []) if "name" in system]
     return []
 
 def get_manufacturers_and_canonical_names(config_dir="config"):

@@ -537,6 +537,7 @@ class TransFS(Passthrough):
         t_get_source_path = 0
         get_source_path_calls = 0
         cache_checked = 0
+        cache_hits = 0  # Track cache hits in batch phase
         
         # Skip expensive cache lookups if we have DirEntry cache for all entries
         skip_cache_lookup = False
@@ -561,6 +562,14 @@ class TransFS(Passthrough):
 
         for entry_name in virtual_entries:
             entry_path = os.path.join(xfull_path, entry_name)
+            
+            # PRIORITY 1: Always check getattr cache FIRST, before any other resolution
+            # This is critical for files with transforms which would otherwise be expensive
+            cached = get_cached_getattr(entry_path, parent_dir)
+            if cached:
+                source_paths[entry_name] = ('cached', cached)
+                # Don't increment cache_hits here - it will be counted in send phase
+                continue
             
             # For directories with full DirEntry cache, skip the expensive cache lookup
             if skip_cache_lookup:
@@ -609,53 +618,29 @@ class TransFS(Passthrough):
                     self._source_path_cache[entry_path] = fspath
                 source_paths[entry_name] = ('uncached', fspath)
             else:
-                # Slow path: check cache first
-                t_check_start = time.time()
-                cached = get_cached_getattr(entry_path, parent_dir)
-                t_cache_check += time.time() - t_check_start
-                cache_checked += 1
+                # Slow path: when DirEntry cache is not sufficient
+                # Note: cache was already checked at the top of the loop
+                # If we get here, the file wasn't in the getattr cache
                 
-                if cached:
-                    is_placeholder = (
-                        cached.get('st_mode') == 0o040755
-                        and cached.get('st_size') == 4096
-                        and cached.get('st_nlink') == 2
-                    )
-                    if is_placeholder and "." in entry_name:
-                        # Placeholder directories can become real files (e.g., zip-internal mappings).
-                        # Re-resolve to avoid stale folder attributes for file-like entries.
-                        t_resolve_start = time.time()
-                        if is_native_path:
-                            fspath = os.path.join(parent_dir, entry_name)
-                        else:
-                            t_gsp = time.time()
-                            fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
-                            t_get_source_path += time.time() - t_gsp
-                            get_source_path_calls += 1
-                        t_path_resolve += time.time() - t_resolve_start
-                        source_paths[entry_name] = ('uncached', fspath)
-                    else:
-                        source_paths[entry_name] = ('cached', cached)
+                # Try to resolve source path for non-DirEntry-cached files
+                t_resolve_start = time.time()
+                if is_native_path:
+                    fspath = os.path.join(parent_dir, entry_name)
                 else:
-                    # Fast path for Native: source path is just the parent_dir + entry_name
-                    t_resolve_start = time.time()
-                    if is_native_path:
-                        fspath = os.path.join(parent_dir, entry_name)
-                    else:
-                        # Get source path for non-Native entries (may be expensive)
-                        t_gsp = time.time()
-                        fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
-                        t_get_source_path += time.time() - t_gsp
-                        get_source_path_calls += 1
-                    t_path_resolve += time.time() - t_resolve_start
-                    source_paths[entry_name] = ('uncached', fspath)
+                    # Get source path for non-Native entries (may be expensive)
+                    t_gsp = time.time()
+                    fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
+                    t_get_source_path += time.time() - t_gsp
+                    get_source_path_calls += 1
+                t_path_resolve += time.time() - t_resolve_start
+                source_paths[entry_name] = ('uncached', fspath)
         
         t_batch = time.time() - t_batch_start
         logger.info(f"READDIR BATCH: {len(virtual_entries)} entries, transform_map={len(system_transform_map)} exts, get_source_path={get_source_path_calls} calls, time={t_batch:.4f}s skip_cache={skip_cache_lookup}")
         
         # Send entries with full attributes
+        # Note: cache_hits was already accumulated in batch phase, don't reset it
         sent_count = 0
-        cache_hits = 0
         
         for entry_id, entry_name in enumerate(virtual_entries, start=1):
             if entry_id <= start_id:
@@ -745,9 +730,16 @@ class TransFS(Passthrough):
                             cache_getattr(entry_path, parent_dir, stat_dict)
                         entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
                     elif isinstance(fspath, str):
-                        # Regular file - use cached DirEntry stat if available (avoids extra stat!)
+                        # PRIORITY 1: Check getattr cache first (even for transforms!)
+                        cached_stat = get_cached_getattr(entry_path, parent_dir)
+                        if cached_stat:
+                            # Note: This shouldn't normally happen since cached files are handled in batch phase
+                            # but keep this check as fallback for edge cases
+                            logger.debug(f"READDIR: unexpected cache hit in send phase for {entry_name}")
+                            entry = self._dict_to_entry_attributes(cached_stat, entry_inode)
+                        # PRIORITY 2: Use cached DirEntry stat if available (avoids extra stat!)
                         # BUT: If there's a pipeline, we can't trust DirEntry cache (file may be from different source dir)
-                        if not pipeline and entry_name in dir_entry_cache:
+                        elif not pipeline and entry_name in dir_entry_cache:
                             # Fast path: use cached DirEntry info; skip stat in large directories
                             de = dir_entry_cache[entry_name]
                             logger.debug(f"READDIR: using DirEntry cache for {entry_name}")
@@ -963,10 +955,50 @@ class TransFS(Passthrough):
         logger.info(f"GETATTR: inode={inode} path={path}")
         logger.debug("DEBUG: getattr(inode=%s) path=%s", inode, path)
         
-        # Try database mode first if enabled and path is suitable
+        xfull_path = path  # Already full path from inode map
+        
+        # PRIORITY 1: Check getattr cache first (fastest, includes transform sizes)
+        t_cache_start = time.time()
+        parent_path = str(Path(xfull_path).parent)
+        parent_dir_virtual = parent_path
+        parent_source = get_source_path(logger, self.config, self.mount_path, parent_dir_virtual)
+        if isinstance(parent_source, dict):
+            parent_dir = parent_source.get("path")
+        elif isinstance(parent_source, tuple):
+            parent_dir = parent_source[0]
+        elif isinstance(parent_source, str):
+            parent_dir = parent_source
+        else:
+            parent_dir = parent_dir_virtual.replace("/mnt/transfs", "/mnt/filestorefs")
+        
+        cached_stat = get_cached_getattr(xfull_path, parent_dir)
+        t_cache_elapsed = time.time() - t_cache_start
+        
+        if cached_stat is not None:
+            # Check if this is a placeholder directory entry (from readdir for virtual paths)
+            # These have mode=0o040755 and size=4096 - skip cache and resolve properly
+            is_placeholder = (cached_stat.get('st_mode') == 0o040755 and 
+                            cached_stat.get('st_size') == 4096 and
+                            cached_stat.get('st_nlink') == 2)
+            
+            if not is_placeholder:
+                t_total = time.time() - t_start
+                TransFS._getattr_cache_hits += 1
+                TransFS._getattr_count += 1
+                TransFS._getattr_total_time += t_total
+                logger.info(f"GETATTR CACHE HIT: inode={inode} path={xfull_path} (cache_lookup={t_cache_elapsed:.4f}s, total={t_total:.4f}s)")
+                self._maybe_print_stats()
+                return self._dict_to_entry_attributes(cached_stat, inode)
+            else:
+                logger.debug("GETATTR: skipping placeholder cache entry for %s", xfull_path)
+        
+        TransFS._getattr_cache_misses += 1
+        logger.info(f"GETATTR CACHE MISS: inode={inode} path={xfull_path} (cache_lookup={t_cache_elapsed:.4f}s)")
+        
+        # PRIORITY 2: Try database mode if enabled and path is suitable
         if self._can_use_database(path):
             try:
-                logger.info(f"GETATTR: using database mode for {path}")
+                logger.info(f"GETATTR: trying database mode for {path}")
                 stat_dict = self.data_adapter.getattr_stat(path)
                 if stat_dict:
                     # Guard against incorrect DB directory entries for file-like paths
@@ -987,53 +1019,13 @@ class TransFS(Passthrough):
                         TransFS._getattr_total_time += t_total
                         logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
                         return self._dict_to_entry_attributes(stat_dict, inode)
+                else:
+                    logger.info(f"GETATTR DATABASE: no entry found for {path}")
             except Exception as e:
-                logger.warning(f"GETATTR: database mode failed, falling back to cache: {e}")
+                logger.warning(f"GETATTR: database mode failed, falling back to full resolution: {e}")
         
-        xfull_path = path  # Already full path from inode map
-        logger.info(f"GETATTR: about to compute parent_dir from {xfull_path}")
-        
-        # Try cache first
-        t_cache_start = time.time()
-        parent_path = str(Path(xfull_path).parent)
-        logger.info(f"GETATTR: parent_path={parent_path}")
-        parent_dir_virtual = parent_path
-        parent_source = get_source_path(logger, self.config, self.mount_path, parent_dir_virtual)
-        if isinstance(parent_source, dict):
-            parent_dir = parent_source.get("path")
-        elif isinstance(parent_source, tuple):
-            parent_dir = parent_source[0]
-        elif isinstance(parent_source, str):
-            parent_dir = parent_source
-        else:
-            parent_dir = parent_dir_virtual.replace("/mnt/transfs", "/mnt/filestorefs")
-        logger.info(f"GETATTR: parent_dir={parent_dir}")
-        
-        cached_stat = get_cached_getattr(xfull_path, parent_dir)
-        t_cache_elapsed = time.time() - t_cache_start
-        
-        if cached_stat is not None:
-            # Check if this is a placeholder directory entry (from readdir for virtual paths)
-            # These have mode=0o040755 and size=4096 - skip cache and resolve properly
-            is_placeholder = (cached_stat.get('st_mode') == 0o040755 and 
-                            cached_stat.get('st_size') == 4096 and
-                            cached_stat.get('st_nlink') == 2)
-            
-            if not is_placeholder:
-                t_total = time.time() - t_start
-                TransFS._getattr_cache_hits += 1
-                TransFS._getattr_count += 1
-                TransFS._getattr_total_time += t_total
-                logger.debug("GETATTR CACHE HIT: inode=%s (cache_lookup=%.4fs, total=%.4fs)", inode, t_cache_elapsed, t_total)
-                self._maybe_print_stats()
-                
-                # Convert dict to EntryAttributes
-                return self._dict_to_entry_attributes(cached_stat, inode)
-            else:
-                logger.debug("GETATTR: skipping placeholder cache entry for %s", xfull_path)
-        
-        TransFS._getattr_cache_misses += 1
-        logger.debug("GETATTR CACHE MISS: inode=%s (cache_lookup=%.4fs)", inode, t_cache_elapsed)
+        # PRIORITY 3: Full resolution (slowest, computes transforms)
+        logger.info(f"GETATTR: full resolution for {xfull_path}")
         
         # Check if source path was cached by readdir (major optimization - avoid re-computation)
         if xfull_path in self._source_path_cache:
