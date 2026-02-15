@@ -2,6 +2,27 @@
 
 Items to revisit and future feature ideas.
 
+## 📋 Quick Reference - Suggest a Feature to Work On
+
+When you want to start work on a feature, just mention any of these keywords and I'll find the detailed requirements:
+
+| Feature | Status | Priority |
+|---------|--------|----------|
+| **Download Log ANSI Support** | Issue Identified | Medium |
+| **Torrent Download Architecture** | Issue Identified | High |
+| **File Organization by Extension** | ✅ Implemented | High |
+| **Nested Archive Extraction** | Feature Request | Medium |
+| **ZIP Performance Optimization** | Identified | Medium |
+| **Storage Strategy Configuration** | Feature Request | Medium |
+| **Reprocessing Downloaded Files** | Design Discussion | Medium |
+| **Archive Extraction Skip Logic** | Issue Identified | Medium |
+| **Nested ZIP Support** | Feature Request | Low |
+| **Download Resume Support** | Idea | Low |
+| **Checksum Verification** | Idea | Low |
+| **MEGA Download Progress** | Deferred | Low |
+
+---
+
 ## 🎨 Polish & UX Improvements
 
 ### Download Log Window ANSI/Character Control Support
