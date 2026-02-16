@@ -11,6 +11,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Real filestore path tooltips in Virtual browse UI - shows actual filestore location when hovering over files
 - `/api/source-paths` endpoint for resolving virtual paths to their real filestore locations using clients.yaml mapping rules
 - UI configuration option `show_real_path_tooltips` (enabled by default) to toggle path tooltips in Config tab
+- Transform plugin system with auto-discovery from `app/transform_plugins`
+- Transform plugin documentation index and feature page
 
 ### Changed
 - **PERF**: Getattr cache validation now uses file's own mtime instead of parent directory mtime (prevents false invalidations)

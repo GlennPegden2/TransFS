@@ -2,6 +2,10 @@
 
 ## TransFS: Feature & Behavior Reference
 
+## VFS Documentation Index
+
+- [docs/VFS_CONTENTS.md](VFS_CONTENTS.md)
+
 ### 1. Virtual Filesystem Structure
 
 - The FUSE mount presents a virtual filesystem at `/mnt/transfs`.

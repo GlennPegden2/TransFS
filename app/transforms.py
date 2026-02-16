@@ -8,9 +8,13 @@ read through the FUSE filesystem. Transforms can be chained to create pipelines.
 
 import os
 import logging
+import struct
+import importlib.util
+import inspect
+from pathlib import Path
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import BinaryIO
+from typing import BinaryIO, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +125,29 @@ class TransformPipeline:
     """
     source_path: str
     stages: list[Transform] = field(default_factory=list)
+    output_extension: Optional[str] = None  # Optional file extension for output (e.g., 'dsk' for 2MG files)
 
     def is_passthrough(self) -> bool:
         """True if no transforms (optimization check)."""
         return len(self.stages) == 0
+    
+    def get_effective_output_extension(self) -> Optional[str]:
+        """
+        Get the output extension, checking last transform for dynamic extension.
+        
+        Returns the transform's detected extension if available, otherwise
+        falls back to the static output_extension from config.
+        """
+        # Check if last transform has dynamic extension (e.g., TwoMGTransform)
+        if self.stages:
+            last_transform = self.stages[-1]
+            if hasattr(last_transform, 'get_output_extension'):
+                dynamic_ext = last_transform.get_output_extension()
+                if dynamic_ext:
+                    return dynamic_ext
+        
+        # Fall back to static extension from config
+        return self.output_extension
 
     def get_output_size(self, input_size: int) -> int:
         """
@@ -236,6 +259,180 @@ class StripHeaderTransform(Transform):
             "type": "StripHeader",
             "bytes": self.bytes_to_strip
         }
+
+
+@dataclass
+class TwoMGTransform(Transform):
+    """
+    Extract the data payload from a 2MG (2IMG) disk image.
+
+    Uses the 2MG header to determine the data offset and length. Falls back
+    to a 64-byte header with block-aligned sizing when header fields are
+    unavailable or invalid.
+    
+    Auto-detects DOS 3.3 vs ProDOS sector order and sets output_extension accordingly.
+    """
+    default_header_size: int = 64
+    block_size: int = 512
+    _data_offset: Optional[int] = field(default=None, init=False, repr=False)
+    _data_length: Optional[int] = field(default=None, init=False, repr=False)
+    _detected_format: Optional[str] = field(default=None, init=False, repr=False)
+
+    def _detect_format(self, source_file: BinaryIO, data_offset: int) -> str:
+        """
+        Detect output format from 2MG file.
+        Returns 'hdv' for hard disk images (>200KB), 'do'/'po' for floppies.
+        
+        Apple II floppy disks are 140KB (35 tracks × 16 sectors × 256 bytes).
+        Larger images (800KB, etc.) are HDV hard disk images.
+        """
+        try:
+            source_file.seek(0, os.SEEK_END)
+            file_size = source_file.tell()
+            
+            # Calculate data size (file minus header)
+            data_size = file_size - data_offset
+            
+            # If larger than 200KB, it's a hard disk image (HDV)
+            if data_size > 200 * 1024:
+                logger.info(f"TwoMGTransform._detect_format: {data_size} bytes = HDV hard disk image")
+                return 'hdv'
+            
+            # For floppy disks (140KB), check format byte for sector ordering
+            source_file.seek(0)
+            header = source_file.read(64)
+            if len(header) >= 64 and header[:4] == b"2IMG":
+                import struct
+                format_byte = struct.unpack('<I', header[16:20])[0]
+                
+                # For floppies: format byte indicates sector order
+                # 0 = DOS 3.3, 1 = ProDOS
+                if format_byte == 0:
+                    logger.info(f"TwoMGTransform._detect_format: 140KB floppy, DOS 3.3 format")
+                    return 'do'
+                else:
+                    logger.info(f"TwoMGTransform._detect_format: 140KB floppy, ProDOS format")
+                    return 'po'
+        except Exception as e:
+            logger.warning(f"TwoMGTransform._detect_format: failed to read header: {e}")
+        
+        # Default to HDV for large files, po for small
+        logger.info(f"TwoMGTransform._detect_format: defaulting based on size")
+        return 'hdv'
+
+    def _parse_header(self, source_file: BinaryIO, source_size: int) -> tuple[int, int, int]:
+        """Return (header_size, data_offset, data_length) from 2MG header."""
+        source_file.seek(0)
+        header = source_file.read(self.default_header_size)
+        header_size = self.default_header_size
+        data_offset = self.default_header_size
+        data_length = max(0, source_size - data_offset)
+
+        if len(header) >= self.default_header_size and header[:4] == b"2IMG":
+            try:
+                # Parse 2MG header according to spec:
+                # Offset 8-9: Header size (16-bit)
+                # Offset 28-31: Data offset (32-bit) - 0 means use header size  
+                # Offset 32-35: Data length (32-bit) - 0 means calculate from file size
+                import struct
+                hdr_size = struct.unpack('<H', header[8:10])[0]
+                data_off = struct.unpack('<I', header[28:32])[0]
+                data_len = struct.unpack('<I', header[32:36])[0]
+                
+                header_size = hdr_size if hdr_size > 0 else header_size
+                # Validate data_offset is within file bounds, otherwise use header_size
+                data_offset = data_off if (data_off > 0 and data_off < source_size) else header_size
+                data_length = data_len if data_len > 0 else max(0, source_size - data_offset)
+            except struct.error:
+                pass
+
+        # Clamp to file bounds
+        if data_offset < 0 or data_offset > source_size:
+            data_offset = self.default_header_size
+        max_length = max(0, source_size - data_offset)
+        if data_length <= 0 or data_length > max_length:
+            data_length = max_length
+
+        return header_size, data_offset, data_length
+
+    def _get_effective_length(self, input_size: int) -> int:
+        """Fallback output size when header fields are unknown."""
+        if input_size <= self.default_header_size:
+            return 0
+        data_length = input_size - self.default_header_size
+        if self.block_size > 0:
+            data_length = (data_length // self.block_size) * self.block_size
+        return max(0, data_length)
+
+    def get_output_size(self, input_size: int) -> int:
+        if self._data_length is not None:
+            return self._data_length
+        return self._get_effective_length(input_size)
+    
+    def detect_format_from_file(self, source_path: str) -> None:
+        """
+        Detect format by opening and reading the file.
+        Called once during pipeline initialization to set _detected_format.
+        """
+        if self._detected_format is not None:
+            return  # Already detected
+        
+        try:
+            logger.info(f"TwoMGTransform.detect_format_from_file: detecting format for {source_path}")
+            with open(source_path, 'rb') as f:
+                f.seek(0, os.SEEK_END)
+                source_size = f.tell()
+                _, data_offset, _ = self._parse_header(f, source_size)
+                self._detected_format = self._detect_format(f, data_offset)
+                logger.info(f"TwoMGTransform.detect_format_from_file: detected format={self._detected_format}")
+        except Exception as e:
+            logger.warning(f"Failed to detect format for {source_path}: {e}")
+            # Default to 'hdv' (hard disk) when detection fails
+            self._detected_format = 'hdv'
+    
+    def get_output_extension(self) -> Optional[str]:
+        """Return the detected output extension (do or po), if detected."""
+        return self._detected_format
+
+    def get_source_offset(self, virtual_offset: int) -> int:
+        data_offset = self._data_offset if self._data_offset is not None else self.default_header_size
+        return virtual_offset + data_offset
+
+    def transform_read(self, source_file: BinaryIO, virtual_offset: int,
+                      length: int) -> bytes:
+        source_file.seek(0, os.SEEK_END)
+        source_size = source_file.tell()
+
+        header_size, data_offset, data_length = self._parse_header(source_file, source_size)
+        self._data_offset = data_offset
+        self._data_length = data_length
+        
+        # Detect format on first read if not already done
+        if self._detected_format is None:
+            self._detected_format = self._detect_format(source_file, data_offset)
+            logger.info(f"TwoMGTransform: auto-detected format={self._detected_format} on first read")
+
+        if virtual_offset >= data_length:
+            return b''
+
+        max_readable = data_length - virtual_offset
+        actual_length = min(length, max_readable)
+
+        source_file.seek(data_offset + virtual_offset)
+        return source_file.read(actual_length)
+
+    def can_random_access(self) -> bool:
+        return True
+
+    def metadata(self) -> dict:
+        meta = {"type": "TwoMG", "header": self.default_header_size}
+        if self._data_offset is not None:
+            meta["offset"] = self._data_offset
+        if self._data_length is not None:
+            meta["length"] = self._data_length
+        if self._detected_format is not None:
+            meta["format"] = self._detected_format
+        return meta
 
 
 @dataclass
@@ -367,16 +564,92 @@ class PadHeaderTransform(Transform):
 # Transform Registry and Builder
 # ============================================================================
 
-# Registry of available transform types
-TRANSFORM_REGISTRY = {
+# Built-in transforms shipped with TransFS
+BUILTIN_TRANSFORMS = {
     'strip_header': StripHeaderTransform,
     'strip_footer': StripFooterTransform,
     'pad_header': PadHeaderTransform,
+    'two_mg': TwoMGTransform,
     # More transforms added as implemented:
     # 'extract_zip': ZipExtractTransform,
     # 'decompress_gzip': GzipDecompressTransform,
     # etc.
 }
+
+_PLUGIN_REGISTRY_CACHE: Optional[dict[str, type[Transform]]] = None
+
+
+def _load_plugin_transforms() -> dict[str, type[Transform]]:
+    """
+    Load transform plugins from app/transform_plugins.
+
+    Plugin files can expose either:
+      - TRANSFORM_PLUGINS = {"name": TransformClass, ...}
+      - def register_transforms(registry: dict[str, type[Transform]]) -> None
+    """
+    plugin_dir = Path(__file__).resolve().parent / "transform_plugins"
+    if not plugin_dir.is_dir():
+        return {}
+
+    registry: dict[str, type[Transform]] = {}
+    for plugin_file in plugin_dir.glob("*.py"):
+        if plugin_file.name.startswith("_") or plugin_file.name == "__init__.py":
+            continue
+
+        module_name = f"transform_plugins.{plugin_file.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+        if not spec or not spec.loader:
+            logger.warning("Transform plugin skipped (no loader): %s", plugin_file)
+            continue
+
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception as e:
+            logger.warning("Failed to load transform plugin %s: %s", plugin_file, e)
+            continue
+
+        plugin_registry: dict[str, type[Transform]] = {}
+        if hasattr(module, "register_transforms") and callable(module.register_transforms):
+            try:
+                module.register_transforms(plugin_registry)
+            except Exception as e:
+                logger.warning("Plugin register_transforms failed for %s: %s", plugin_file, e)
+                continue
+        elif hasattr(module, "TRANSFORM_PLUGINS"):
+            plugin_registry = getattr(module, "TRANSFORM_PLUGINS")
+        else:
+            logger.warning("No TRANSFORM_PLUGINS or register_transforms in %s", plugin_file)
+            continue
+
+        if not isinstance(plugin_registry, dict):
+            logger.warning("Plugin registry must be a dict in %s", plugin_file)
+            continue
+
+        for name, cls in plugin_registry.items():
+            if not isinstance(name, str) or not name:
+                logger.warning("Invalid plugin transform name in %s: %r", plugin_file, name)
+                continue
+            if not inspect.isclass(cls) or not issubclass(cls, Transform):
+                logger.warning("Invalid transform class for '%s' in %s", name, plugin_file)
+                continue
+            registry[name] = cls
+
+    return registry
+
+
+def get_transform_registry() -> dict[str, type[Transform]]:
+    """Return combined registry of built-in and plugin transforms."""
+    global _PLUGIN_REGISTRY_CACHE
+    if _PLUGIN_REGISTRY_CACHE is None:
+        registry = dict(BUILTIN_TRANSFORMS)
+        plugin_transforms = _load_plugin_transforms()
+        for name, cls in plugin_transforms.items():
+            if name in registry:
+                logger.warning("Plugin transform '%s' overrides built-in transform", name)
+            registry[name] = cls
+        _PLUGIN_REGISTRY_CACHE = registry
+    return _PLUGIN_REGISTRY_CACHE
 
 # Common transform shortcuts for config convenience
 TRANSFORM_SHORTCUTS = {
@@ -384,6 +657,7 @@ TRANSFORM_SHORTCUTS = {
     'strip_header_128': {'type': 'strip_header', 'bytes': 128},
     'strip_footer_64': {'type': 'strip_footer', 'bytes': 64},
     'pad_header_64': {'type': 'pad_header', 'bytes': 64},
+    'two_mg': {'type': 'two_mg'},
 }
 
 
@@ -416,11 +690,12 @@ def build_transform(spec: dict | str) -> Transform:
         raise ValueError("Transform spec must include 'type' field as a string")
 
     # Look up transform class
-    transform_class = TRANSFORM_REGISTRY.get(transform_type)
+    registry = get_transform_registry()
+    transform_class = registry.get(transform_type)
     if not transform_class:
         raise TransformNotSupportedError(
             f"Unknown transform type: {transform_type}. "
-            f"Available: {', '.join(TRANSFORM_REGISTRY.keys())}"
+            f"Available: {', '.join(registry.keys())}"
         )
 
     # Build transform with parameters
@@ -442,33 +717,69 @@ def build_transform(spec: dict | str) -> Transform:
 
 
 def build_transform_pipeline(source_path: str,
-                            transform_specs: list[dict | str]) -> TransformPipeline:
+                            transform_specs: list[dict | str] | dict) -> TransformPipeline:
     """
     Build a transform pipeline from configuration specifications.
 
     Args:
         source_path: Path to source file
-        transform_specs: List of transform specifications
+        transform_specs: List of transform specifications, each can have optional output_extension field
 
     Returns:
         Configured TransformPipeline
 
     Example:
         build_transform_pipeline(
-            "/path/to/file.2mg.zip",
+            "/path/to/file.2mg",
             [
-                {"type": "extract_zip"},
-                {"type": "strip_header", "bytes": 64}
+                {"type": "strip_header", "bytes": 512, "output_extension": "dsk"}
             ]
         )
     """
+    output_extension = None
     stages = []
-    for spec in transform_specs:
-        transform = build_transform(spec)
-        stages.append(transform)
+    
+    specs_list = transform_specs if isinstance(transform_specs, list) else [transform_specs]
+    
+    if isinstance(transform_specs, list):
+        logger.debug(f"build_transform_pipeline: processing list of {len(specs_list)} specs")
+    else:
+        logger.debug(f"build_transform_pipeline: processing dict spec: {transform_specs}")
+    
+    for spec in specs_list:
+        logger.debug(f"build_transform_pipeline: processing spec type={type(spec)}, spec={spec}")
+        # Extract output_extension if present
+        if isinstance(spec, dict):
+            if 'output_extension' in spec:
+                output_extension = spec['output_extension']
+                logger.info(f"Found output_extension={output_extension} in spec")
+            
+            # Filter out non-transform fields when building transform
+            if 'type' in spec:
+                # Create a copy without output_extension
+                transform_spec = {k: v for k, v in spec.items() if k != 'output_extension'}
+                transform = build_transform(transform_spec)
+                stages.append(transform)
+        elif isinstance(spec, str):
+            transform = build_transform(spec)
+            stages.append(transform)
 
-    pipeline = TransformPipeline(source_path=source_path, stages=stages)
-    logger.debug("Built transform pipeline: %s", pipeline)
+    pipeline = TransformPipeline(source_path=source_path, stages=stages, output_extension=output_extension)
+    
+    # Trigger eager format detection for TwoMG transforms
+    for stage in stages:
+        if hasattr(stage, 'detect_format_from_file') and source_path:
+            try:
+                stage.detect_format_from_file(source_path)
+            except Exception as e:
+                logger.debug(f"Could not detect format for {source_path}: {e}")
+    
+    # Log effective extension
+    effective_ext = pipeline.get_effective_output_extension()
+    if effective_ext:
+        logger.info(f"Built transform pipeline with output_extension={effective_ext}: {pipeline}")
+    else:
+        logger.debug("Built transform pipeline: %s", pipeline)
     return pipeline
 
 
