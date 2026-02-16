@@ -239,18 +239,55 @@ class TransFS(Passthrough):
             pipeline_map = {}
             cache_config = self.config.get("cache", {})
             
+            # Get the actual source directory to find real files for detection
+            # Use SoftwareArchives entry to find source files
+            from sourcepath import find_software_archive_entry
+            sa_entry = find_software_archive_entry(system_info)
+            source_dir = None
+            if sa_entry:
+                # Get source_path from SoftwareArchives entry
+                if 'source_paths' in sa_entry and sa_entry['source_paths']:
+                    source_dir = sa_entry['source_paths'][0]  # Use first source path
+            
             for ext in transform_map.keys():
-                # Build pipeline for this extension
-                dummy_filename = f"test.{ext.lower()}"
+                # Try to find a real file with this extension for accurate detection
+                sample_file = None
+                if source_dir and os.path.isdir(source_dir):
+                    # Check for extension-specific subdirectory first
+                    ext_subdir = os.path.join(source_dir, ext.upper())
+                    if os.path.isdir(ext_subdir):
+                        try:
+                            for entry in os.scandir(ext_subdir):
+                                if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
+                                    sample_file = entry.path
+                                    break
+                        except OSError:
+                            pass
+                    
+                    # If not found in subdir, check main directory
+                    if not sample_file:
+                        try:
+                            for entry in os.scandir(source_dir):
+                                if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
+                                    sample_file = entry.path
+                                    break
+                        except OSError:
+                            pass
+                
+                # Use sample file if found, otherwise fallback to dummy
+                filename_for_detection = sample_file if sample_file else f"test.{ext.lower()}"
+                
                 pipeline = get_transform_pipeline_for_file(
                     logger, 
                     system_info, 
-                    dummy_filename, 
+                    filename_for_detection, 
                     virtual_folder,
                     cache_config
                 )
                 if pipeline:
                     pipeline_map[ext.upper()] = pipeline
+                    if sample_file:
+                        logger.info(f"TRANSFORM MAP: Built pipeline for {ext} using sample file: {os.path.basename(sample_file)}")
             
             logger.info(f"TRANSFORM MAP for {virtual_folder}: {len(pipeline_map)} extensions")
             return pipeline_map
@@ -526,6 +563,9 @@ class TransFS(Passthrough):
         t_transform_map_start = time.time()
         system_transform_map = self._build_system_transform_map(xfull_path)
         t_transform_map = time.time() - t_transform_map_start
+        
+        if system_transform_map:
+            logger.info(f"READDIR: Built system_transform_map with {len(system_transform_map)} extensions: {list(system_transform_map.keys())}")
         
         logger.debug(f"READDIR: {len(virtual_entries)} entries parsed from {parent_dir}")
         
@@ -925,8 +965,42 @@ class TransFS(Passthrough):
             except Exception as e:
                 logger.debug(f"READDIR: correction failed for {entry_name}: {e}")
             
+            # Apply output_extension renaming if transform pipeline has one
+            display_name = entry_name
+            source_type, source_data = source_paths.get(entry_name, ('', None))
+            pipeline = None
+            
+            # First try to get source path to trigger detection with real file
+            try:
+                source_result = get_source_path(
+                    logger, self.config, parent_path, entry_name
+                )
+                if isinstance(source_result, dict) and 'transform_pipeline' in source_result:
+                    pipeline = source_result['transform_pipeline']
+            except Exception:
+                pass
+            
+            # Fall back to cached pipeline from initialization
+            if not pipeline:
+                if isinstance(source_data, dict):
+                    pipeline = source_data.get('transform_pipeline')
+                if not pipeline and system_transform_map:
+                    _, ext = os.path.splitext(entry_name)
+                    ext = ext[1:].upper() if ext else ""
+                    pipeline = system_transform_map.get(ext)
+            
+            if pipeline:
+                effective_ext = pipeline.get_effective_output_extension()
+                if effective_ext:
+                    # Rename the file with the output extension
+                    base_name, _ = os.path.splitext(entry_name)
+                    display_name = f"{base_name}.{effective_ext}"
+                    logger.info(f"READDIR: Renamed {entry_name} -> {display_name} (output_extension={effective_ext})")
+                else:
+                    logger.debug(f"READDIR: Pipeline found for {entry_name} but no output_extension")
+            
             # Send entry to client
-            if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+            if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
                 logger.info(f"READDIR: client buffer full after {sent_count} entries")
                 break
             
@@ -982,6 +1056,31 @@ class TransFS(Passthrough):
                             cached_stat.get('st_nlink') == 2)
             
             if not is_placeholder:
+                # Refresh cache for transformed files to ensure size is accurate
+                try:
+                    if xfull_path.startswith(self.mount_path):
+                        fspath = get_source_path(logger, self.config, self.mount_path, xfull_path)
+                        if isinstance(fspath, dict) and 'transform_pipeline' in fspath:
+                            source_path = fspath['path']
+                            if os.path.exists(source_path):
+                                st = os.lstat(source_path)
+                                source_size = st.st_size
+                                pipeline = fspath['transform_pipeline']
+                                transformed_size = self._get_transform_output_size(pipeline, source_size)
+                                if transformed_size >= 0 and cached_stat.get('st_size') != transformed_size:
+                                    cached_stat = {
+                                        'st_atime': int(st.st_atime),
+                                        'st_ctime': int(st.st_ctime),
+                                        'st_mtime': int(st.st_mtime),
+                                        'st_gid': st.st_gid,
+                                        'st_uid': st.st_uid,
+                                        'st_mode': 0o100444,
+                                        'st_nlink': 1,
+                                        'st_size': transformed_size,
+                                    }
+                                    cache_getattr(xfull_path, parent_dir, cached_stat)
+                except Exception:
+                    pass
                 t_total = time.time() - t_start
                 TransFS._getattr_cache_hits += 1
                 TransFS._getattr_count += 1
@@ -1617,6 +1716,15 @@ class TransFS(Passthrough):
             logger.info(f"LOOKUP: SUCCESS - zip file, synthetic_inode={synthetic_inode}")
             self._increment_lookup_count(synthetic_inode)
             return await self.getattr(synthetic_inode, ctx)
+
+        # Check if it's a transformed file (dict with path)
+        if source_path and isinstance(source_path, dict) and 'path' in source_path:
+            real_path = source_path['path']
+            if isinstance(real_path, str) and os.path.exists(real_path):
+                self._add_path(synthetic_inode, path)
+                logger.info(f"LOOKUP: SUCCESS - transformed file, synthetic_inode={synthetic_inode}")
+                self._increment_lookup_count(synthetic_inode)
+                return await self.getattr(synthetic_inode, ctx)
 
         # Check if it's a virtual directory/file by checking if it would be listed
         parent_entries = set(parse_trans_path(self.config, self.root, parent_path))

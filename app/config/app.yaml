@@ -18,12 +18,13 @@ database:
   auto_sync: true
   enabled: true
   mode: hybrid
+  sync_on_startup: true
   path: /mnt/filestorefs/.transfs_metadata.db
-  sync_on_startup: false
 filestore: /mnt/filestorefs
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:
 - arcarc.nl
+- releases.prodos8.com
 ui:
   advanced_options: true
   show_real_path_tooltips: true

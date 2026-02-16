@@ -323,7 +323,9 @@ def api_source_paths(path: str):
     """
     try:
         import logging
-        from sourcepath import get_source_path
+        from pathlib import Path as PathLib
+        from sourcepath import get_source_path, get_transform_pipeline_for_file
+        from pathutils import get_client, get_system_info
         
         logger = logging.getLogger("api")
         config = read_config()
@@ -342,9 +344,39 @@ def api_source_paths(path: str):
         
         # Handle different return types from get_source_path
         source_paths = []
+        transform_info = {"is_transformed": False}
         if isinstance(source_path, str):
             # Simple string path
             source_paths = [source_path]
+            # Attempt to detect transforms based on real file extension
+            try:
+                if os.path.isfile(source_path):
+                    path_parts = PathLib(path).parts
+                    root_parts = PathLib("/mnt/transfs").parts
+                    rel_parts = path_parts[len(root_parts):]
+                    if len(rel_parts) >= 3:
+                        client = get_client(config, rel_parts)
+                        if client:
+                            path_template_parts = PathLib(client['default_target_path']).parts
+                            system_info = get_system_info(client, list(rel_parts), path_template_parts)
+                            if system_info:
+                                virtual_folder = rel_parts[2]
+                                real_filename = os.path.basename(source_path)
+                                cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                                pipeline = get_transform_pipeline_for_file(
+                                    logger,
+                                    system_info,
+                                    real_filename,
+                                    virtual_folder,
+                                    cache_config,
+                                )
+                                if pipeline:
+                                    transform_info = {
+                                        "is_transformed": True,
+                                        "output_extension": pipeline.output_extension,
+                                    }
+            except Exception:  # pylint: disable=broad-except
+                pass
         elif isinstance(source_path, tuple):
             # ZIP tuple (zip_path, internal_path)
             zip_path, internal_path = source_path
@@ -352,8 +384,14 @@ def api_source_paths(path: str):
         elif isinstance(source_path, dict) and 'path' in source_path:
             # Transform pipeline dict
             source_paths = [source_path['path']]
+            pipeline = source_path.get('transform_pipeline')
+            if pipeline:
+                transform_info = {
+                    "is_transformed": True,
+                    "output_extension": pipeline.output_extension,
+                }
         
-        return {"source_paths": source_paths, "path": path}
+        return {"source_paths": source_paths, "path": path, "transform": transform_info}
     except Exception as e:  # pylint: disable=broad-except
         import logging
         logger = logging.getLogger("api")
@@ -542,6 +580,58 @@ def cache_clear_all():
         return clear_all_caches()
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
+
+
+@app.post("/db/sync")
+def db_sync(path: str | None = None):
+    """
+    Synchronize database with filesystem for a given path.
+    Requires database mode to be enabled.
+    """
+    try:
+        from config import read_config
+        from feature_flags import FeatureFlagManager
+        
+        config = read_config()
+        flags = FeatureFlagManager(config)
+        
+        if not flags.is_database_mode():
+            return {
+                "success": False,
+                "message": "Database mode is not enabled"
+            }
+        
+        # Import database sync class
+        from db.sync import FilesystemSync
+        
+        # Convert virtual path to filestore path
+        filestore_path = "/mnt/filestorefs"
+        if path and path.startswith("/mnt/transfs/"):
+            # Extract the relative path from virtual mount
+            rel_path = path.replace("/mnt/transfs/", "")
+            filestore_path = f"/mnt/filestorefs/{rel_path}"
+        
+        logger.info(f"Starting database sync for path: {filestore_path}")
+        
+        # Create sync instance and run initial scan
+        sync = FilesystemSync(
+            root_path=filestore_path,
+            mount_path="/mnt/transfs"
+        )
+        
+        stats = sync.initial_scan()
+        
+        return {
+            "success": True,
+            "message": "Database synced successfully",
+            "stats": stats
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(f"Database sync failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
 
 @app.get("/fuse/status")
@@ -2379,7 +2469,7 @@ async def api_download_stream(req: DownloadRequest):
             for system in client.get("systems", []):
                 if (
                     system.get("manufacturer") == req.manufacturer
-                    and system.get("cananonical_system_name") == req.system
+                    and (system.get("system_mapping_name") or system.get("cananonical_system_name")) == req.system
                 ):
                     # Look for ...SoftwareArchives... map
                     for map_entry in system.get("maps", []):

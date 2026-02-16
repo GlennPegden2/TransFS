@@ -95,11 +95,21 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
     for client in clients_config.get("clients", []):
         for system in client.get("systems", []):
             manufacturer = system.get("manufacturer")
-            canonical = system.get("cananonical_system_name")
-            if manufacturer and canonical:
-                manufacturer_map.setdefault(manufacturer, set()).add(canonical)
-    # Convert sets to sorted lists
-    return {man: sorted(list(systems)) for man, systems in manufacturer_map.items()}
+            mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+            display_name = system.get("display_name") or system.get("name") or mapping_name
+            name = system.get("name")
+            if manufacturer and mapping_name:
+                manufacturer_map.setdefault(manufacturer, {})
+                manufacturer_map[manufacturer][mapping_name] = {
+                    "mapping_name": mapping_name,
+                    "display_name": display_name,
+                    "name": name,
+                }
+    # Convert dicts to sorted lists
+    return {
+        man: sorted(list(systems.values()), key=lambda s: s.get("display_name", s.get("mapping_name", "")))
+        for man, systems in manufacturer_map.items()
+    }
 
 def get_web_api_config(config_dir="config") -> dict:
     """Get web API host and port configuration."""
@@ -124,7 +134,7 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
             for system in client.get("systems", []):
                 if system.get("name") == system_name:
                     manufacturer = system.get("manufacturer")
-                    canonical_name = system.get("cananonical_system_name")
+                    canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
                     local_base_path = system.get("local_base_path")
                     break
             break

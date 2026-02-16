@@ -5,7 +5,7 @@ This provider uses the SQLite metadata database for file access.
 Used when database mode is enabled.
 """
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 import sqlite3
 
@@ -19,14 +19,16 @@ logger = logging.getLogger(__name__)
 class DatabaseDataProvider(DataProvider):
     """File system access using SQLite metadata database."""
     
-    def __init__(self, db_path: str = "/mnt/filestorefs/.transfs_metadata.db"):
+    def __init__(self, db_path: str = "/mnt/filestorefs/.transfs_metadata.db", config: Optional[Dict[str, Any]] = None):
         """
         Initialize database provider.
         
         Args:
             db_path: Path to SQLite database file
+            config: Configuration dict from app.yaml
         """
         self.db_path = db_path
+        self.config = config or {}
         self.query_builder = QueryBuilder()
         self._initialized = False
     
@@ -37,6 +39,12 @@ class DatabaseDataProvider(DataProvider):
         try:
             # Initialize database schema if needed
             init_database(self.db_path)
+            
+            # Check if we should sync on startup
+            db_config = self.config.get('database', {})
+            if db_config.get('sync_on_startup', False):
+                logger.info("sync_on_startup enabled - performing initial database sync")
+                self._perform_sync()
             
             # Verify connection works
             conn = get_connection()
@@ -49,6 +57,28 @@ class DatabaseDataProvider(DataProvider):
             logger.error(f"Failed to initialize database provider: {e}")
             self._initialized = False
             raise
+    
+    def _perform_sync(self) -> None:
+        """Perform filesystem to database synchronization."""
+        try:
+            from db.sync import FilesystemSync
+            
+            logger.info("Starting filesystem sync during database initialization")
+            sync = FilesystemSync(
+                root_path="/mnt/filestorefs",
+                mount_path="/mnt/transfs"
+            )
+            
+            stats = sync.initial_scan()
+            logger.info(
+                f"Filesystem sync complete: {stats.get('files_added', 0)} added, "
+                f"{stats.get('files_updated', 0)} updated, "
+                f"{stats.get('errors', 0)} errors in {stats.get('duration', 0):.2f}s"
+            )
+        except Exception as e:
+            logger.error(f"Failed to perform filesystem sync: {e}", exc_info=True)
+            # Don't raise - allow the provider to continue with empty database
+
     
     def readdir(self, path: str) -> DirectoryListing:
         """

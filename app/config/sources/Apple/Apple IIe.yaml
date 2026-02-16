@@ -3,13 +3,14 @@
 base_path: Apple/AppleII/
 
 sources:
-  - name: official-new-prodos
+  - name: apple2.org.za-prodos
     type: ddl
     urls:
-     - https://releases.prodos8.com/ProDOS_2_4_3.po
+     - https://mirrors.apple2.org.za/ftp.apple.asimov.net/images/masters/prodos/PUT-WORKING-PRODOS
      -
     folder: Software/dsk
 
+sources:
   - name: apple2-top20games
     type: ddl
     urls:
@@ -59,14 +60,14 @@ packs:
       - label: 20 Games That Defined the Apple II (Youtube)
         url: https://www.youtube.com/watch?v=dk5p7RjmlpQ
 
-  - id: official-new-prodos
+  - id: appple2orgza-prodos
     name: Prodos
-    description: A modern multi platform prodos
-    estimated_size: 140k
-    sources: [official-new-prodos]
+    description: A collection of ProDOS system disks from apple2.org.za
+    estimated_size: 2MB
+    sources: [apple2.org.za-prodos]
     supported_by: [MiSTer]
     info_links:
-      - label: ProDos 8
-        url: https://prodos8.com/
+      - label: apple2.org.za mirrors archive
+        url: https://mirrors.apple2.org.za/
 
 

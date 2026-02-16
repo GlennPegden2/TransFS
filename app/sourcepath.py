@@ -14,7 +14,7 @@ _transform_pipeline_cache: dict[tuple[str, str, str], Optional[TransformPipeline
 
 def _get_transform_cache_key(system_info: dict, virtual_folder: str, ext: str) -> tuple[str, str, str]:
     manufacturer = system_info.get("manufacturer", "")
-    canonical = system_info.get("cananonical_system_name", "")
+    canonical = system_info.get("system_mapping_name") or system_info.get("cananonical_system_name", "")
     return (f"{manufacturer}/{canonical}", virtual_folder, ext)
 
 def get_transform_pipeline_for_file(
@@ -23,6 +23,7 @@ def get_transform_pipeline_for_file(
     filename: str,
     virtual_folder: str,
     cache_config: Optional[dict] = None,
+    full_path: Optional[str] = None,  # Full file path for reading actual file content
 ) -> Optional[TransformPipeline]:
     """
     Get transformation pipeline for a file based on its extension and virtual folder.
@@ -59,7 +60,10 @@ def get_transform_pipeline_for_file(
         return None
 
     cache_key = None
-    if pipeline_cache_enabled:
+    # Note: Only use cache for generic pipelines (e.g., during initialization)
+    # When we have a real full_path, we need to rebuild to trigger detection
+    use_cache = pipeline_cache_enabled and not full_path
+    if use_cache:
         cache_key = _get_transform_cache_key(system_info, virtual_folder, ext)
         if cache_key in _transform_pipeline_cache:
             return _transform_pipeline_cache[cache_key]
@@ -67,14 +71,16 @@ def get_transform_pipeline_for_file(
     # Build transform pipeline
     transform_specs = transform_map[ext]
     try:
-        pipeline = build_transform_pipeline(filename, transform_specs)
+        # Use full_path if provided for actual file operations, otherwise use filename
+        pipeline_path = full_path if full_path else filename
+        pipeline = build_transform_pipeline(pipeline_path, transform_specs)
         logger.debug(f"Built transform pipeline for {filename}: {pipeline}")
         if pipeline and output_size_cache_enabled and not hasattr(pipeline, "_output_size_cache"):
             try:
                 setattr(pipeline, "_output_size_cache", {})
             except Exception:
                 pass
-        if pipeline_cache_enabled and cache_key:
+        if use_cache and cache_key:
             _transform_pipeline_cache[cache_key] = pipeline
         return pipeline
     except Exception as e:
@@ -129,8 +135,25 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         if len(rel_parts) >= 4 and isinstance(dynamic_result, str):
             virtual_folder = rel_parts[2]
             filename = rel_parts[-1]
+            real_filename = os.path.basename(dynamic_result)
             cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
-            pipeline = get_transform_pipeline_for_file(logger, system_info, filename, virtual_folder, cache_config)
+            pipeline = get_transform_pipeline_for_file(
+                logger,
+                system_info,
+                real_filename,
+                virtual_folder,
+                cache_config,
+                full_path=dynamic_result,
+            )
+            if not pipeline and real_filename != filename:
+                pipeline = get_transform_pipeline_for_file(
+                    logger,
+                    system_info,
+                    filename,
+                    virtual_folder,
+                    cache_config,
+                    full_path=dynamic_result,
+                )
             if pipeline:
                 return {'path': dynamic_result, 'transform_pipeline': pipeline}
         return dynamic_result

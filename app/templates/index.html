@@ -90,6 +90,7 @@
                             <button id="recache-dir-btn" onclick="recacheCurrentDir()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 3px;" title="Clear and reload current directory cache">✓ Dir</button>
                             <button id="clear-getattr-btn" onclick="clearGetattrCache()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #2196F3; color: white; border: none; border-radius: 3px;" title="Clear file attribute cache">✓ Attr</button>
                             <button id="clear-all-btn" onclick="clearAllCaches()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #FF5722; color: white; border: none; border-radius: 3px;" title="Clear all caches">✓ All</button>
+                            <button id="sync-db-btn" onclick="syncDatabase()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #9C27B0; color: white; border: none; border-radius: 3px; display: none;" title="Sync database for this folder">🔄 DB</button>
                         </div>
                     </div>
                 </div>
@@ -619,9 +620,33 @@
                     nameSpan.textContent = name;
                     
                     // Add tooltip for virtual browse showing real filestore path
-                    if (type === 'virtual' && showRealPathTooltips && window.currentSourcePaths && window.currentSourcePaths.length > 0) {
-                        const sourcePath = window.currentSourcePaths[0];
-                        nameSpan.title = `📁 ${sourcePath}/${name}`;
+                    if (type === 'virtual' && showRealPathTooltips) {
+                        nameSpan.title = 'Loading source path...';
+                        nameSpan.dataset.tooltipLoaded = 'false';
+                        nameSpan.addEventListener('mouseenter', async () => {
+                            if (nameSpan.dataset.tooltipLoaded === 'true') return;
+                            nameSpan.dataset.tooltipLoaded = 'true';
+                            try {
+                                const resp = await fetch(`/api/source-paths?path=${encodeURIComponent(fullPath)}`);
+                                if (!resp.ok) {
+                                    nameSpan.title = 'Source path unavailable';
+                                    return;
+                                }
+                                const data = await resp.json();
+                                const paths = data.source_paths || [];
+                                const transform = data.transform || {};
+                                const isTransformed = !!transform.is_transformed;
+                                const label = isTransformed ? 'Transformed' : 'Mapped';
+                                const icon = isTransformed ? '🔄' : '📁';
+                                if (paths.length > 0) {
+                                    nameSpan.title = `${icon} ${label}: ${paths.join(', ')}`;
+                                } else {
+                                    nameSpan.title = `${icon} ${label}: (unresolved)`;
+                                }
+                            } catch (e) {
+                                nameSpan.title = 'Source path unavailable';
+                            }
+                        });
                     }
                     
                     const sizeSpan = document.createElement('span');
@@ -1103,7 +1128,15 @@
                 systemGrid.style.display = 'none';
 
                 meta[manufacturer].forEach(s => {
-                    const safeSystem = escapeHtml(s);
+                    const systemEntry = (typeof s === 'string') ? { mapping_name: s, display_name: s, name: s } : s;
+                    const mappingName = systemEntry.mapping_name || systemEntry.name || s;
+                    const displayName = systemEntry.display_name || systemEntry.name || mappingName;
+                    const systemName = systemEntry.name || mappingName;
+                    
+                    // Store in lookup map for pack loading
+                    systemsMetaMap[`${manufacturer}|||${mappingName}`] = systemEntry;
+                    
+                    const safeSystem = escapeHtml(displayName);
                     const card = document.createElement('div');
                     card.className = 'system-card';
 
@@ -1111,11 +1144,11 @@
                     const input = document.createElement('input');
                     input.type = 'checkbox';
                     input.name = 'systems';
-                    input.value = `${safeManufacturer}|||${safeSystem}`;
+                    input.value = `${manufacturer}|||${mappingName}`;
 
                     const img = document.createElement('img');
                     img.className = 'system-logo';
-                    img.src = `/static/logos/systems/${s}.png`;
+                    img.src = `/static/logos/systems/${mappingName}.png`;
                     img.alt = `${safeSystem} logo`;
                     img.onerror = () => { img.style.display = 'none'; };
 
@@ -1148,6 +1181,7 @@
         // Load packs when client + system are selected
         let currentPacksData = null;  // Store full pack data for filtering
         let showAllPacks = false;      // Track filter state
+        let systemsMetaMap = {};       // Map manufacturer|||mapping_name -> full system object
         
         function toggleShowAllPacks() {
             showAllPacks = !showAllPacks;
@@ -1204,7 +1238,7 @@
                 const safePackSize = escapeHtml(pack.estimated_size);
                 const safePackDesc = escapeHtml(pack.description);
                 const safeClientName = escapeHtml(clientName || '');
-                const safeMatchingSystemName = escapeHtml(data.matchingSystemName || '');
+                const safeSystemName = escapeHtml(data.system || '');
                 
                 // Determine if pack is supported by current client
                 const isSupported = clientName ? isPackSupportedByClient(pack, clientName) : true;
@@ -1229,7 +1263,7 @@
                 input.name = 'packs';
                 input.value = safePackId;
                 input.dataset.client = safeClientName;
-                input.dataset.system = safeMatchingSystemName;
+                input.dataset.system = safeSystemName;
                 input.disabled = !isSupported;
 
                 const textContainer = document.createElement('div');
@@ -1347,35 +1381,22 @@
             }
             
             const clientName = checkedClient.value;
-            const [manufacturer, systemName] = checkedSystems[0].value.split('|||');
+            const checkboxValue = checkedSystems[0].value;
+            
+            // Look up the full system entry from our metadata map
+            const systemEntry = systemsMetaMap[checkboxValue];
+            if (!systemEntry) {
+                document.getElementById('packs-info').textContent = 'System metadata not found';
+                document.getElementById('packs').innerHTML = '';
+                document.getElementById('toggleFilterBtn').style.display = 'none';
+                return;
+            }
+            
+            // Use the 'name' field (filesystem name) for the API call
+            const systemName = systemEntry.name;
             
             try {
-                // Get system name from clients/{client}/systems first
-                const systemsResponse = await fetch(`/api/clients/${clientName}/systems`);
-                const systems = await systemsResponse.json();
-                
-                // Find the system that matches the canonical name
-                let matchingSystemName = null;
-                for (const sys of systems) {
-                    // Fetch pack info to check canonical name
-                    const packResponse = await fetch(`/api/clients/${clientName}/systems/${sys}/packs`);
-                    if (packResponse.ok) {
-                        const packData = await packResponse.json();
-                        if (packData.canonical_name === systemName) {
-                            matchingSystemName = sys;
-                            break;
-                        }
-                    }
-                }
-                
-                if (!matchingSystemName) {
-                    document.getElementById('packs-info').textContent = 'No packs available for this system';
-                    document.getElementById('packs').innerHTML = '';
-                    document.getElementById('toggleFilterBtn').style.display = 'none';
-                    return;
-                }
-                
-                const response = await fetch(`/api/clients/${clientName}/systems/${matchingSystemName}/packs`);
+                const response = await fetch(`/api/clients/${clientName}/systems/${systemName}/packs`);
                 if (!response.ok) {
                     document.getElementById('packs-info').textContent = 'Failed to load packs';
                     document.getElementById('packs').innerHTML = '';
@@ -1392,8 +1413,6 @@
                 }
                 
                 // Store data and reset filter state
-                data.matchingSystemName = matchingSystemName;
-                data.system = systemName;
                 currentPacksData = data;
                 showAllPacks = false;
                 const toggleBtn = document.getElementById('toggleFilterBtn');
@@ -1534,6 +1553,17 @@
                         getattrIndicator.title = 'Getattr cache empty';
                         getattrText.textContent = 'Empty';
                     }
+                }
+                
+                // Show/hide Sync DB button based on database mode
+                const syncDbBtn = document.getElementById('sync-db-btn');
+                try {
+                    const configResponse = await fetch('/api/config');
+                    const configData = await configResponse.json();
+                    const databaseEnabled = configData.database?.enabled || false;
+                    syncDbBtn.style.display = databaseEnabled ? 'block' : 'none';
+                } catch (e) {
+                    syncDbBtn.style.display = 'none';
                 }
             } catch (e) {
                 console.error('Failed to check cache status:', e);
@@ -1766,6 +1796,43 @@
             } catch (e) {
                 console.error('Failed to clear all caches:', e);
                 alert('Failed to clear all caches');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+        
+        async function syncDatabase() {
+            const path = currentVirtualPath;
+            const btn = document.getElementById('sync-db-btn');
+            
+            if (!confirm(`Rebuild database for this folder tree?\n\nPath: ${path}\n\nThis may take a while...`)) {
+                return;
+            }
+            
+            // Disable button and show loading state
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
+            try {
+                const response = await fetch(`/api/db/sync?path=${encodeURIComponent(path)}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Show success message
+                    const msg = `Database synced: ${data.stats.files_added || 0} added, ${data.stats.files_updated || 0} updated in ${(data.stats.duration || 0).toFixed(2)}s`;
+                    console.log(msg);
+                    alert(`Database sync complete!\n\n${msg}`);
+                    
+                    // Reload the directory to show updated data
+                    await loadPath('virtual', path, true);
+                } else {
+                    alert(`Database sync failed: ${data.message || 'Unknown error'}`);
+                }
+            } catch (e) {
+                console.error('Failed to sync database:', e);
+                alert('Failed to sync database');
             } finally {
                 btn.disabled = false;
                 btn.textContent = originalText;

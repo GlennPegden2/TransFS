@@ -5,7 +5,7 @@ Uses the database when available, falls back to cache if there are issues.
 Used when database mode is hybrid.
 """
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from data_provider import DataProvider, FileInfo, DirectoryListing
 from data_provider_db import DatabaseDataProvider
@@ -17,15 +17,16 @@ logger = logging.getLogger(__name__)
 class HybridDataProvider(DataProvider):
     """Hybrid provider using database with cache fallback."""
     
-    def __init__(self, db_path: str, cache_provider=None):
+    def __init__(self, db_path: str, cache_provider=None, config: Optional[Dict[str, Any]] = None):
         """
         Initialize hybrid provider.
         
         Args:
             db_path: Path to SQLite database
             cache_provider: Fallback cache provider
+            config: Configuration dict from app.yaml
         """
-        self.db_provider = DatabaseDataProvider(db_path)
+        self.db_provider = DatabaseDataProvider(db_path, config)
         self.cache_provider = cache_provider or CacheDataProvider()
         self._initialized = False
         self._db_failures = 0

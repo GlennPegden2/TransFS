@@ -8,7 +8,7 @@ clients:
       # --- Acorn ---
       - name: AcornAtom
         manufacturer: Acorn
-        cananonical_system_name: Atom
+        system_mapping_name: Atom
         local_base_path: Acorn/Atom
         maps:
           - boot.vhd:
@@ -22,7 +22,7 @@ clients:
               - HDs: VHD
       - name: Archie
         manufacturer: Acorn
-        cananonical_system_name: Archimedes
+        system_mapping_name: Archimedes
         local_base_path: Acorn/Archimedes
         maps:
           - riscos.rom:
@@ -40,7 +40,7 @@ clients:
               - HDs: HDF
       - name: AcornElectron
         manufacturer: Acorn
-        cananonical_system_name: Electron
+        system_mapping_name: Electron
         local_base_path: Acorn/Electron/
         maps:
           - boot.vhd:
@@ -60,7 +60,7 @@ clients:
               - ROMs: ROM
       - name: BBCMicro
         manufacturer: Acorn
-        cananonical_system_name: BBC Micro
+        system_mapping_name: BBC Micro
         local_base_path: Acorn/BBC_B/
         maps:
           - boot.vhd:
@@ -79,7 +79,7 @@ clients:
       # --- Amstrad ---
       - name: Amstrad PCW
         manufacturer: Amstrad
-        cananonical_system_name: PCW
+        system_mapping_name: PCW
         local_base_path: Amstrad/PCW
         maps:
           - ...SoftwareArchives...: 
@@ -90,7 +90,7 @@ clients:
               - FDs: DSK
       - name: Amstrad
         manufacturer: Amstrad
-        cananonical_system_name: CPC
+        system_mapping_name: CPC
         local_base_path: Amstrad/CPC/
         maps:
           - boot.rom:
@@ -112,10 +112,22 @@ clients:
               - FDs: "DSK"
               - Tapes: "CDT"
       # --- Apple ---
-      - name: Apple-II
-        display_name: "Apple ]["
+      - name: Apple-I
+        display_name: "Apple I"
         manufacturer: Apple
-        cananonical_system_name: AppleII
+        system_mapping_name: AppleI
+        local_base_path: Apple/AppleI
+        maps:
+          - ...SoftwareArchives...:
+              supports_zip: false
+              supports_zaparoo: true
+              source_dir: Software
+              filetypes:
+              - Tapes: "CAS"
+      - name: Apple-II
+        display_name: "Apple //e"
+        manufacturer: Apple
+        system_mapping_name: AppleII
         local_base_path: Apple/AppleII
         maps:
           - ...SoftwareArchives...:
@@ -123,18 +135,13 @@ clients:
               supports_zaparoo: true
               source_dir: Software
               filetypes:
-              - Disks: "DSK,DO,2MG"
-                transforms:
-                  DSK:
-                    - type: strip_header
-                      bytes: 64
-                  2MG:
-                    - type: strip_header
-                      bytes: 64
+              - FDs: "DSK,DO"
+              - HDs: "HDV"
+
       # --- Atari ---
       - name: Atari2600
         manufacturer: Atari
-        cananonical_system_name: Atari2600
+        system_mapping_name: Atari2600
         local_base_path: Atari/2600
         maps:
           - ...SoftwareArchives...:
@@ -145,7 +152,7 @@ clients:
               - ROMs: "BIN"
       - name: Atari5200
         manufacturer: Atari
-        cananonical_system_name: Atari5200
+        system_mapping_name: Atari5200
         local_base_path: Atari/5200
         maps:
           - ...SoftwareArchives...:
@@ -156,7 +163,7 @@ clients:
               - ROMs: "A52,BIN,ROM"
       - name: Atari7800
         manufacturer: Atari
-        cananonical_system_name: Atari7800
+        system_mapping_name: Atari7800
         local_base_path: Atari/7800
         maps:
           - ...SoftwareArchives...:
@@ -167,7 +174,7 @@ clients:
               - ROMs: "A78"
       - name: Atari800
         manufacturer: Atari
-        cananonical_system_name: Atari800
+        system_mapping_name: Atari800
         local_base_path: Atari/800
         maps:
           - ...SoftwareArchives...:
@@ -179,7 +186,7 @@ clients:
               - Disks: "ATR,XFD"
       - name: AtariLynx
         manufacturer: Atari
-        cananonical_system_name: Lynx
+        system_mapping_name: Lynx
         local_base_path: Atari/Lynx
         maps:
           - ...SoftwareArchives...:
@@ -191,7 +198,7 @@ clients:
       # --- Coleco ---
       - name: ColecoVision
         manufacturer: Coleco
-        cananonical_system_name: ColecoVision
+        system_mapping_name: ColecoVision
         local_base_path: Coleco/ColecoVision
         maps:
           - ...SoftwareArchives...:
@@ -203,7 +210,7 @@ clients:
       # --- Commodore ---
       - name: Amiga
         manufacturer: Commodore
-        cananonical_system_name: Amiga
+        system_mapping_name: Amiga
         local_base_path: Commodore/Amiga
         maps:
           - KICK.ROM:
@@ -214,7 +221,7 @@ clients:
               source_dir: FDs
       - name: Commodore128
         manufacturer: Commodore
-        cananonical_system_name: C128
+        system_mapping_name: C128
         local_base_path: Commodore/C128
         maps:
           - ...SoftwareArchives...:
@@ -225,7 +232,7 @@ clients:
               - Disks: "D64,D71,D81"
       - name: Commodore64
         manufacturer: Commodore
-        cananonical_system_name: C64
+        system_mapping_name: C64
         local_base_path: Commodore/C64
         maps:
           - ...SoftwareArchives...:
@@ -237,7 +244,7 @@ clients:
               - Disks: "D64,G64"
       - name: CommodorePET
         manufacturer: Commodore
-        cananonical_system_name: PET
+        system_mapping_name: PET
         local_base_path: Commodore/PET
         maps:
           - ...SoftwareArchives...:
@@ -249,7 +256,7 @@ clients:
               - Disks: "D64"
       - name: CommodorePlus4
         manufacturer: Commodore
-        cananonical_system_name: Plus4
+        system_mapping_name: Plus4
         local_base_path: Commodore/Plus4
         maps:
           - ...SoftwareArchives...:
@@ -262,7 +269,7 @@ clients:
       # --- GCE ---
       - name: Vectrex
         manufacturer: GCE
-        cananonical_system_name: Vectrex
+        system_mapping_name: Vectrex
         local_base_path: GCE/Vectrex
         maps:
           - ...SoftwareArchives...:
@@ -274,7 +281,7 @@ clients:
       # --- Mattel ---
       - name: Intellivision
         manufacturer: Mattel
-        cananonical_system_name: Intellivision
+        system_mapping_name: Intellivision
         local_base_path: Mattel/Intellivision
         maps:
           - ...SoftwareArchives...:
@@ -286,7 +293,7 @@ clients:
       # --- Microsoft ---
       - name: MSX
         manufacturer: Microsoft
-        cananonical_system_name: MSX
+        system_mapping_name: MSX
         local_base_path: Microsoft/MSX
         maps:
           - ...SoftwareArchives...:
@@ -299,7 +306,7 @@ clients:
       # --- MITS ---
       - name: Altair8800
         manufacturer: MITS
-        cananonical_system_name: Altair8800
+        system_mapping_name: Altair8800
         local_base_path: MITS/Altair8800
         maps:
           - ...SoftwareArchives...:
@@ -311,7 +318,7 @@ clients:
       # --- NEC ---
       - name: PC-Engine
         manufacturer: NEC
-        cananonical_system_name: PCE
+        system_mapping_name: PCE
         local_base_path: NEC/PCE
         maps:
           - ...SoftwareArchives...:
@@ -322,7 +329,7 @@ clients:
               - ROMs: "PCE"
       - name: TurboGrafx16
         manufacturer: NEC
-        cananonical_system_name: TurboGrafx16
+        system_mapping_name: TurboGrafx16
         local_base_path: NEC/TurboGrafx16
         maps:
           - ...SoftwareArchives...:
@@ -334,7 +341,7 @@ clients:
       # --- Nintendo ---
       - name: GameBoy
         manufacturer: Nintendo
-        cananonical_system_name: GameBoy
+        system_mapping_name: GameBoy
         local_base_path: Nintendo/GameBoy
         maps:
           - ...SoftwareArchives...:
@@ -345,7 +352,7 @@ clients:
               - ROMs: "GB"
       - name: GameBoyAdvance
         manufacturer: Nintendo
-        cananonical_system_name: GBA
+        system_mapping_name: GBA
         local_base_path: Nintendo/GBA
         maps:
           - ...SoftwareArchives...:
@@ -356,7 +363,7 @@ clients:
               - ROMs: "GBA"
       - name: GameBoyColor
         manufacturer: Nintendo
-        cananonical_system_name: GBC
+        system_mapping_name: GBC
         local_base_path: Nintendo/GBC
         maps:
           - ...SoftwareArchives...:
@@ -367,7 +374,7 @@ clients:
               - ROMs: "GBC"
       - name: NES
         manufacturer: Nintendo
-        cananonical_system_name: NES
+        system_mapping_name: NES
         local_base_path: Nintendo/NES
         maps:
           - ...SoftwareArchives...:
@@ -378,7 +385,7 @@ clients:
               - ROMs: "NES"
       - name: SNES
         manufacturer: Nintendo
-        cananonical_system_name: SNES
+        system_mapping_name: SNES
         local_base_path: Nintendo/SNES
         maps:
           - ...SoftwareArchives...:
@@ -390,7 +397,7 @@ clients:
       # --- Sega ---
       - name: SegaGameGear
         manufacturer: Sega
-        cananonical_system_name: GameGear
+        system_mapping_name: GameGear
         local_base_path: Sega/GameGear
         maps:
           - ...SoftwareArchives...:
@@ -401,7 +408,7 @@ clients:
               - ROMs: "GG"
       - name: SegaGenesis
         manufacturer: Sega
-        cananonical_system_name: Genesis
+        system_mapping_name: Genesis
         local_base_path: Sega/Genesis
         maps:
           - ...SoftwareArchives...:
@@ -412,7 +419,7 @@ clients:
               - ROMs: "BIN,GEN,MD"
       - name: SegaMasterSystem
         manufacturer: Sega
-        cananonical_system_name: MasterSystem
+        system_mapping_name: MasterSystem
         local_base_path: Sega/MasterSystem
         maps:
           - ...SoftwareArchives...:
@@ -424,7 +431,7 @@ clients:
       # --- Sinclair ---
       - name: ZX Spectrum
         manufacturer: Sinclair
-        cananonical_system_name: Spectrum
+        system_mapping_name: Spectrum
         local_base_path: Sinclair/Spectrum
         maps:
           - ...SoftwareArchives...:
@@ -437,7 +444,7 @@ clients:
       # --- SNK ---
       - name: NeoGeo
         manufacturer: SNK
-        cananonical_system_name: NeoGeo
+        system_mapping_name: NeoGeo
         local_base_path: SNK/NeoGeo
         maps:
           - ...SoftwareArchives...:
@@ -449,7 +456,7 @@ clients:
       # --- Tandy ---
       - name: AliceMC10
         manufacturer: Tandy
-        cananonical_system_name: MC-10
+        system_mapping_name: MC-10
         local_base_path: Tandy/MC-10
         maps:
           - ...SoftwareArchives...:
@@ -464,3 +471,24 @@ clients:
     default_target_path: "{name}/{maps}/{system_name}/{maps2}"
   - name: RetroPie                  
     default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: Generic
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+    systems:
+    - name: Apple-II
+      display_name: "Apple ][gs"
+      manufacturer: Apple
+      system_mapping_name: AppleII
+      local_base_path: Apple/AppleII
+      maps:
+        - ...SoftwareArchives...:
+            supports_zip: false
+            supports_zaparoo: true
+            source_dir: Software
+            filetypes:
+            - FDs: "DSK,DO"
+            - HDs: "2MG"
+              transforms:
+                2MG:
+                  - type: two_mg
+                    # output_extension auto-detected from disk content (do/po)
+
