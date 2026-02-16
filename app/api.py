@@ -585,7 +585,11 @@ def cache_clear_all():
 @app.post("/db/sync")
 def db_sync(path: str | None = None):
     """
-    Synchronize database with filesystem for a given path.
+    Synchronize database with filesystem.
+    
+    Note: Currently syncs the entire filestore regardless of path parameter.
+    The database filtering happens at query time based on configuration.
+    
     Requires database mode to be enabled.
     """
     try:
@@ -604,16 +608,11 @@ def db_sync(path: str | None = None):
         # Import database sync class
         from db.sync import FilesystemSync
         
-        # Convert virtual path to filestore path
-        filestore_path = "/mnt/filestorefs"
-        if path and path.startswith("/mnt/transfs/"):
-            # Extract the relative path from virtual mount
-            rel_path = path.replace("/mnt/transfs/", "")
-            filestore_path = f"/mnt/filestorefs/{rel_path}"
-        
-        logger.info(f"Starting database sync for path: {filestore_path}")
+        filestore_path = config.get("filestore", "/mnt/filestorefs")
+        logger.info(f"Starting database sync for filestore: {filestore_path}")
         
         # Create sync instance and run initial scan
+        # We always sync the entire filestore - the filtering happens at query time based on config
         sync = FilesystemSync(
             root_path=filestore_path,
             mount_path="/mnt/transfs"

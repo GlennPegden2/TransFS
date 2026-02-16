@@ -5,6 +5,7 @@ This provider uses the SQLite metadata database for file access.
 Used when database mode is enabled.
 """
 import logging
+import threading
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import sqlite3
@@ -43,8 +44,10 @@ class DatabaseDataProvider(DataProvider):
             # Check if we should sync on startup
             db_config = self.config.get('database', {})
             if db_config.get('sync_on_startup', False):
-                logger.info("sync_on_startup enabled - performing initial database sync")
-                self._perform_sync()
+                logger.info("sync_on_startup enabled - starting background filesystem sync")
+                # Start sync in background thread to avoid blocking initialization
+                sync_thread = threading.Thread(target=self._perform_sync, daemon=True)
+                sync_thread.start()
             
             # Verify connection works
             conn = get_connection()
@@ -59,11 +62,11 @@ class DatabaseDataProvider(DataProvider):
             raise
     
     def _perform_sync(self) -> None:
-        """Perform filesystem to database synchronization."""
+        """Perform filesystem to database synchronization (runs in background thread)."""
         try:
             from db.sync import FilesystemSync
             
-            logger.info("Starting filesystem sync during database initialization")
+            logger.info("Starting background filesystem sync")
             sync = FilesystemSync(
                 root_path="/mnt/filestorefs",
                 mount_path="/mnt/transfs"
@@ -77,7 +80,6 @@ class DatabaseDataProvider(DataProvider):
             )
         except Exception as e:
             logger.error(f"Failed to perform filesystem sync: {e}", exc_info=True)
-            # Don't raise - allow the provider to continue with empty database
 
     
     def readdir(self, path: str) -> DirectoryListing:
