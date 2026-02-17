@@ -8,6 +8,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Batch dual-mode verification for target systems via legacy scripts (filesystem vs database counts)
 - Helper scripts moved to legacy for non-production use: `fix_systems_batch.py`, `phase3_batch_verify.py`, `phase3_sync_and_cleanup.py`, `phase3_diff_report.py`, `phase3_dualmode_batch.py`
 
+### Changed
+- Moved migration-only Python scripts from app/ to legacy/
+- Moved migration summaries/guides from repo root to docs/development/
+
 ### Added (Phase 2 Proof of Concept - BBC_B Real Data Validation - COMPLETE)
 - **Phase 2.1-2.8**: BBC_B Pilot Implementation with Real User Data
   - Real-world test system: Acorn BBC_B with 52 actual software files (50 floppy images + 2 hard disk images)
