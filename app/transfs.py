@@ -55,6 +55,8 @@ class TransFS(Passthrough):
         self.mount_path = mount_path or root_path  # Store mount point for path mapping
         self._source_path_cache = {}  # Cache virtual_path -> source_path to avoid re-computation
         self._pending_utime = {}  # inode -> (atime_ns, mtime_ns) deferred for open fh
+        self._fd_path_map = {}  # fd -> real path for read diagnostics
+        self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
         from config import read_config
         self.config = read_config()
         try:
@@ -1483,6 +1485,8 @@ class TransFS(Passthrough):
                 self._fd_inode_map[fd] = inode
                 self._inode_fd_map[inode] = fd
                 self._fd_open_count[fd] = 1
+                self._fd_path_map[fd] = trans_path
+                self._fd_read_stats[fd] = {"total": 0, "max_end": 0}
                 logger.info("OPEN: opened successfully, fd=%s", fd)
                 return pyfuse3.FileInfo(fh=fd)
             except OSError as exc:
@@ -1506,6 +1510,22 @@ class TransFS(Passthrough):
             
             data = await trio.to_thread.run_sync(_do_read)
             logger.info("READ: fh=%s off=%s size=%s -> %d bytes", fh, off, size, len(data))
+            # Track read stats for diagnostics
+            try:
+                stats = self._fd_read_stats.get(fh)
+                if stats is not None:
+                    stats["total"] += len(data)
+                    end = off + len(data)
+                    if end > stats["max_end"]:
+                        stats["max_end"] = end
+                    path = self._fd_path_map.get(fh, "")
+                    if path.endswith("/Acorn/Atom/Software/VHD/hoglet67.vhd"):
+                        logger.info(
+                            "READ_STATS: fh=%s total=%d max_end=%d path=%s",
+                            fh, stats["total"], stats["max_end"], path
+                        )
+            except Exception:
+                pass
             return data
         except OSError as exc:
             logger.error("READ: failed fh=%s off=%s size=%s: %s", fh, off, size, exc)
@@ -1548,6 +1568,8 @@ class TransFS(Passthrough):
             inode = self._fd_inode_map[fh]
             del self._inode_fd_map[inode]
             del self._fd_inode_map[fh]
+            self._fd_path_map.pop(fh, None)
+            self._fd_read_stats.pop(fh, None)
 
             pending_times = self._pending_utime.pop(inode, None)
             if pending_times:
