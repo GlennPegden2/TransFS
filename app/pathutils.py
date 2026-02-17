@@ -56,7 +56,7 @@ def is_virtual_path(config, root: str, full_path: str) -> bool:
                         # e.g., "HDs" is parent of "HDs/beeb1_mmb.VHD"
                         if map_name.startswith(remaining_path + '/'):
                             return True
-                        # Check for ...SoftwareArchives... filetypes
+                        # Backward compatibility: ...SoftwareArchives... filetypes
                         if map_name == "...SoftwareArchives...":
                             filetypes = map_entry[map_name].get("filetypes", [])
                             for ft in filetypes:
@@ -131,6 +131,49 @@ def find_software_archive_entry(system_info: dict) -> Optional[dict]:
     """Find the ...SoftwareArchives... entry in a system's maps."""
     return next((m for m in system_info['maps'] if list(m.keys())[0] == "...SoftwareArchives..."), None)
 
+def find_map_entry(system_info: dict, map_name: str) -> Optional[dict]:
+    """Find a map entry by map name."""
+    return next((m for m in system_info.get('maps', []) if list(m.keys())[0] == map_name), None)
+
+def get_map_config(map_entry: Optional[dict]) -> Optional[dict]:
+    """Return the config dict for a map entry."""
+    if not map_entry:
+        return None
+    key = list(map_entry.keys())[0]
+    return map_entry.get(key)
+
+def is_query_map(map_config: Optional[dict]) -> bool:
+    """Check whether a map is a query-based map."""
+    return isinstance(map_config, dict) and "query" in map_config
+
+def get_query_config(map_config: Optional[dict]) -> dict:
+    """Return query config for a map (if present)."""
+    if not isinstance(map_config, dict):
+        return {}
+    return map_config.get("query", {}) or {}
+
+def get_map_transforms(map_config: Optional[dict]) -> dict:
+    """Return transform config for a map (if present)."""
+    if not isinstance(map_config, dict):
+        return {}
+    if "transforms" in map_config and isinstance(map_config["transforms"], dict):
+        return map_config["transforms"]
+    query_cfg = map_config.get("query", {}) if isinstance(map_config, dict) else {}
+    if isinstance(query_cfg, dict) and "transforms" in query_cfg:
+        return query_cfg.get("transforms") or {}
+    return {}
+
+def get_map_extension_map(map_config: Optional[dict]) -> dict:
+    """Return extension remap dict (real->virtual) for a map if present."""
+    if not isinstance(map_config, dict):
+        return {}
+    if "extension_map" in map_config and isinstance(map_config["extension_map"], dict):
+        return map_config["extension_map"]
+    query_cfg = map_config.get("query", {}) if isinstance(map_config, dict) else {}
+    if isinstance(query_cfg, dict) and "extension_map" in query_cfg:
+        return query_cfg.get("extension_map") or {}
+    return {}
+
 def resolve_system_name(client: dict, potential_name: str) -> Optional[str]:
     """
     Resolve a display name back to the actual system name.
@@ -146,3 +189,13 @@ def resolve_system_name(client: dict, potential_name: str) -> Optional[str]:
             return system.get('name')
     
     return None
+
+def get_system_identifier(system_info: dict) -> Optional[str]:
+    """Return system identifier in Manufacturer/System format for database lookups."""
+    if not system_info:
+        return None
+    manufacturer = system_info.get("manufacturer") or ""
+    canonical = system_info.get("system_mapping_name") or system_info.get("cananonical_system_name") or system_info.get("name") or ""
+    if not manufacturer or not canonical:
+        return None
+    return f"{manufacturer}/{canonical}"

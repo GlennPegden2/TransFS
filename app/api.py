@@ -419,7 +419,7 @@ def api_browse_directory(path: str):
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
     if path.startswith("/mnt/transfs"):
-        from pathutils import get_client, get_system_info, find_software_archive_entry
+        from pathutils import get_client, get_system_info, find_software_archive_entry, find_map_entry, get_map_config
         from pathlib import Path as PathLib
         
         config = read_config()
@@ -433,9 +433,17 @@ def api_browse_directory(path: str):
             if client:
                 system = next((s for s in client.get('systems', []) if s['name'] == rel_parts[1]), None)
                 if system:
-                    sa_entry = find_software_archive_entry(system)
-                    if sa_entry:
-                        supports_zaparoo = sa_entry.get("...SoftwareArchives...", {}).get("supports_zaparoo", True)
+                    if len(rel_parts) >= 3:
+                        map_name = rel_parts[2]
+                        map_entry = find_map_entry(system, map_name)
+                        map_config = get_map_config(map_entry)
+                        if map_config and isinstance(map_config, dict):
+                            query_cfg = map_config.get("query", {})
+                            supports_zaparoo = query_cfg.get("supports_zaparoo")
+                    if supports_zaparoo is None:
+                        sa_entry = find_software_archive_entry(system)
+                        if sa_entry:
+                            supports_zaparoo = sa_entry.get("...SoftwareArchives...", {}).get("supports_zaparoo", True)
     
     try:
         # Optimization: for ZIP-internal paths under /mnt/transfs, translate to real path first
@@ -2485,18 +2493,34 @@ async def api_download_stream(req: DownloadRequest):
                     system.get("manufacturer") == req.manufacturer
                     and (system.get("system_mapping_name") or system.get("cananonical_system_name")) == req.system
                 ):
-                    # Look for ...SoftwareArchives... map
+                    # Look for query maps (new schema)
                     for map_entry in system.get("maps", []):
-                        if "...SoftwareArchives..." in map_entry:
-                            ft = []
-                            for ft_entry in map_entry["...SoftwareArchives..."].get("filetypes", []):
-                                # filetypes can be dicts like {'Tape': 'UEF'} or {'HD': 'MMB,VHD'}
-                                if isinstance(ft_entry, dict):
-                                    for v in ft_entry.values():
-                                        ft.extend([x.strip() for x in v.split(",")])
-                                elif isinstance(ft_entry, str):
-                                    ft.extend([x.strip() for x in ft_entry.split(",")])
-                            filetypes = list(set(ft))
+                        map_name = list(map_entry.keys())[0]
+                        map_config = map_entry.get(map_name, {})
+                        query_cfg = map_config.get("query") if isinstance(map_config, dict) else None
+                        if not isinstance(query_cfg, dict):
+                            continue
+                        ft = []
+                        for ext in query_cfg.get("extensions", []) or []:
+                            ext_str = str(ext).strip()
+                            if ext_str and ext_str != "*":
+                                ft.append(ext_str)
+                        if ft:
+                            filetypes = list(set((filetypes or []) + ft))
+
+                    # Backward compatibility: ...SoftwareArchives... filetypes
+                    if not filetypes:
+                        for map_entry in system.get("maps", []):
+                            if "...SoftwareArchives..." in map_entry:
+                                ft = []
+                                for ft_entry in map_entry["...SoftwareArchives..."].get("filetypes", []):
+                                    # filetypes can be dicts like {'Tape': 'UEF'} or {'HD': 'MMB,VHD'}
+                                    if isinstance(ft_entry, dict):
+                                        for v in ft_entry.values():
+                                            ft.extend([x.strip() for x in v.split(",")])
+                                    elif isinstance(ft_entry, str):
+                                        ft.extend([x.strip() for x in ft_entry.split(",")])
+                                filetypes = list(set(ft))
         # --- End filetype extraction ---
 
         found = False

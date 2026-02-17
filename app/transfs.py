@@ -146,7 +146,7 @@ class TransFS(Passthrough):
         Extract zip_mode configuration for the given path.
         Returns 'hierarchical' (default), 'flatten', or 'file'.
         """
-        from pathutils import get_client, get_system_info, find_software_archive_entry
+        from pathutils import get_client, get_system_info, find_software_archive_entry, find_map_entry, get_map_config
         
         path = Path(xfull_path)
         root_parts = Path(self.root).parts
@@ -164,6 +164,14 @@ class TransFS(Passthrough):
         if not system_info:
             return "hierarchical"
         
+        map_name = rel_parts[2]
+        map_entry = find_map_entry(system_info, map_name)
+        map_config = get_map_config(map_entry)
+        if map_config and isinstance(map_config, dict):
+            query_cfg = map_config.get("query", {})
+            if isinstance(query_cfg, dict) and "zip_mode" in query_cfg:
+                return query_cfg.get("zip_mode", "hierarchical")
+
         sa_entry = find_software_archive_entry(system_info)
         if not sa_entry:
             return "hierarchical"
@@ -198,7 +206,7 @@ class TransFS(Passthrough):
         
         Returns a dict like {"DSK": pipeline, "2MG": pipeline} or empty dict if not applicable.
         """
-        from pathutils import get_client, get_system_info
+        from pathutils import get_client, get_system_info, find_map_entry, get_map_config, get_map_transforms
         from filetypes import get_filetype_transforms
         from sourcepath import find_software_archive_entry, get_transform_pipeline_for_file
         from pathlib import Path
@@ -224,13 +232,16 @@ class TransFS(Passthrough):
             # Get the virtual folder (e.g., "Disks", "ROMs") - this is rel_parts[2]
             virtual_folder = rel_parts[2]
             
-            # Find the SoftwareArchives entry
-            sa_entry = find_software_archive_entry(system_info)
-            if not sa_entry:
-                return {}
-            
-            # Get transform configuration - this maps extensions to transform specs
-            transform_map = get_filetype_transforms(sa_entry)
+            # Prefer transforms from query map (new schema)
+            map_entry = find_map_entry(system_info, virtual_folder)
+            map_config = get_map_config(map_entry)
+            transform_map = get_map_transforms(map_config)
+            if not transform_map:
+                # Fallback to legacy SoftwareArchives transforms
+                sa_entry = find_software_archive_entry(system_info)
+                if not sa_entry:
+                    return {}
+                transform_map = get_filetype_transforms(sa_entry)
             if not transform_map:
                 return {}
             
@@ -239,14 +250,22 @@ class TransFS(Passthrough):
             cache_config = self.config.get("cache", {})
             
             # Get the actual source directory to find real files for detection
-            # Use SoftwareArchives entry to find source files
-            from sourcepath import find_software_archive_entry
-            sa_entry = find_software_archive_entry(system_info)
             source_dir = None
-            if sa_entry:
-                # Get source_path from SoftwareArchives entry
-                if 'source_paths' in sa_entry and sa_entry['source_paths']:
-                    source_dir = sa_entry['source_paths'][0]  # Use first source path
+            if map_config and isinstance(map_config, dict):
+                query_cfg = map_config.get("query", {})
+                source_subdir = query_cfg.get("source_dir") if isinstance(query_cfg, dict) else None
+                if source_subdir:
+                    source_dir = os.path.join(
+                        self.config.get("filestore", "/mnt/filestorefs"),
+                        "Native",
+                        system_info['local_base_path'],
+                        source_subdir
+                    )
+            if not source_dir:
+                sa_entry = find_software_archive_entry(system_info)
+                if sa_entry:
+                    if 'source_paths' in sa_entry and sa_entry['source_paths']:
+                        source_dir = sa_entry['source_paths'][0]  # Use first source path
             
             for ext in transform_map.keys():
                 # Try to find a real file with this extension for accurate detection

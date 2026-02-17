@@ -2,7 +2,17 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Union
 import zipfile
-from pathutils import get_client, get_system_info, find_software_archive_entry
+from pathutils import (
+    get_client,
+    get_system_info,
+    find_software_archive_entry,
+    find_map_entry,
+    get_map_config,
+    get_map_transforms,
+    get_map_extension_map,
+    is_query_map,
+    get_query_config,
+)
 from filetypes import get_filetype_maps, get_filetype_transforms
 from ziptutils import get_zip_mapping
 from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
@@ -37,13 +47,16 @@ def get_transform_pipeline_for_file(
     Returns:
         TransformPipeline if transforms are configured for this file type, else None
     """
-    # Find the SoftwareArchives entry
-    sa_entry = find_software_archive_entry(system_info)
-    if not sa_entry:
-        return None
-    
-    # Get transform configuration
-    transform_map = get_filetype_transforms(sa_entry)
+    # Prefer transforms from query map if available
+    map_entry = find_map_entry(system_info, virtual_folder)
+    map_config = get_map_config(map_entry)
+    transform_map = get_map_transforms(map_config)
+    if not transform_map:
+        # Fallback to legacy SoftwareArchives transforms
+        sa_entry = find_software_archive_entry(system_info)
+        if not sa_entry:
+            return None
+        transform_map = get_filetype_transforms(sa_entry)
     if not transform_map:
         return None
     
@@ -280,6 +293,67 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
 
     map_name = rel_parts[2]
+    map_entry = find_map_entry(system_info, map_name)
+    map_config = get_map_config(map_entry)
+
+    if map_config and is_query_map(map_config):
+        query_cfg = get_query_config(map_config)
+        extensions = query_cfg.get("extensions", [])
+        extension_map = get_map_extension_map(map_config)
+        extension_map = {str(k).upper(): str(v).upper() for k, v in extension_map.items()}
+        supports_zip = query_cfg.get("supports_zip", True)
+        zip_mode = query_cfg.get("zip_mode", "hierarchical")
+
+        source_dir = os.path.join(
+            config["filestore"],
+            "Native",
+            system_info["local_base_path"],
+            query_cfg.get("source_dir", "Software")
+        )
+
+        subpath = rel_parts[3:]
+        if not subpath:
+            return None
+
+        # ZIP navigation support
+        zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
+        if zip_idx is not None and supports_zip and zip_mode != "file":
+            zip_name = subpath[zip_idx]
+            inner_parts = subpath[zip_idx + 1:]
+            zip_path = os.path.join(source_dir, zip_name)
+            if not os.path.isfile(zip_path):
+                zip_path = os.path.join(source_dir, "ZIP", zip_name)
+            if os.path.isfile(zip_path):
+                if inner_parts:
+                    return (zip_path, "/".join(inner_parts))
+                return zip_path
+
+        last = subpath[-1]
+        if '.' not in last:
+            return None
+
+        name, virt_ext = os.path.splitext(last)
+        virt_ext = virt_ext[1:].upper()
+        real_exts = []
+        for ext in extensions:
+            ext_upper = ext.upper()
+            if extension_map.get(ext_upper, ext_upper) == virt_ext:
+                real_exts.append(ext_upper)
+            elif ext_upper == virt_ext:
+                real_exts.append(ext_upper)
+
+        for real_ext in real_exts:
+            real_filename = f"{name}.{real_ext.lower()}"
+            # Try extension subfolder
+            candidate = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+            if os.path.exists(candidate):
+                return candidate
+            # Try flat layout under source_dir
+            candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
     sa_entry = find_software_archive_entry(system_info)
     if not sa_entry:
         return None
@@ -481,6 +555,43 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
     mapdict = map_entry[map_name]
     subpath = rel_parts[3:]
+    if "file" in mapdict:
+        file_spec = mapdict.get("file")
+        if isinstance(file_spec, dict):
+            file_path = file_spec.get("path")
+            unzip = file_spec.get("unzip", False)
+            zip_internal_file = file_spec.get("zip_internal_file")
+        else:
+            file_path = file_spec
+            unzip = mapdict.get("unzip", False)
+            zip_internal_file = mapdict.get("zip_internal_file")
+        if not file_path:
+            return None
+        base = os.path.join(
+            config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            system_info['local_base_path'],
+            file_path
+        )
+        if base.lower().endswith('.zip') and unzip:
+            if zip_internal_file:
+                if zippath_isfile(f"{base}/{zip_internal_file}"):
+                    logger.debug(f"Using explicit zip_internal_file: {zip_internal_file} in {base}")
+                    return (base, zip_internal_file)
+                logger.debug(f"zip_internal_file {zip_internal_file} not found in {base}")
+                return None
+            else:
+                result = get_zip_mapping(logger, base, map_name)
+                logger.debug(f"ZIP mapping result for {map_name} in {base}: {result}")
+                if result:
+                    return result
+                return None
+        real_path = os.path.join(base, *subpath) if subpath else base
+        if os.path.exists(real_path):
+            logger.debug(f"Returning real file path: {real_path}")
+            return real_path
+        logger.debug(f"File {real_path} does not exist, returning None")
+        return None
     if "source_dir" in mapdict:
         base = os.path.join(
             config.get("filestore", "/mnt/filestorefs"),

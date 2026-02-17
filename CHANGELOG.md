@@ -13,6 +13,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Moved migration summaries/guides from repo root to docs/development/
 - Enabled query-based mode for all `...SoftwareArchives...` maps via `db_mode: true`
 - Passed `db_mode` and optional `extensions` from config into `list_dynamic_map()`
+- Replaced `...SoftwareArchives...` with explicit query/file maps in clients.yaml
+- Added structured query support for query maps and new schema documentation
 
 ### Added (Phase 2 Proof of Concept - BBC_B Real Data Validation - COMPLETE)
 - **Phase 2.1-2.8**: BBC_B Pilot Implementation with Real User Data

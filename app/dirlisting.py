@@ -311,16 +311,14 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     mapped_names = set()
     # Track top-level virtual directories (e.g., "MMBs" from "MMBs/beeb1_mmb.VHD")
     virtual_dirs = set()
-    # Track source directories used by ...SoftwareArchives... to exclude them from listing
+    # Track source directories used by ...SoftwareArchives... (legacy)
     excluded_dirs = set()
-    
-    # Find SoftwareArchives source_dir
     sa_entry = find_software_archive_entry(system)
     if sa_entry:
         source_dir = sa_entry["...SoftwareArchives..."].get("source_dir")
         if source_dir:
             excluded_dirs.add(source_dir)
-    
+
     for map_entry in system['maps']:
         map_name = list(map_entry.keys())[0]
         # If map_name contains '/', extract the top-level directory
@@ -395,8 +393,13 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     if nested:
         return nested
     
+    from pathutils import find_map_entry, get_map_config, is_query_map
+    map_entry = find_map_entry(system, map_name)
+    map_config = get_map_config(map_entry)
+    if map_config and is_query_map(map_config):
+        return list_query_map(config, path, root_parts, system, map_name, map_config)
     sa_entry = find_software_archive_entry(system)
-    if sa_entry and is_dynamic_map(config,map_name, sa_entry):
+    if sa_entry and is_dynamic_map(config, map_name, sa_entry):
         sa_config = sa_entry.get("...SoftwareArchives...", {})
         db_mode = sa_config.get("db_mode", False)
         extensions = sa_config.get("extensions")
@@ -405,6 +408,164 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
             db_mode=db_mode, extensions=extensions
         )
     return list_regular_map(config,path, root_parts, system, map_name)
+
+def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name: str, map_config: dict) -> list[str]:
+    """List files for a query-based map."""
+    global _cache_hits, _cache_misses
+    t_func_start = time.time()
+
+    query_cfg = map_config.get("query", {})
+    extensions = query_cfg.get("extensions", [])
+    extension_map = query_cfg.get("extension_map", {}) or {}
+    extension_map = {str(k).upper(): str(v).upper() for k, v in extension_map.items()}
+    source_dir = query_cfg.get("source_dir", "Software")
+    supports_zip = query_cfg.get("supports_zip", True)
+    zip_mode = query_cfg.get("zip_mode", "hierarchical")
+
+    cache_key = str(path)
+    cache_enabled = _cache_config.get("dir_cache_enabled", True) and _cache_config.get("dir_listing_cache_enabled", True)
+
+    # For cache key mtime, use source directory if it exists
+    check_dir = os.path.join(
+        config.get("filestore", "/mnt/filestorefs"),
+        "Native",
+        system["local_base_path"],
+        source_dir,
+    )
+
+    try:
+        current_mtime = os.path.getmtime(check_dir) if os.path.isdir(check_dir) else 0
+        if cache_enabled and cache_key in _dir_cache:
+            cached_mtime, cached_entries = _dir_cache[cache_key]
+            if cached_mtime == current_mtime:
+                _cache_hits += 1
+                logger.info(f"IN-MEMORY CACHE HIT: {cache_key} (hits={_cache_hits}, misses={_cache_misses})")
+                return cached_entries
+    except (OSError, PermissionError):
+        current_mtime = 0
+
+    if cache_enabled:
+        _cache_misses += 1
+
+    # Parts after /<mount>/<client>/<system>/<map_name>/
+    subpath = path.parts[len(root_parts) + 3:]
+
+    try:
+        from db.queries import query_files_by_system_and_query
+        from pathutils import get_system_identifier
+
+        system_id = get_system_identifier(system)
+        if not system_id:
+            logger.warning(f"Query map requested but system identifier not found for {system.get('name')}")
+            return []
+
+        # If navigating within a subpath, fall back to filesystem/zip handling
+        if subpath:
+            base_dir = os.path.join(
+                config.get("filestore", "/mnt/filestorefs"),
+                "Native",
+                system["local_base_path"],
+                source_dir,
+            )
+            # Check for zip navigation
+            zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
+            if zip_idx is not None and supports_zip and zip_mode != "file":
+                zip_name = subpath[zip_idx]
+                inner_parts = subpath[zip_idx + 1:]
+                zip_path = os.path.join(base_dir, zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                if os.path.isfile(zip_path):
+                    target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
+                    try:
+                        internal = zippath_listdir(target)
+                        return sorted(set(internal))
+                    except Exception:
+                        return []
+            # Regular directory listing
+            dir_path = os.path.join(base_dir, *subpath)
+            if not os.path.isdir(dir_path):
+                return []
+            entries = set()
+            for entry in os.listdir(dir_path):
+                if entry.startswith('.'):
+                    continue
+                name, ext = os.path.splitext(entry)
+                ext = ext[1:].upper() if ext else ""
+                if ext and ext in extension_map:
+                    virt_ext = extension_map[ext]
+                    entries.add(f"{name}.{virt_ext.lower()}")
+                else:
+                    entries.add(entry)
+            return sorted(entries)
+
+        logger.info(f"QUERY MAP: system={system_id}, map={map_name}, extensions={extensions}")
+        db_entries = query_files_by_system_and_query(
+            system=system_id,
+            query=query_cfg,
+            system_config=system,
+            limit=10000
+        )
+
+        if not db_entries:
+            t_func_elapsed = time.time() - t_func_start
+            logger.info(f"list_query_map END: 0 entries in {t_func_elapsed:.2f}s")
+            return []
+
+        entries: set[str] = set()
+        zip_entries: list[str] = []
+        for entry in db_entries:
+            filename = entry.get("filename") if isinstance(entry, dict) else None
+            if not filename:
+                filename = entry[0] if isinstance(entry, (tuple, list)) else str(entry)
+            if filename.lower().endswith('.zip'):
+                zip_entries.append(filename)
+                if zip_mode == "file" or not supports_zip:
+                    entries.add(filename)
+                elif zip_mode == "hierarchical":
+                    entries.add(filename)
+                continue
+            name, ext = os.path.splitext(filename)
+            ext = ext[1:].upper() if ext else ""
+            if ext and ext in extension_map:
+                virt_ext = extension_map[ext]
+                entries.add(f"{name}.{virt_ext.lower()}")
+            else:
+                entries.add(filename)
+
+        if zip_mode == "flatten" and supports_zip and zip_entries:
+            base_dir = os.path.join(
+                config.get("filestore", "/mnt/filestorefs"),
+                "Native",
+                system["local_base_path"],
+                source_dir,
+            )
+            for zip_name in zip_entries:
+                zip_path = os.path.join(base_dir, zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                if os.path.isfile(zip_path):
+                    try:
+                        internal = zippath_listdir(zip_path)
+                        for child in internal:
+                            entries.add(child)
+                    except Exception:
+                        continue
+
+        entries_list = sorted(entries)
+
+        if cache_enabled:
+            try:
+                _dir_cache[cache_key] = (current_mtime, entries_list)
+            except Exception:
+                pass
+
+        t_func_elapsed = time.time() - t_func_start
+        logger.info(f"list_query_map END: returned {len(entries_list)} entries in {t_func_elapsed:.2f}s")
+        return entries_list
+    except Exception as e:
+        logger.error(f"Query map failed: {e}", exc_info=True)
+        return []
 
 def is_dynamic_map(config, map_name: str, sa_entry: dict) -> bool:
     """Check if the map is a dynamic ...SoftwareArchives... map."""
@@ -503,12 +664,12 @@ def list_dynamic_map(
         """Query database for files instead of scanning folders."""
         try:
             from db.queries import query_files_by_system_and_extensions
-            from pathutils import get_system_info
+            from pathutils import get_system_identifier
             
-            # Get system info for database lookup
-            system_info = get_system_info(system)
+            # Get system identifier for database lookup
+            system_info = get_system_identifier(system)
             if not system_info:
-                logger.warning(f"Database mode requested but system info not found for {system.get('name')}")
+                logger.warning(f"Database mode requested but system identifier not found for {system.get('name')}")
                 # Fall back to folder-based mode
                 db_mode = False
             else:
