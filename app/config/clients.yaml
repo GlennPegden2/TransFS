@@ -333,7 +333,7 @@ clients:
         manufacturer: MITS
         system_mapping_name: Altair8800
         local_base_path: MITS/Altair8800
-        download_layout: folder_based
+        download_layout: flat
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
