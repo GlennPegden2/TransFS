@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-import sqlite3
-import sys
+"""Check current database schema"""
 
-db_path = "/mnt/filestorefs/.transfs_metadata.db"
-conn = sqlite3.connect(db_path)
+import sqlite3
+
+conn = sqlite3.connect('/mnt/filestorefs/.transfs_metadata.db')
 cursor = conn.cursor()
 
-# Get table schema
-cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='files'")
-result = cursor.fetchone()
-if result:
-    print("Files table schema:")
-    print(result[0])
-else:
-    print("Files table not found")
-    print("\nAvailable tables:")
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    for table in cursor.fetchall():
-        print(f"  - {table[0]}")
+print("Current 'files' table schema:")
+cursor.execute("PRAGMA table_info(files)")
+columns = cursor.fetchall()
+for col in columns:
+    col_name, col_type = col[1], col[2]
+    notnull = col[3]
+    pk = col[5]
+    print(f"  {col_name:20s} {col_type:10s} notnull={notnull} pk={pk}")
+
+print()
+print("File count in database:")
+cursor.execute("SELECT COUNT(*) FROM files")
+count = cursor.fetchone()[0]
+print(f"  {count} entries")
 
 conn.close()
