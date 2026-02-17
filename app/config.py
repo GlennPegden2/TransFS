@@ -23,6 +23,7 @@ class SystemConfig:
     canonical_name: str
     local_base_path: str
     packs: list[Pack]
+    download_layout: str = "folder_based"  # folder_based (default) | flat
 
 def read_app_config(config_dir="config"):
     """Read application configuration (mountpoint, filestore, web_api, ssl_ignore_hosts)."""
@@ -93,6 +94,7 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
     clients_config = read_clients_config(config_dir)
     manufacturer_map = {}
     for client in clients_config.get("clients", []):
+        client_name = client.get("name")
         for system in client.get("systems", []):
             manufacturer = system.get("manufacturer")
             mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
@@ -100,16 +102,27 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
             name = system.get("name")
             if manufacturer and mapping_name:
                 manufacturer_map.setdefault(manufacturer, {})
-                manufacturer_map[manufacturer][mapping_name] = {
+                # Use client_name + name as unique key to avoid overwriting systems with same mapping_name
+                unique_key = f"{client_name}||{name}"
+                manufacturer_map[manufacturer][unique_key] = {
                     "mapping_name": mapping_name,
                     "display_name": display_name,
                     "name": name,
+                    "client": client_name,
                 }
-    # Convert dicts to sorted lists
-    return {
-        man: sorted(list(systems.values()), key=lambda s: s.get("display_name", s.get("mapping_name", "")))
-        for man, systems in manufacturer_map.items()
-    }
+    # Convert dicts to sorted lists (deduplicate by display_name + mapping_name combo)
+    result = {}
+    for man, systems in manufacturer_map.items():
+        # Deduplicate: keep first occurrence of each display_name + mapping_name combo
+        seen = set()
+        unique_systems = []
+        for system in sorted(systems.values(), key=lambda s: s.get("display_name", s.get("mapping_name", ""))):
+            key = (system["display_name"], system["mapping_name"])
+            if key not in seen:
+                seen.add(key)
+                unique_systems.append(system)
+        result[man] = unique_systems
+    return result
 
 def get_web_api_config(config_dir="config") -> dict:
     """Get web API host and port configuration."""
@@ -158,10 +171,21 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
                 info_links=pack_data.get("info_links")
             ))
     
+    # Get download_layout from clients config
+    download_layout = "folder_based"  # default
+    for client in clients_config.get("clients", []):
+        if client.get("name") == client_name:
+            for system in client.get("systems", []):
+                if system.get("name") == system_name:
+                    download_layout = system.get("download_layout", "folder_based")
+                    break
+            break
+    
     return SystemConfig(
         name=system_name,
         manufacturer=manufacturer,
         canonical_name=canonical_name,
         local_base_path=local_base_path,
-        packs=packs
+        packs=packs,
+        download_layout=download_layout
     )

@@ -5,6 +5,7 @@
 ## VFS Documentation Index
 
 - [docs/VFS_CONTENTS.md](VFS_CONTENTS.md)
+- [docs/MAPPING_AND_FILTERING.md](MAPPING_AND_FILTERING.md)
 
 ### 1. Virtual Filesystem Structure
 

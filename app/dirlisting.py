@@ -43,32 +43,24 @@ _last_getattr_save = time.time()
 GETATTR_SAVE_INTERVAL = 5.0  # Save every 5 seconds if dirty
 
 def _load_cache():
-    """Load cache from disk."""
+    """Load cache from disk.
+    
+    DISABLED: PKL cache causes staleness issues when configuration changes.
+    Only in-memory session cache is used now. Persistent metadata comes from database.
+    """
     global _dir_cache, _cache_loaded
-    if not _cache_config.get("dir_cache_enabled", True):
-        _dir_cache = {}
-        _cache_loaded = True
-        return
-    if not _cache_loaded:
-        try:
-            if os.path.exists(CACHE_FILE):
-                with open(CACHE_FILE, 'rb') as f:
-                    _dir_cache = pickle.load(f)
-                logger.info(f"Loaded cache with {len(_dir_cache)} entries from disk")
-        except Exception as e:
-            logger.warning(f"Failed to load cache: {e}")
-            _dir_cache = {}
-        _cache_loaded = True
+    # PKL cache is disabled - always use empty in-memory cache per session
+    _dir_cache = {}
+    _cache_loaded = True
 
 def _save_cache():
-    """Save cache to disk."""
-    if not _cache_config.get("dir_cache_enabled", True):
-        return
-    try:
-        with open(CACHE_FILE, 'wb') as f:
-            pickle.dump(_dir_cache, f)
-    except Exception as e:
-        logger.warning(f"Failed to save cache: {e}")
+    """Save cache to disk.
+    
+    DISABLED: PKL cache causes staleness issues when configuration changes.
+    Only in-memory session cache is used now. Persistent metadata comes from database.
+    """
+    # PKL cache is disabled - nothing to save
+    pass
 
 def _load_getattr_cache():
     """Load getattr cache from disk."""
@@ -417,18 +409,45 @@ def is_dynamic_map(config, map_name: str, sa_entry: dict) -> bool:
     return False
 
 def list_dynamic_map(
-    config, path: Path, root_parts: tuple, system: dict, sa_entry: dict, map_name: str
+    config, path: Path, root_parts: tuple, system: dict, sa_entry: dict, map_name: str,
+    db_mode: bool = False, extensions: list = None
 ) -> list[str]:
     """
-    List files and directories for a dynamic ...SoftwareArchives... map,
-    handling extension mapping and zip handling modes (hierarchical, flatten, file).
+    List files and directories for a dynamic ...SoftwareArchives... map.
     
-    zip_mode options:
+    Supports two modes:
+    
+    1. YAML-driven (db_mode=False, default):
+       - Uses filetypes from clients.yaml configuration
+       - Scans extension folders on disk
+       - Handles zip_mode (hierarchical, flatten, file)
+       - Backward compatible with existing behavior
+       
+    2. Database-driven (db_mode=True):
+       - Uses database queries for file discovery
+       - Requires pre-computed extensions list or system field in database
+       - Optimal for flat layout systems
+       - Avoids expensive folder scans
+    
+    Args:
+        config: Configuration object with filestore path
+        path: Virtual path being listed
+        root_parts: Tuple of path parts up to mount point
+        system: System configuration dict
+        sa_entry: Software archives entry from config
+        map_name: Name of the map (e.g., "ROMs", "FDs")
+        db_mode: If True, use database queries; if False, use folder scanning (default)
+        extensions: Pre-computed extensions list for db_mode (e.g., ["ROM", "BIN"])
+    
+    Returns:
+        List of entries (filenames and directories) at the given virtual path
+    
+    zip_mode options (folder-based only):
       - hierarchical (default): ZIPs appear as navigable directories
-      - flatten: ZIPs are transparent, contents merged into parent listing (legacy)
+      - flatten: ZIPs are transparent, contents merged into parent listing
       - file: ZIPs appear as opaque files, not navigable
       
-    Caching: Results are cached based on source directory mtime for performance.
+    Caching: Results cached in-memory based on source directory mtime.
     """
     global _cache_hits, _cache_misses
     t_func_start = time.time()
@@ -444,37 +463,111 @@ def list_dynamic_map(
     )
     filetype_map, reverse_map = get_filetype_maps(sa_entry)
     real_exts = filetype_map.get(map_name.upper(), [])
+    logger.info(f"DEBUG filetype_map for {map_name}: filetype_map={filetype_map}, real_exts={real_exts}")
     # Parts after /<mount>/<client>/<system>/<map_name>/
     subpath = path.parts[len(root_parts) + 3:]
     
-    # Cache key: full path string
+    # Cache key: full path string (persistent cache disabled, in-memory only)
     cache_key = str(path)
     
+    # In-memory session cache only (no persistent PKL cache)
     cache_enabled = _cache_config.get("dir_cache_enabled", True) and _cache_config.get("dir_listing_cache_enabled", True)
 
-    # Check cache validity by comparing directory mtime
-    # For FILE mode at root level, check the actual source directory
-    if not subpath and zip_mode == "file" and real_exts:
-        check_dir = os.path.join(source_dir, real_exts[0])
-    else:
-        check_dir = source_dir
+    # Get directory mtime for in-memory cache validity check
+    check_dir = source_dir
     
     try:
         current_mtime = os.path.getmtime(check_dir) if os.path.isdir(check_dir) else 0
         
-        if cache_enabled:
-            _load_cache()
-            if cache_key in _dir_cache:
-                cached_mtime, cached_entries = _dir_cache[cache_key]
-                if cached_mtime == current_mtime:
-                    _cache_hits += 1
-                    logger.info(f"CACHE HIT: {cache_key} (hits={_cache_hits}, misses={_cache_misses})")
-                    return cached_entries
+        # Check in-memory cache (session-scoped, cleared on restart)
+        if cache_enabled and cache_key in _dir_cache:
+            cached_mtime, cached_entries = _dir_cache[cache_key]
+            if cached_mtime == current_mtime:
+                _cache_hits += 1
+                logger.info(f"IN-MEMORY CACHE HIT: {cache_key} (hits={_cache_hits}, misses={_cache_misses})")
+                return cached_entries
     except (OSError, PermissionError):
         current_mtime = 0
     
     if cache_enabled:
         _cache_misses += 1
+    
+    # ========== DATABASE-DRIVEN MODE (Phase 2) ==========
+    if db_mode:
+        """Query database for files instead of scanning folders."""
+        try:
+            from db.queries import query_files_by_system_and_extensions
+            from pathutils import get_system_info
+            
+            # Get system info for database lookup
+            system_info = get_system_info(system)
+            if not system_info:
+                logger.warning(f"Database mode requested but system info not found for {system.get('name')}")
+                # Fall back to folder-based mode
+                db_mode = False
+            else:
+                # Determine extensions to query
+                if extensions is None:
+                    # Use filetypes from config as fallback
+                    filetype_map, reverse_map = get_filetype_maps(sa_entry)
+                    extensions = filetype_map.get(map_name.upper(), [])
+                
+                if not extensions:
+                    logger.info(f"No extensions configured for {map_name}, returning empty listing")
+                    t_func_elapsed = time.time() - t_func_start
+                    logger.info(f"list_dynamic_map END: database mode, 0 entries in {t_func_elapsed:.2f}s")
+                    return []
+                
+                # Query database for files
+                logger.info(f"DATABASE MODE: querying {system_info} for extensions {extensions}")
+                db_entries = query_files_by_system_and_extensions(
+                    system=system_info,
+                    extensions=extensions,
+                    limit=10000  # Reasonable limit for listings
+                )
+                
+                if not db_entries:
+                    logger.info(f"Database query returned no results for {system_info} with {extensions}")
+                    t_func_elapsed = time.time() - t_func_start
+                    logger.info(f"list_dynamic_map END: database mode, 0 entries in {t_func_elapsed:.2f}s")
+                    return []
+                
+                # Extract unique filenames from database results
+                entries: set[str] = set()
+                for entry in db_entries:
+                    # Entry is a dict with 'filename' key
+                    if isinstance(entry, dict) and 'filename' in entry:
+                        entries.add(entry['filename'])
+                    else:
+                        # Handle tuples or direct filenames
+                        filename = entry[0] if isinstance(entry, (tuple, list)) else str(entry)
+                        entries.add(filename)
+                
+                entries_list = sorted(entries)
+                
+                # Log result
+                t_func_elapsed = time.time() - t_func_start
+                logger.info(f"list_dynamic_map END: database mode, returned {len(entries)} entries in {t_func_elapsed:.2f}s")
+                
+                # Cache result
+                if cache_enabled:
+                    try:
+                        # For database mode, use current time as mtime (stable, database-backed)
+                        db_mtime = int(time.time())
+                        _dir_cache[cache_key] = (db_mtime, entries_list)
+                    except Exception:
+                        pass
+                
+                return entries_list
+        
+        except ImportError as e:
+            logger.warning(f"Database mode requested but db.queries module not available: {e}. Falling back to folder-based.")
+            db_mode = False
+        except Exception as e:
+            logger.error(f"Database mode failed: {e}. Falling back to folder-based.", exc_info=True)
+            db_mode = False
+    
+    # ========== YAML-DRIVEN MODE (Default) ==========
     logger.info(f"list_dynamic_map START: path={path}, subpath={subpath}, source_dir={source_dir}, zip_mode={zip_mode}, real_exts={real_exts} (cache miss)")
     
     entries: set[str] = set()
@@ -517,7 +610,15 @@ def list_dynamic_map(
     except ValueError:
         auto_limit = 0
 
+    logger.info(f"LOOP START: real_exts={real_exts}, len={len(real_exts)}")
     for real_ext in real_exts:
+        logger.info(f"LOOP ITERATION: real_ext={real_ext}")
+        # Resolve extension directory case-insensitively (e.g., 2mg vs 2MG)
+        ext_dir_name = real_ext
+        for candidate in (real_ext, real_ext.lower(), real_ext.upper()):
+            if os.path.isdir(os.path.join(source_dir, candidate)):
+                ext_dir_name = candidate
+                break
         # Detect zip context first to know where to stop building dir_path
         in_zip = False
         zip_path = ""
@@ -530,7 +631,7 @@ def list_dynamic_map(
                 cumulative.append(part)
                 if part.lower().endswith(".zip"):
                     # Check both real_ext and map_name folders
-                    candidate1 = os.path.join(source_dir, real_ext, *cumulative)
+                    candidate1 = os.path.join(source_dir, ext_dir_name, *cumulative)
                     candidate2 = os.path.join(source_dir, map_name, *cumulative)
                     
                     if os.path.isfile(candidate1):
@@ -555,8 +656,8 @@ def list_dynamic_map(
         if not in_zip:
             # Use all of subpath to build the directory path we're listing
             path_components = subpath if subpath else []
-            dir_path = os.path.join(source_dir, real_ext, *path_components)
-            actual_folder = real_ext
+            dir_path = os.path.join(source_dir, ext_dir_name, *path_components)
+            actual_folder = ext_dir_name
             
             logger.info(f"DEBUG list_dynamic_map: subpath={subpath}, path_components={path_components}, dir_path={dir_path}")
             
@@ -571,8 +672,8 @@ def list_dynamic_map(
                 continue
         else:
             # For ZIP-internal paths, set actual_folder based on which candidate matched
-            if zip_path.startswith(os.path.join(source_dir, real_ext)):
-                actual_folder = real_ext
+            if zip_path.startswith(os.path.join(source_dir, ext_dir_name)):
+                actual_folder = ext_dir_name
             else:
                 actual_folder = map_name
             dir_path = os.path.dirname(zip_path)
@@ -581,9 +682,11 @@ def list_dynamic_map(
         if zip_mode == "hierarchical":
             # Root level: subpath empty → list only immediate dirs and zip containers
             if not subpath:
+                logger.info(f"HIER ROOT: real_ext={real_ext}, dir_path={dir_path}, listdir_path will be={dir_path}")
                 t_start = time.time()
                 listdir_path = dir_path  # Use the resolved dir_path (may be fallback folder)
                 dir_entries = [e for e in os.listdir(listdir_path) if not e.startswith('.')]
+                logger.info(f"HIER ROOT: listdir returned {len(dir_entries)} entries from {listdir_path}")
                 t_listdir = time.time() - t_start
                 if t_listdir > 0.5:
                     logger.warning(f"SLOW os.listdir({listdir_path}) took {t_listdir:.2f}s for {len(dir_entries)} entries")
@@ -641,19 +744,23 @@ def list_dynamic_map(
             for entry_name, is_directory in dir_entries:
                 if is_directory:
                     entries.add(entry_name)
+                    logger.debug(f"Added DIR: {entry_name}")
                 elif entry_name.lower().endswith(".zip") and supports_zip:
                     entries.add(entry_name)
+                    logger.debug(f"Added ZIP: {entry_name}")
                 elif entry_name.lower().endswith(".zip") and not supports_zip:
                     # Treat as regular file
                     name, ext = os.path.splitext(entry_name)
                     if ext[1:].upper() == real_ext.upper():
                         virt_ext = reverse_map.get(real_ext.upper(), real_ext.upper())
                         entries.add(f"{name}.{virt_ext.lower()}")
+                        logger.debug(f"Added ZIP-treated-as-file: {name}.{virt_ext.lower()}")
                 else:
                     name, ext = os.path.splitext(entry_name)
                     if ext[1:].upper() == real_ext.upper():
                         virt_ext = reverse_map.get(real_ext.upper(), real_ext.upper())
                         entries.add(f"{name}.{virt_ext.lower()}")
+                        logger.debug(f"Added FILE {real_ext}: {name}.{virt_ext.lower()}")
             t_process_elapsed = time.time() - t_process
             if t_process_elapsed > 0.5:
                 logger.warning(f"SLOW entry processing took {t_process_elapsed:.2f}s for {len(dir_entries)} entries")
@@ -663,7 +770,7 @@ def list_dynamic_map(
             # ZIPs are opaque files, never navigable
             if not subpath:
                 # Use os.scandir for efficiency (avoids 3500+ stat calls)
-                scan_path = os.path.join(source_dir, real_ext)
+                scan_path = os.path.join(source_dir, ext_dir_name)
                 t_scan_start = time.time()
                 logger.info(f"FILE MODE scanning: {scan_path}")
                 try:
@@ -710,9 +817,9 @@ def list_dynamic_map(
         elif zip_mode == "flatten":
             # Merge ZIP contents into parent directory listing (performance warning)
             if not subpath:
-                dir_entries = [e for e in os.listdir(os.path.join(source_dir, real_ext)) if not e.startswith('.')]
+                dir_entries = [e for e in os.listdir(os.path.join(source_dir, ext_dir_name)) if not e.startswith('.')]
                 for entry in dir_entries:
-                    entry_path = os.path.join(source_dir, real_ext, entry)
+                    entry_path = os.path.join(source_dir, ext_dir_name, entry)
                     if os.path.isdir(entry_path):
                         entries.add(entry)
                     elif entry.lower().endswith(".zip") and supports_zip and flatten_enabled:
@@ -769,13 +876,11 @@ def list_dynamic_map(
     t_func_elapsed = time.time() - t_func_start
     entries_list = sorted(entries)
     
-    # Cache the result with current mtime
+    # Cache result in memory for this session (no persistent PKL cache)
     if cache_enabled:
         try:
-            _load_cache()
             _dir_cache[cache_key] = (current_mtime, entries_list)
-            _save_cache()
-            logger.info(f"CACHED: {cache_key} with mtime={current_mtime}")
+            logger.info(f"IN-MEMORY CACHED: {cache_key} with mtime={current_mtime}")
         except Exception:  # pylint: disable=broad-except
             pass
     

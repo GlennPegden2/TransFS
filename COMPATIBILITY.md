@@ -10,7 +10,8 @@ This table tracks which systems are supported on which emulator platforms, along
 | Acorn Electron     | ✅ VHD, MMB, UEF | |      |          | ✅         |       |
 | Amstrad CPC        | ✅ DSK, CTD, Exx, ROM      |   |          |          | ✅         | Mister takes ages to boot, partly because it looks for 255 files tht normally won't exist |
 | Amstrad PCW        | ✅ DSK      |   |          |          |       | ✅         |
-| Apple II           |            |   |          |          |       |          |
+| Apple I           |            |   |          |          |       |          |
+| Apple II           |  ✅ DSK, PO, DO, HDV, 2MG (via transform to HDV          |   |          |          |  ✅ (except HDVs)     | Self boot HDVs need a soft reset to boot. Many images don't seem to work for some reasons         |
 | Atari 2600         |            |   |          |          |       |          |
 | Atari 5200         |            |   |          |          |       |          |
 | Atari 7800         |            |   |          |          |       |          |

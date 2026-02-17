@@ -9,6 +9,7 @@ DO NOT expose this API to untrusted networks or public internet.
 import asyncio
 import base64
 import fnmatch
+import logging
 import math
 import os
 import re
@@ -592,6 +593,8 @@ def db_sync(path: str | None = None):
     
     Requires database mode to be enabled.
     """
+    logger = logging.getLogger("api")
+    
     try:
         from config import read_config
         from feature_flags import FeatureFlagManager
@@ -605,11 +608,17 @@ def db_sync(path: str | None = None):
                 "message": "Database mode is not enabled"
             }
         
-        # Import database sync class
+        # Import database sync class and connection
         from db.sync import FilesystemSync
+        from db.connection import init_database
         
         filestore_path = config.get("filestore", "/mnt/filestorefs")
+        db_path = config.get("database", {}).get("path", "/mnt/filestorefs/.transfs_metadata.db")
+        
         logger.info(f"Starting database sync for filestore: {filestore_path}")
+        
+        # Initialize database connection if needed
+        init_database(db_path)
         
         # Create sync instance and run initial scan
         # We always sync the entire filestore - the filtering happens at query time based on config
@@ -832,6 +841,12 @@ class ConfigUpdate(BaseModel):
     web_api: dict | None = None
     ui: dict | None = None
     database: dict | None = None
+
+
+class QueryMappingRequest(BaseModel):
+    """Request body for database query mapping."""
+    extensions: list[str]  # Required: list of file extensions
+    limit: int = 100  # Optional: max results
 
 
 @app.post("/config")
@@ -2675,3 +2690,137 @@ def get_filename_from_response(resp, url):
     parsed = urlparse(url)
     filename = os.path.basename(parsed.path)
     return unquote(filename)
+
+
+# ============================================================================
+# DATABASE-DRIVEN VIRTUAL MAPPINGS ENDPOINTS
+# ============================================================================
+
+@app.get("/api/systems")
+def list_all_systems():
+    """
+    List all systems available in database.
+    
+    Returns: {
+        "systems": ["Apple/AppleII", "Nintendo/NES", ...],
+        "count": N
+    }
+    """
+    try:
+        from db.queries import query_all_systems
+        systems = query_all_systems()
+        return {
+            'systems': systems,
+            'count': len(systems)
+        }
+    except Exception as e:
+        logger.error(f"Error listing systems: {e}", exc_info=True)
+        return {'error': str(e), 'systems': []}, 500
+
+
+@app.post("/api/systems/{system}/query-mapping")
+def query_custom_mapping(system: str, request: QueryMappingRequest):
+    """
+    Query files for custom mapping creation.
+    
+    POST body: {
+        "extensions": ["nib", "bxy", "dsk"],
+        "limit": 100
+    }
+    
+    Returns: {
+        "files": [
+            {"file_id": 1, "filename": "game.nib", "path": "...", "extension": "nib"},
+            ...
+        ],
+        "count": N,
+        "system": "Apple/AppleII",
+        "extensions": ["nib", "bxy", "dsk"]
+    }
+    """
+    try:
+        from db.queries import query_files_by_system_and_extensions
+        
+        system = unquote(system)  # Handle URL-encoded system names
+        
+        # Validate input
+        if not request.extensions:
+            return {'error': 'extensions parameter required (array of file extensions)'}, 400
+        
+        if not system:
+            return {'error': 'system parameter required (from URL path)'}, 400
+        
+        # Query database
+        files = query_files_by_system_and_extensions(system, request.extensions, request.limit)
+        
+        return {
+            'files': files,
+            'count': len(files),
+            'system': system,
+            'extensions': request.extensions,
+            'query_mode': 'database'
+        }
+    
+    except Exception as e:
+        logger.error(f"Error querying mapping: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.get("/api/systems/{system}/extensions")
+def get_system_extensions(system: str):
+    """
+    Get all available file extensions for a system.
+    
+    Returns: {
+        "system": "Apple/AppleII",
+        "extensions": ["dsk", "do", "po", "2mg", "nib", "bxy"],
+        "counts": {"dsk": 47, "do": 12, ...}
+    }
+    """
+    try:
+        from db.queries import query_extensions_by_system, query_file_count_by_system_and_extension
+        
+        system = unquote(system)
+        extensions = query_extensions_by_system(system)
+        
+        # Get count for each extension
+        counts = {}
+        for ext in extensions:
+            counts[ext] = query_file_count_by_system_and_extension(system, ext)
+        
+        return {
+            'system': system,
+            'extensions': extensions,
+            'counts': counts
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting system extensions: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.get("/api/systems/{system}/stats")
+def get_system_statistics(system: str):
+    """
+    Get statistics about a system (file counts, sizes, extensions).
+    
+    Returns: {
+        "system": "Apple/AppleII",
+        "total_files": 200,
+        "total_size": 1048576,
+        "extension_counts": {"dsk": 47, "do": 12, ...},
+        "extensions": ["dsk", "do", "po", ...]
+    }
+    """
+    try:
+        from db.queries import query_system_statistics
+        
+        system = unquote(system)
+        stats = query_system_statistics(system)
+        stats['system'] = system
+        
+        return stats
+    
+    except Exception as e:
+        logger.error(f"Error getting system statistics: {e}", exc_info=True)
+        return {'error': str(e)}, 500

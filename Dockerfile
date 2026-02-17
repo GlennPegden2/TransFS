@@ -7,10 +7,6 @@ RUN apt-get install -y build-essential fuse3 libfuse3-dev pkg-config samba wget 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Install testing dependencies (for running tests in container)
-COPY requirements-dev.txt .
-RUN pip install -r requirements-dev.txt
-
 # Add FUSE permission
 RUN mkdir /mnt/transfs && chmod 755 /mnt/transfs
 

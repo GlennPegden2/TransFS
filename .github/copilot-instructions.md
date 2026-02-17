@@ -5,12 +5,15 @@
   User PowerShell syntax for host commands, bash for container commands
   However, as powershell formatting can be hard and everything runs inside the container, it normally makes MUCH more sense to run a bash command inside the container via docker exec.
   Our test suite runs INSIDE docker. 
+  the kegacy folder should be used for scripts written during development but are part of the finished app (i.e. are written for testing and verifiaction during feature development)
 
 #SOURCE COUNTROL
 
   github is source control.
+  Changlog.md should be updated with a summary of changes after each successful code change task, and should be commited to github with the code changes.
   remind the user to commit periodically, after sucessful code change tasks (when the problems are solved)
   Encourage the user to push/sync whenever the test suite is passing, to ensure work is saved and shared.
+  When we a preapring to push, we should ensure the docs folder is up to date, with new and changed features documented in FEATURES.md and supporting documentation in the docs folder. We should also ensure the changelog is updated with a summary of changes, and that all code changes are commited to github.
 
 #PERSONALITY 
 

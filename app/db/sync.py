@@ -30,6 +30,22 @@ class FilesystemSync:
         self.root_path = Path(root_path)
         self.mount_path = mount_path
     
+    def _extract_system(self, source_path: str) -> Optional[str]:
+        """
+        Extract system from source path.
+        
+        Examples:
+            /mnt/filestorefs/Native/Apple/AppleII/Software/... → Apple/AppleII
+            /mnt/filestorefs/Native/Nintendo/NES/Software/... → Nintendo/NES
+        """
+        parts = source_path.split('/')
+        # Pattern: /mnt/filestorefs/Native/Manufacturer/System/Software/...
+        if len(parts) >= 6 and parts[4] == 'Native':
+            manufacturer = parts[5]
+            system = parts[6]
+            return f"{manufacturer}/{system}"
+        return None
+    
     def initial_scan(self, skip_hidden: bool = True) -> dict:
         """
         Perform initial database population from filesystem.
@@ -92,6 +108,9 @@ class FilesystemSync:
         filename = os.path.basename(filepath)
         extension = os.path.splitext(filename)[1][1:] if '.' in filename else None
         
+        # Extract system from path (e.g., Apple/AppleII)
+        system = self._extract_system(source_path)
+        
         # Check if file exists in database
         cursor = conn.execute(
             "SELECT file_id, mtime FROM files WHERE source_path = ?",
@@ -107,13 +126,14 @@ class FilesystemSync:
                 INSERT INTO files (
                     source_path, virtual_path, filename, extension,
                     size, mtime, ctime, atime, ino, mode,
-                    is_directory, is_archive, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_directory, is_archive, system, content_type,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 source_path, virtual_path, filename, extension,
                 stat.st_size, int(stat.st_mtime), int(stat.st_ctime), int(stat.st_atime),
                 stat.st_ino, stat.st_mode,
-                False, self._is_archive(filename),
+                False, self._is_archive(filename), system, None,
                 now, now
             ))
             

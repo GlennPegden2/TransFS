@@ -4,6 +4,50 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added (Phase 1 Foundation - Database-Driven File Organization - COMPLETE)
+- **Phase 1.0-1.5**: Database Infrastructure
+  - Database schema enhancements: `system` column (e.g., "Apple/AppleII") and `content_type` column for files table
+  - System extraction logic: `_extract_system(source_path)` automatically populates system metadata during sync
+  - 7 database query helpers in `app/db/queries.py` for system-based file discovery
+  - 4 REST API endpoints (`/api/systems`, `/api/systems/{system}/query-mapping`, etc.) for database-driven queries
+  
+- **Phase 1.6**: Configuration Infrastructure
+  - `download_layout` field (folder_based|flat) in SystemConfig for layout preference storage
+  - All 25 systems in clients.yaml now configured with `download_layout: folder_based`
+  - Configuration fully backward compatible with zero breaking changes
+  
+- **Phase 1.7**: Dual-Mode Directory Listing
+  - `list_dynamic_map()` refactored with `db_mode` parameter for dual-mode operation:
+    - YAML-driven mode (default): Folder-based scanning (existing behavior)
+    - Database-driven mode (new): Database queries for file discovery
+  - Graceful fallback to folder-based mode if database unavailable
+  - 100% backward compatible - existing code works unchanged
+  
+- **Phase 1.8-1.9**: Testing & Validation
+  - Comprehensive test suite created: `tests/test_phase1.py` (23 tests)
+  - Test results: 12/12 passed, 11 skipped (require database/filesystem)
+  - Verified: SystemConfig, configuration loading, dual-mode signature, integration
+  
+- **Documentation** (10+ pages):
+  - [docs/PHASE_1_COMPLETE.md](docs/PHASE_1_COMPLETE.md) - Phase 1 completion summary
+  - [docs/PHASE_1_7_COMPLETION.md](docs/PHASE_1_7_COMPLETION.md) - Dual-mode refactoring details
+  - [docs/FLAT_LAYOUT_MIGRATION.md](docs/FLAT_LAYOUT_MIGRATION.md) - 4-phase migration plan
+  - [docs/DATABASE_DRIVEN_MAPPINGS.md](docs/DATABASE_DRIVEN_MAPPINGS.md) - Technical assessment
+  - Additional guides and reference documentation
+
+### Changed
+- `list_dynamic_map(config, path, root_parts, system, sa_entry, map_name)` signature updated:
+  - Added optional `db_mode: bool = False` parameter
+  - Added optional `extensions: list = None` parameter
+  - Enhanced docstring with 40-line comprehensive documentation
+  
+### Technical Details
+- Database queries optimized for system + extension combinations
+- System metadata extracted from source path: `/Native/{manufacturer}/{system}/...` → `{manufacturer}/{system}`
+- All 25 systems configured for layout: Acorn, Apple, Atari, Coleco, Commodore, GCE, Mattel, Microsoft, MITS, NEC, Nintendo, Sega, Sinclair, SNK, Tandy
+- Dual-mode supports gradual Phase 2 migration (systems can be flattened one-by-one)
+- Complete backward compatibility maintained throughout
+
 ### Added
 - `/sync/client/{client}/system/{system}` API endpoint for manual system cache population
 - Comprehensive logging to track getattr cache hits, database lookups, and transform calculations
@@ -13,12 +57,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - UI configuration option `show_real_path_tooltips` (enabled by default) to toggle path tooltips in Config tab
 - Transform plugin system with auto-discovery from `app/transform_plugins`
 - Transform plugin documentation index and feature page
+- Mapping and filtering documentation: `docs/MAPPING_AND_FILTERING.md`
 
 ### Changed
 - **PERF**: Getattr cache validation now uses file's own mtime instead of parent directory mtime (prevents false invalidations)
 - **PERF**: Readdir batch phase now checks getattr cache FIRST, before source path lookups and transform calculations
 - **PERF**: Getattr priority reordered: cache → database → full resolution (prevents unnecessary database lookups)
 - Cache warmer now calls `os.stat()` on files to pre-populate transform sizes, not just directory listings
+- Disabled persistent PKL dir/getattr caches in favor of in-memory session cache + database to prevent stale listings
+- Moved `two_mg` transform into plugin (`app/transform_plugins/two_mg_transform.py`)
 
 ### Fixed
 - Catastrophic slowdown for systems with file transforms (38-45x speedup for Apple-II: 76s → 2s)

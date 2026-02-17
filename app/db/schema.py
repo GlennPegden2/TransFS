@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS files (
     is_directory BOOLEAN DEFAULT 0,
     is_archive BOOLEAN DEFAULT 0,
     archive_format TEXT,
+    system TEXT,
+    content_type TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -37,6 +39,9 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_source_path ON files(source_path);
 CREATE INDEX IF NOT EXISTS idx_files_virtual_path ON files(virtual_path);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
+CREATE INDEX IF NOT EXISTS idx_files_system ON files(system);
+CREATE INDEX IF NOT EXISTS idx_files_system_ext ON files(system, extension);
+CREATE INDEX IF NOT EXISTS idx_files_content_type ON files(content_type);
 CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_is_directory ON files(is_directory);
 

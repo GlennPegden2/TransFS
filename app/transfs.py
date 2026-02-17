@@ -129,7 +129,7 @@ class TransFS(Passthrough):
         # Level 0 (/mnt/transfs): Show clients from config
         # Level 1 (/mnt/transfs/MiSTer): Show systems from config
         # Level 2 (/mnt/transfs/MiSTer/Amstrad): Show maps from config
-        # Level 3+ (/mnt/transfs/MiSTer/Amstrad/Tapes): Can use database
+        # Level 3+ (/mnt/transfs/MiSTer/Amstrad/Tapes): Can use database with config filtering
         root_parts = Path(self.root).parts
         path_parts = Path(path).parts
         hierarchy_level = len(path_parts) - len(root_parts)
@@ -137,10 +137,9 @@ class TransFS(Passthrough):
         if hierarchy_level < 3:
             return False
         
-        # Only use database for Native and MiSTer paths (both have comprehensive metadata)
-        mount_path = self.mount_path
-        return (path.startswith(os.path.join(mount_path, "Native")) or 
-                path.startswith(os.path.join(mount_path, "MiSTer")))
+        # Use database for all deep paths (Native and client paths)
+        # Database results are filtered through parse_trans_path for config compliance
+        return True
 
     def _get_zip_mode_for_path(self, xfull_path: str) -> str:
         """
@@ -360,12 +359,27 @@ class TransFS(Passthrough):
         if self._can_use_database(path):
             try:
                 logger.info(f"READDIR: using database mode for {path}")
+                
+                # Get allowed entries from config using parse_trans_path
+                t_config_start = time.time()
+                config_entries = set(parse_trans_path(self.config, self.root, path))
+                t_config = time.time() - t_config_start
+                logger.info(f"READDIR DATABASE: config allows {len(config_entries)} entries (parsed in {t_config:.4f}s)")
+                
+                # Get entries from database
                 db_entries = self.data_adapter.readdir_entries(path)
                 if db_entries:
                     sent_count = 0
+                    filtered_count = 0
                     for entry_id, (entry_name, stat_dict) in enumerate(db_entries, start=1):
                         if entry_id <= start_id:
                             continue
+                        
+                        # Filter: only send entries that are allowed by config
+                        if entry_name not in config_entries:
+                            filtered_count += 1
+                            continue
+                            
                         entry_path = os.path.join(path, entry_name)
                         # Fix misclassified directory entries for file-like names
                         if (
@@ -405,7 +419,7 @@ class TransFS(Passthrough):
                             break
                         sent_count += 1
                     t_total = time.time() - t_start
-                    logger.info(f"READDIR DATABASE: sent {sent_count} entries in {t_total:.4f}s")
+                    logger.info(f"READDIR DATABASE: sent {sent_count} entries, filtered {filtered_count}, total time {t_total:.4f}s")
                     return
             except Exception as e:
                 logger.warning(f"READDIR: database mode failed, falling back to cache: {e}")

@@ -237,22 +237,22 @@ class TestSystemStructure:
             assert top_level_name in listed_names, \
                 f"Expected file/directory not found: {path} (in {system_config.system_name})"
     
-    @pytest.mark.skip(reason="Deprecated: top-level contents are no longer deterministic across mappings")
-    def test_no_unexpected_toplevel_items(self, system_config: SystemTestConfig):
-        """Verify only expected items exist at system root level."""
-        root = system_config.get_transfs_path()
-        expected_names = {f.relative_path.split('/')[0] for f in system_config.expected_files}
-        
-        actual_items = {item.name for item in root.iterdir() if not item.name.startswith(".")}
-        
-        unexpected = actual_items - expected_names
-        if unexpected:
-            # Allow some flexibility for system-specific hidden files
-            hidden_ok = {".DS_Store", ".gitkeep", ".keep"}
-            unexpected = {u for u in unexpected if u not in hidden_ok}
-        
-        assert not unexpected, \
-            f"Unexpected items found in {system_config.system_name} root: {unexpected}"
+   # @pytest.mark.skip(reason="Deprecated: top-level contents are no longer deterministic across mappings")
+   # def test_no_unexpected_toplevel_items(self, system_config: SystemTestConfig):
+   #     """Verify only expected items exist at system root level."""
+   #     root = system_config.get_transfs_path()
+   #     expected_names = {f.relative_path.split('/')[0] for f in system_config.expected_files}
+   #     
+   #     actual_items = {item.name for item in root.iterdir() if not item.name.startswith(".")}
+   #     
+   #     unexpected = actual_items - expected_names
+   #     if unexpected:
+   #         # Allow some flexibility for system-specific hidden files
+   #         hidden_ok = {".DS_Store", ".gitkeep", ".keep"}
+   #         unexpected = {u for u in unexpected if u not in hidden_ok}
+   #     
+   #     assert not unexpected, \
+   #         f"Unexpected items found in {system_config.system_name} root: {unexpected}"
     
     def test_source_to_mount_mapping(self, system_config: SystemTestConfig):
         """Verify files from source appear correctly in TransFS mount."""

@@ -61,6 +61,7 @@ class TestClientMappings:
             "RetroBat",    # RetroBat emulator suite
             "RetroPie",    # RetroPie emulator suite
             "Mame",        # MAME arcade emulator
+            "Generic",     # Generic emulators
         }
         
         transfs_root = Path("/mnt/transfs")

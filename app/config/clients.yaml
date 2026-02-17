@@ -10,6 +10,7 @@ clients:
         manufacturer: Acorn
         system_mapping_name: Atom
         local_base_path: Acorn/Atom
+        download_layout: folder_based
         maps:
           - boot.vhd:
               default_source:
@@ -24,6 +25,7 @@ clients:
         manufacturer: Acorn
         system_mapping_name: Archimedes
         local_base_path: Acorn/Archimedes
+        download_layout: folder_based
         maps:
           - riscos.rom:
               default_source:
@@ -42,6 +44,7 @@ clients:
         manufacturer: Acorn
         system_mapping_name: Electron
         local_base_path: Acorn/Electron/
+        download_layout: folder_based
         maps:
           - boot.vhd:
               default_source:
@@ -62,6 +65,7 @@ clients:
         manufacturer: Acorn
         system_mapping_name: BBC Micro
         local_base_path: Acorn/BBC_B/
+        download_layout: folder_based
         maps:
           - boot.vhd:
               default_source:
@@ -81,6 +85,7 @@ clients:
         manufacturer: Amstrad
         system_mapping_name: PCW
         local_base_path: Amstrad/PCW
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...: 
               supports_zip: false
@@ -92,6 +97,7 @@ clients:
         manufacturer: Amstrad
         system_mapping_name: CPC
         local_base_path: Amstrad/CPC/
+        download_layout: folder_based
         maps:
           - boot.rom:
               default_source:
@@ -117,6 +123,7 @@ clients:
         manufacturer: Apple
         system_mapping_name: AppleI
         local_base_path: Apple/AppleI
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -129,20 +136,25 @@ clients:
         manufacturer: Apple
         system_mapping_name: AppleII
         local_base_path: Apple/AppleII
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
               source_dir: Software
               filetypes:
-              - FDs: "DSK,DO"
+              - FDs: "DSK,DO,PO"
               - HDs: "HDV"
+              transforms:
+                2MG:
+                  - type: two_mg
 
       # --- Atari ---
       - name: Atari2600
         manufacturer: Atari
         system_mapping_name: Atari2600
         local_base_path: Atari/2600
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -154,6 +166,7 @@ clients:
         manufacturer: Atari
         system_mapping_name: Atari5200
         local_base_path: Atari/5200
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -165,6 +178,7 @@ clients:
         manufacturer: Atari
         system_mapping_name: Atari7800
         local_base_path: Atari/7800
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -176,6 +190,7 @@ clients:
         manufacturer: Atari
         system_mapping_name: Atari800
         local_base_path: Atari/800
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -188,6 +203,7 @@ clients:
         manufacturer: Atari
         system_mapping_name: Lynx
         local_base_path: Atari/Lynx
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -200,6 +216,7 @@ clients:
         manufacturer: Coleco
         system_mapping_name: ColecoVision
         local_base_path: Coleco/ColecoVision
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -212,6 +229,7 @@ clients:
         manufacturer: Commodore
         system_mapping_name: Amiga
         local_base_path: Commodore/Amiga
+        download_layout: folder_based
         maps:
           - KICK.ROM:
               source_filename: BIOS/kick.rom
@@ -223,6 +241,7 @@ clients:
         manufacturer: Commodore
         system_mapping_name: C128
         local_base_path: Commodore/C128
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -234,6 +253,7 @@ clients:
         manufacturer: Commodore
         system_mapping_name: C64
         local_base_path: Commodore/C64
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -246,6 +266,7 @@ clients:
         manufacturer: Commodore
         system_mapping_name: PET
         local_base_path: Commodore/PET
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -258,6 +279,7 @@ clients:
         manufacturer: Commodore
         system_mapping_name: Plus4
         local_base_path: Commodore/Plus4
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -271,6 +293,7 @@ clients:
         manufacturer: GCE
         system_mapping_name: Vectrex
         local_base_path: GCE/Vectrex
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -283,6 +306,7 @@ clients:
         manufacturer: Mattel
         system_mapping_name: Intellivision
         local_base_path: Mattel/Intellivision
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -295,6 +319,7 @@ clients:
         manufacturer: Microsoft
         system_mapping_name: MSX
         local_base_path: Microsoft/MSX
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -308,6 +333,7 @@ clients:
         manufacturer: MITS
         system_mapping_name: Altair8800
         local_base_path: MITS/Altair8800
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -320,6 +346,7 @@ clients:
         manufacturer: NEC
         system_mapping_name: PCE
         local_base_path: NEC/PCE
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -331,6 +358,7 @@ clients:
         manufacturer: NEC
         system_mapping_name: TurboGrafx16
         local_base_path: NEC/TurboGrafx16
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -343,6 +371,7 @@ clients:
         manufacturer: Nintendo
         system_mapping_name: GameBoy
         local_base_path: Nintendo/GameBoy
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -354,6 +383,7 @@ clients:
         manufacturer: Nintendo
         system_mapping_name: GBA
         local_base_path: Nintendo/GBA
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -365,6 +395,7 @@ clients:
         manufacturer: Nintendo
         system_mapping_name: GBC
         local_base_path: Nintendo/GBC
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -376,6 +407,7 @@ clients:
         manufacturer: Nintendo
         system_mapping_name: NES
         local_base_path: Nintendo/NES
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -387,6 +419,7 @@ clients:
         manufacturer: Nintendo
         system_mapping_name: SNES
         local_base_path: Nintendo/SNES
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -399,6 +432,7 @@ clients:
         manufacturer: Sega
         system_mapping_name: GameGear
         local_base_path: Sega/GameGear
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -410,6 +444,7 @@ clients:
         manufacturer: Sega
         system_mapping_name: Genesis
         local_base_path: Sega/Genesis
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -421,6 +456,7 @@ clients:
         manufacturer: Sega
         system_mapping_name: MasterSystem
         local_base_path: Sega/MasterSystem
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -433,6 +469,7 @@ clients:
         manufacturer: Sinclair
         system_mapping_name: Spectrum
         local_base_path: Sinclair/Spectrum
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -446,6 +483,7 @@ clients:
         manufacturer: SNK
         system_mapping_name: NeoGeo
         local_base_path: SNK/NeoGeo
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -458,6 +496,7 @@ clients:
         manufacturer: Tandy
         system_mapping_name: MC-10
         local_base_path: Tandy/MC-10
+        download_layout: folder_based
         maps:
           - ...SoftwareArchives...:
               supports_zip: false
@@ -479,6 +518,7 @@ clients:
       manufacturer: Apple
       system_mapping_name: AppleII
       local_base_path: Apple/AppleII
+      download_layout: folder_based
       maps:
         - ...SoftwareArchives...:
             supports_zip: false

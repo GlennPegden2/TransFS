@@ -1074,16 +1074,81 @@
             });
             clientsContainer.appendChild(clientsFragment);
             
-            // Add listener to client checkboxes for pack loading
+            // Add listener to client checkboxes to reload systems
             document.querySelectorAll('input[name="clients"]').forEach(cb => {
-                cb.addEventListener('change', loadPacksForSelection);
+                cb.addEventListener('change', async () => {
+                    // Reload systems when client selection changes
+                    await loadSystemsForSelectedClient();
+                    // Also reload packs
+                    loadPacksForSelection();
+                });
             });
             
             // Load systems meta (now grouped by manufacturer)
             const meta = await fetch('/api/systems/meta').then(r => r.json());
-            manufacturerSystemMap = meta; // Save for later use
+            allSystemsMeta = meta; // Save for filtering
+            renderSystemsFromMetadata(meta); // Initial render shows all systems
+        }
+        loadData();
+        
+        // Load packs when client + system are selected
+        let currentPacksData = null;  // Store full pack data for filtering
+        let showAllPacks = false;      // Track filter state
+        let systemsMetaMap = {};       // Map manufacturer|||mapping_name -> full system object
+        let allSystemsMeta = {};       // Store all systems metadata for filtering
+        
+        async function loadSystemsForSelectedClient() {
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const systemsContainer = document.getElementById('systems');
+            
+            // Clear packs when client changes
+            document.getElementById('packs-info').textContent = 'Select a system to view available packs';
+            document.getElementById('packs').innerHTML = '';
+            document.getElementById('toggleFilterBtn').style.display = 'none';
+            
+            if (!checkedClient) {
+                // No client selected - show all systems from metadata
+                renderSystemsFromMetadata(allSystemsMeta);
+                return;
+            }
+            
+            // Client selected - fetch client-specific systems
+            const clientName = checkedClient.value;
+            try {
+                const response = await fetch(`/api/clients/${clientName}/systems`);
+                if (!response.ok) {
+                    systemsContainer.innerHTML = '<p style="color: #888;">Failed to load systems for this client</p>';
+                    return;
+                }
+                
+                const systemDisplayNames = await response.json();
+                
+                // Filter allSystemsMeta to only show systems for this client
+                const filteredMeta = {};
+                for (const manufacturer in allSystemsMeta) {
+                    const filteredSystems = allSystemsMeta[manufacturer].filter(s => {
+                        const displayName = s.display_name || s.name || s.mapping_name;
+                        return systemDisplayNames.includes(displayName);
+                    });
+                    
+                    if (filteredSystems.length > 0) {
+                        filteredMeta[manufacturer] = filteredSystems;
+                    }
+                }
+                
+                renderSystemsFromMetadata(filteredMeta);
+            } catch (e) {
+                systemsContainer.innerHTML = `<p style="color: #888;">Error loading systems: ${escapeHtml(e.message)}</p>`;
+            }
+        }
+        
+        function renderSystemsFromMetadata(meta) {
             const systemsContainer = document.getElementById('systems');
             systemsContainer.textContent = '';
+            
+            // Clear system checkboxes to reset state
+            systemsMetaMap = {};
+            
             const systemsFragment = document.createDocumentFragment();
             for (const manufacturer in meta) {
                 const safeManufacturer = escapeHtml(manufacturer);
@@ -1168,7 +1233,7 @@
             }
             systemsContainer.appendChild(systemsFragment);
             
-            // Add listener to system checkboxes for pack loading
+            // Re-add listener to system checkboxes for pack loading
             document.querySelectorAll('input[name="systems"]').forEach(cb => {
                 cb.addEventListener('change', () => {
                     loadPacksForSelection();
@@ -1176,12 +1241,6 @@
                 });
             });
         }
-        loadData();
-        
-        // Load packs when client + system are selected
-        let currentPacksData = null;  // Store full pack data for filtering
-        let showAllPacks = false;      // Track filter state
-        let systemsMetaMap = {};       // Map manufacturer|||mapping_name -> full system object
         
         function toggleShowAllPacks() {
             showAllPacks = !showAllPacks;
