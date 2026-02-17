@@ -11,6 +11,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ### Changed
 - Moved migration-only Python scripts from app/ to legacy/
 - Moved migration summaries/guides from repo root to docs/development/
+- Enabled query-based mode for all `...SoftwareArchives...` maps via `db_mode: true`
+- Passed `db_mode` and optional `extensions` from config into `list_dynamic_map()`
 
 ### Added (Phase 2 Proof of Concept - BBC_B Real Data Validation - COMPLETE)
 - **Phase 2.1-2.8**: BBC_B Pilot Implementation with Real User Data

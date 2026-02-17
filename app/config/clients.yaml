@@ -18,6 +18,7 @@ clients:
           - ...SoftwareArchives...: 
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - HDs: VHD
@@ -36,6 +37,7 @@ clients:
           - ...SoftwareArchives...: 
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: ADF
@@ -55,6 +57,7 @@ clients:
               supports_zip: true
               supports_zaparoo: true
               zip_mode: flatten
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: ADF,DFS,HFE,SSD
@@ -76,6 +79,7 @@ clients:
               supports_zip: true
               supports_zaparoo: true
               zip_mode: flatten
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: SSD,DSD
@@ -90,6 +94,7 @@ clients:
           - ...SoftwareArchives...: 
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: DSK
@@ -113,6 +118,7 @@ clients:
               supports_zip: true
               supports_zaparoo: true
               zip_mode: file
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: "DSK"
@@ -128,6 +134,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: "CAS"
@@ -141,6 +148,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - FDs: "DSK,DO,PO"
@@ -159,6 +167,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN"
@@ -171,6 +180,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "A52,BIN,ROM"
@@ -183,6 +193,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "A78"
@@ -195,6 +206,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM"
@@ -208,6 +220,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "LNX"
@@ -221,6 +234,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "COL"
@@ -246,6 +260,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - Disks: "D64,D71,D81"
@@ -258,6 +273,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -271,6 +287,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -284,6 +301,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: "TAP"
@@ -298,6 +316,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN"
@@ -311,6 +330,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "INT"
@@ -324,6 +344,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM"
@@ -338,6 +359,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "ROM, BIN:ROM, HEX:ROM"
@@ -351,6 +373,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "PCE"
@@ -363,6 +386,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "PCE"
@@ -376,6 +400,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "GB"
@@ -388,6 +413,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "GBA"
@@ -400,6 +426,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "GBC"
@@ -412,6 +439,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "NES"
@@ -424,6 +452,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "SFC,SMC,SFC:SMC"
@@ -437,6 +466,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "GG"
@@ -449,6 +479,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "BIN,GEN,MD"
@@ -461,6 +492,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "SMS"
@@ -474,6 +506,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: "TAP,TZX"
@@ -488,6 +521,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: true
+              db_mode: true
               source_dir: Software
               filetypes:
               - ROMs: "ZIP"
@@ -501,6 +535,7 @@ clients:
           - ...SoftwareArchives...:
               supports_zip: false
               supports_zaparoo: false
+              db_mode: true
               source_dir: Software
               filetypes:
               - Tapes: c10
@@ -523,6 +558,7 @@ clients:
         - ...SoftwareArchives...:
             supports_zip: false
             supports_zaparoo: true
+          db_mode: true
             source_dir: Software
             filetypes:
             - FDs: "DSK,DO"

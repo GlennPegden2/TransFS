@@ -397,7 +397,13 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     
     sa_entry = find_software_archive_entry(system)
     if sa_entry and is_dynamic_map(config,map_name, sa_entry):
-        return list_dynamic_map(config, path, root_parts, system, sa_entry, map_name)
+        sa_config = sa_entry.get("...SoftwareArchives...", {})
+        db_mode = sa_config.get("db_mode", False)
+        extensions = sa_config.get("extensions")
+        return list_dynamic_map(
+            config, path, root_parts, system, sa_entry, map_name,
+            db_mode=db_mode, extensions=extensions
+        )
     return list_regular_map(config,path, root_parts, system, map_name)
 
 def is_dynamic_map(config, map_name: str, sa_entry: dict) -> bool:
