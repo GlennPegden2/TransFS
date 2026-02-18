@@ -1552,13 +1552,8 @@ class TransFS(Passthrough):
             # File exists - open it directly (don't use parent class)
             logger.info("OPEN: opening existing file trans_path=%s", trans_path)
             try:
-                # Check if already open
-                if inode in self._inode_fd_map:
-                    fd = self._inode_fd_map[inode]
-                    self._fd_open_count[fd] += 1
-                    logger.info("OPEN: file already open, fd=%s, count=%s", fd, self._fd_open_count[fd])
-                    return pyfuse3.FileInfo(fh=fd)
-                
+                # Always open a new file descriptor - don't reuse
+                # (Reusing causes file position conflicts between multiple handles)
                 fd = os.open(trans_path, flags)
                 self._fd_inode_map[fd] = inode
                 self._inode_fd_map[inode] = fd
@@ -1585,32 +1580,39 @@ class TransFS(Passthrough):
             # Use trio.to_thread.run_sync to offload blocking I/O to a thread
             def _do_read():
                 os.lseek(fh, off, os.SEEK_SET)
+                # Verify we're at the right position
+                current_pos = os.lseek(fh, 0, os.SEEK_CUR)
+                if current_pos != off:
+                    logger.error(f"READ: Seek mismatch! off={off} but current_pos={current_pos}")
+                
                 # Work around FUSE short read limitation by retrying if needed
                 # FUSE kernel module appears to truncate reads to ~64KB chunks
                 data = b''
-                bytes_to_read = size
+                bytes_remaining = size
                 max_retries = 100
                 retry_count = 0
-                last_chunk_size = size
                 
                 while len(data) < size and retry_count < max_retries:
-                    chunk = os.read(fh, bytes_to_read)
+                    chunk = os.read(fh, bytes_remaining)
                     if not chunk:  # EOF reached
+                        logger.debug(f"READ: EOF at offset {off + len(data)}")
                         break
                     data += chunk
-                    last_chunk_size = len(chunk)
-                    bytes_to_read = size - len(data)
+                    bytes_remaining = size - len(data)
                     
-                    # If we got less than requested and not EOF, keep retrying
-                    if len(chunk) < bytes_to_read:
+                    # If we didn't get everything we asked for, keep retrying
+                    if len(data) < size:
                         retry_count += 1
                         if retry_count <= 5:  # Log first few retries only
                             logger.debug(f"READ RETRY: got {len(chunk)}, total {len(data)}/{size}, retry={retry_count}")
-                    else:
-                        break  # Got full read or EOF
+                    # Continue loop to try to fill the request
                 
                 if len(data) != size and retry_count > 0:
                     logger.info(f"READ FINAL: requested {size}, got {len(data)}, retries={retry_count}")
+                
+                # Log first and last bytes for diagnostics
+                if data and len(data) >= 16:
+                    logger.debug(f"READ: first 16 bytes: {data[:16].hex()}, last 16 bytes: {data[-16:].hex()}")
                 
                 return data
             
