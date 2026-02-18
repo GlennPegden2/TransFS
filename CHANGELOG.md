@@ -22,6 +22,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Verification: Query maps now list and open files correctly, full reads work with correct checksums
   - Impact: Query map-based views (HDs, FDs, etc.) are now fully functional
 
+- **Query Map Directory Listing (Apple-II)** - Fixed empty FDs/HDs listings despite indexed files
+  - Issue: /MiSTer/Apple-II/FDs and /MiSTer/Apple-II/HDs appeared empty even though files existed
+  - Root Cause: Query-map resolution was skipped when `...SoftwareArchives...` was absent; readdir sent no entries
+  - Solution: Allow query-map resolution without `...SoftwareArchives...` and add a safe fallback listing for query maps
+  - Verification: Apple-II FDs/HDs now list correctly with transformed extensions (do/po/hdv)
+
 ### Added (Phase 3 Batch Testing - WIP)
 - Batch dual-mode verification for target systems via legacy scripts (filesystem vs database counts)
 - Helper scripts moved to legacy for non-production use: `fix_systems_batch.py`, `phase3_batch_verify.py`, `phase3_sync_and_cleanup.py`, `phase3_diff_report.py`, `phase3_dualmode_batch.py`

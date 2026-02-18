@@ -293,12 +293,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
     Respects zip_mode configuration: hierarchical (default), flatten, or file.
     """
 
-# Pretty sure this is redundant now
-    if "...SoftwareArchives..." not in [list(m.keys())[0] for m in system_info['maps']]:
-        return None
-
-#    if len(rel_parts) < 4:
-#        return None
+    # Need at least /<client>/<system>/<map>
     if len(rel_parts) < 3:
         return None
 
@@ -354,14 +349,26 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
 
         for real_ext in real_exts:
             real_filename = f"{name}.{real_ext.lower()}"
+
+            # Resolve extension directory case-insensitively (e.g., 2mg vs 2MG)
+            ext_dir_name = real_ext
+            for candidate_dir in (real_ext, real_ext.lower(), real_ext.upper()):
+                if os.path.isdir(os.path.join(source_dir, candidate_dir)):
+                    ext_dir_name = candidate_dir
+                    break
+
             # Try extension subfolder
-            candidate = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
+            candidate = os.path.join(source_dir, ext_dir_name, *subpath[:-1], real_filename)
             if os.path.exists(candidate):
                 return candidate
             # Try flat layout under source_dir
             candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
             if os.path.exists(candidate):
                 return candidate
+        return None
+
+    # Dynamic ...SoftwareArchives... mappings require the special entry
+    if "...SoftwareArchives..." not in [list(m.keys())[0] for m in system_info['maps']]:
         return None
 
     sa_entry = find_software_archive_entry(system_info)

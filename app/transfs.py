@@ -461,6 +461,24 @@ class TransFS(Passthrough):
         t_parse_start = time.time()
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
         t_parse = time.time() - t_parse_start
+
+        # Detect if this is a query map directory (e.g., /MiSTer/Apple-II/FDs)
+        is_query_map_dir = False
+        try:
+            from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map
+            rel_parts = Path(xfull_path).parts[len(Path(self.root).parts):]
+            if len(rel_parts) >= 3:
+                client = get_client(self.config, rel_parts)
+                if client:
+                    path_template_parts = Path(client['default_target_path']).parts
+                    system_info = get_system_info(client, list(rel_parts), path_template_parts)
+                    if system_info:
+                        map_name = rel_parts[2]
+                        map_entry = find_map_entry(system_info, map_name)
+                        map_config = get_map_config(map_entry)
+                        is_query_map_dir = bool(map_config and is_query_map(map_config))
+        except Exception:
+            pass
         
         # Determine hierarchy level to decide if implicit mappings are allowed
         # Level 0 (root): /mnt/transfs - only show clients from config
@@ -1041,6 +1059,26 @@ class TransFS(Passthrough):
             
             sent_count += 1
         
+        # Fallback: if query map entries resolved but none were sent, emit minimal entries
+        if is_query_map_dir and virtual_entries and sent_count == 0:
+            logger.info(f"READDIR: fallback minimal listing for query map {xfull_path}")
+            for entry_id, entry_name in enumerate(virtual_entries, start=1):
+                if entry_id <= start_id:
+                    continue
+                entry_path = os.path.join(xfull_path, entry_name)
+                entry_inode = self._make_synthetic_inode(entry_path)
+                now = int(time.time())
+                stat_dict = {
+                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                    'st_gid': 0, 'st_uid': 0,
+                    'st_mode': 0o100444, 'st_nlink': 1, 'st_size': 0,
+                }
+                entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
+                if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                    logger.info(f"READDIR: client buffer full after {sent_count} entries (fallback)")
+                    break
+                sent_count += 1
+
         t_total = time.time() - t_start
         hit_rate = (cache_hits / len(virtual_entries) * 100) if virtual_entries else 0
         logger.info(f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} "
