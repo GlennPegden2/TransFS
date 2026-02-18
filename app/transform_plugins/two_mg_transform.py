@@ -31,24 +31,14 @@ class TwoMGTransform(Transform):
     def _detect_format(self, source_file: BinaryIO, data_offset: int) -> str:
         """
         Detect output format from 2MG file.
-        Returns 'hdv' for hard disk images (>800KB), 'do'/'po' for floppies.
+        Returns 'hdv' for hard disk images, 'do'/'po' for floppies.
 
-        Apple II floppy disks: 140KB (5.25" DOS 3.3) or 800KB (3.5" ProDOS).
-        Larger images are HDV hard disk images.
+        Note: Size-based classification (floppy vs hard disk) is now handled at the 
+        query level in clients.yaml using extension_filters. This method only detects
+        the specific sector ordering (DOS 3.3 vs ProDOS) for floppy disks.
         """
         try:
-            source_file.seek(0, os.SEEK_END)
-            file_size = source_file.tell()
-
-            # Calculate data size (file minus header)
-            data_size = file_size - data_offset
-
-            # If larger than 800KB, it's a hard disk image (HDV)
-            if data_size > 800 * 1024:
-                logger.info("TwoMGTransform._detect_format: %s bytes = HDV hard disk image", data_size)
-                return "hdv"
-
-            # For floppy disks (140KB or 800KB), check format byte for sector ordering
+            # For floppy disks, check format byte for sector ordering
             source_file.seek(0)
             header = source_file.read(64)
             if len(header) >= 64 and header[:4] == b"2IMG":
@@ -57,16 +47,16 @@ class TwoMGTransform(Transform):
                 # For floppies: format byte indicates sector order
                 # 0 = DOS 3.3, 1 = ProDOS
                 if format_byte == 0:
-                    logger.info("TwoMGTransform._detect_format: floppy disk, DOS 3.3 format")
+                    logger.info("TwoMGTransform._detect_format: DOS 3.3 format")
                     return "do"
-                logger.info("TwoMGTransform._detect_format: floppy disk, ProDOS format")
+                logger.info("TwoMGTransform._detect_format: ProDOS format")
                 return "po"
         except Exception as e:
             logger.warning("TwoMGTransform._detect_format: failed to read header: %s", e)
 
-        # Default to HDV for large files, po for small
-        logger.info("TwoMGTransform._detect_format: defaulting based on size")
-        return "hdv"
+        # Default to ProDOS for ambiguous cases
+        logger.info("TwoMGTransform._detect_format: defaulting to ProDOS format")
+        return "po"
 
     def _parse_header(self, source_file: BinaryIO, source_size: int) -> tuple[int, int, int]:
         """Return (header_size, data_offset, data_length) from 2MG header."""

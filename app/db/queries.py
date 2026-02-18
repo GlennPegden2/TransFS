@@ -411,6 +411,7 @@ def query_files_by_client_system_and_map(
     system: str,
     map_name: str,
     extensions: Optional[List[str]] = None,
+    extension_filters: Optional[Dict[str, Dict[str, int]]] = None,
     limit: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
@@ -422,7 +423,9 @@ def query_files_by_client_system_and_map(
         client: Client name (e.g., 'MiSTer')
         system: System name (e.g., 'Apple-II')
         map_name: Map name (e.g., 'FDs', 'HDs')
-        extensions: Optional list of extensions to filter (e.g., ['DSK', 'DO', 'PO'])
+        extensions: Optional list of extensions to filter (e.g., ['DSK', 'DO', 'PO', '2MG'])
+        extension_filters: Optional dict mapping extension to size constraints
+                          e.g., {'2MG': {'max_size': 865*1024}} for files <= 865KB
         limit: Maximum number of results
     
     Returns:
@@ -438,16 +441,49 @@ def query_files_by_client_system_and_map(
         query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ?"
         params = [client, system, map_name]
         
-        # Add extension filter if provided
+        # Build extension filter with optional size constraints
+        # Strategy: For each extension, if it has size filters apply them, otherwise match as-is
         if extensions:
-            placeholders = ','.join(['?' for _ in extensions])
-            query += f" AND LOWER(extension) IN ({placeholders})"
-            params.extend([ext.lower() for ext in extensions])
+            conditions = []
+            
+            for ext in extensions:
+                ext_lower = ext.lower()
+                
+                # Check if this extension has size constraints
+                if extension_filters and ext in extension_filters:
+                    filters = extension_filters[ext]
+                    size_parts = []
+                    
+                    if 'max_size' in filters:
+                        max_size = filters['max_size']
+                        size_parts.append(f"size <= {max_size}")
+                        logger.info(f"Query: {ext} <= {max_size} bytes")
+                    
+                    if 'min_size' in filters:
+                        min_size = filters['min_size']
+                        size_parts.append(f"size >= {min_size}")
+                        logger.info(f"Query: {ext} >= {min_size} bytes")
+                    
+                    # Combine with extension match
+                    if size_parts:
+                        size_clause = " AND ".join(size_parts)
+                        conditions.append(f"(LOWER(extension) = '{ext_lower}' AND {size_clause})")
+                    else:
+                        conditions.append(f"LOWER(extension) = '{ext_lower}'")
+                else:
+                    # No size filter for this extension, match it directly
+                    conditions.append(f"LOWER(extension) = '{ext_lower}'")
+            
+            # Combine all conditions with OR
+            if conditions:
+                query += f" AND ({' OR '.join(conditions)})"
+                logger.info(f"Final SQL condition: {' OR '.join(conditions)}")
         
         query += " ORDER BY filename"
         if limit:
             query += f" LIMIT {limit}"
         
+        logger.info(f"Final SQL query: {query}")
         cursor.execute(query, params)
         rows = cursor.fetchall()
         

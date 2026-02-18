@@ -457,15 +457,31 @@ class TransFS(Passthrough):
             from pathutils import get_query_config
             query_config = get_query_config(map_config)
             allowed_extensions = query_config.get('extensions', [])
+            logger.info(f"READDIR_DB_ONLY: allowed_extensions for {map_name}: {allowed_extensions}")
             if not allowed_extensions:
                 logger.info(f"READDIR_DB_ONLY: no extensions configured for {map_name}")
                 return True
             
+            # Extract size filters from query config if present
+            extension_filters = {}
+            if query_config:
+                # Build size filter dict from extension-specific configs
+                ext_config = query_config.get('extension_filters', {})
+                if ext_config:
+                    for ext, filters in ext_config.items():
+                        extension_filters[ext] = filters
+                        logger.info(f"READDIR_DB_ONLY: size filter for {ext}: {filters}")
+                if not extension_filters:
+                    logger.debug(f"READDIR_DB_ONLY: no extension_filters in query config")
+            
             # Query database for files in this map
             from db.queries import query_files_by_client_system_and_map
-            db_files = query_files_by_client_system_and_map(client_name, system_name, map_name, allowed_extensions)
+            db_files = query_files_by_client_system_and_map(
+                client_name, system_name, map_name, allowed_extensions, extension_filters
+            )
             
             logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in database")
+
             
             if not db_files:
                 # Empty directory

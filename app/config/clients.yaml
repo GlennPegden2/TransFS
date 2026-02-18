@@ -205,6 +205,9 @@ clients:
                   - DO
                   - PO
                   - 2MG
+                extension_filters:
+                  2MG:
+                    max_size: 908288  # 865KB + 64KB header + 1 byte
                 supports_zip: false
                 supports_zaparoo: true
               transforms:
@@ -216,6 +219,9 @@ clients:
                 extensions:
                   - HDV
                   - 2MG
+                extension_filters:
+                  2MG:
+                    min_size: 908289  # 865KB + 64KB header + 2 bytes (exclusive lower bound)
                 supports_zip: false
                 supports_zaparoo: true
               transforms:
@@ -699,5 +705,5 @@ clients:
             transforms:
               2MG:
                 - type: two_mg
-                  # output_extension auto-detected from disk content (do/po)
+                  # output_extension auto-detected from disk content (do/po/hdv)
 
