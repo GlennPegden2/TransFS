@@ -5,11 +5,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
-- **Critical: Large File Delivery via SMB** - Resolved FUSE short read limitation causing file truncation
-  - Issue: pyfuse3 kernel module was returning incomplete reads (~65KB) when large files accessed via SMB
-  - Solution: Implemented aggressive retry logic in `TransFS.read()` that concatenates multiple os.read() calls
-  - Verification: Full 104.8 MB boot.vhd file now delivers completely with correct MD5 checksum
-  - Impact: All files through SMB/FUSE are now served in full, not truncated after first chunk
+- **Data Corruption in Large File Delivery** - REVERTED problematic retry logic in read() function
+  - Issue: Previous "fix" for FUSE short reads introduced data corruption
+  - Root Cause: Concatenating multiple os.read() calls corrupted the byte stream
+  - Solution: Reverted to original simple read() function (single os.lseek + os.read call)
+  - Verification: Files now return correct MD5 checksums
+    - boot.vhd: b9e3f5e78ccfb5d7523f82f3113445ca ✓ (was corrupted with retry logic)
+    - Size: 104.8 MB delivered correctly, no truncation
+  - Impact: MiSTer will receive correct file checksums and boot properly
+  - Note: FUSE short read issue resolved by kernel/pyfuse3 v3.4.2 - works correctly without retry logic
 
 - **Query Map File Access** - Fixed inability to open files from query map directories
   - Issue: Files listed in query maps (e.g., HDs/) couldn't be opened - returned "file not found"
