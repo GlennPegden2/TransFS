@@ -35,6 +35,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Complete database-driven file access without parse_trans_path overhead
   - Tested: Successfully reading file contents for Apple-II disks
 
+- **Byte-Size Filtering for Source Paths** - New `min_bytes` configuration option for filtering by file size
+  - Filter source paths to only include files meeting minimum byte requirements
+  - Useful for separating collections by file size (e.g., FDs vs HDs)
+  - Applied at database query time for optimal performance
+  - Configuration: Add `min_bytes: <size>` to individual source path entries
+  - Validation: 76 FDs files (650KB) vs 210 HDs files (2MB+) correctly separated
+
 ### Fixed
 - **Query Map Extension Configuration** - Fixed readdir not finding extensions in query config
   - Issue: Extensions were stored under query.extensions but code looked for top-level extensions

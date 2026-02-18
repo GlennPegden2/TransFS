@@ -45,6 +45,7 @@ def query_files_by_system_and_query(
     Supported query keys (extendable):
       - extensions: ["dsk", "po"] ("*" means no extension filter)
       - source_dir: "Software" (limits to /Native/<system>/source_dir/)
+      - extension_filters: {"2MG": {"max_size": 908288, "min_size": 100}} - size constraints per extension
       - filters: [{"field": "year", "op": ">", "value": 1990}, ...]
       - logic: "and"|"or" (applies between filters)
 
@@ -57,6 +58,7 @@ def query_files_by_system_and_query(
 
         extensions = query.get("extensions") or []
         source_dir = query.get("source_dir")
+        extension_filters = query.get("extension_filters") or {}
         filters = query.get("filters") or []
         logic = (query.get("logic") or "and").lower()
         if logic not in {"and", "or"}:
@@ -65,11 +67,42 @@ def query_files_by_system_and_query(
         where_clauses = ["f.system = ?", "f.is_directory = 0"]
         params: List[Any] = [system]
 
-        # Extension filter (case-insensitive)
+        # Extension filter with optional size constraints (case-insensitive)
         if extensions and "*" not in [str(e) for e in extensions] and "*" not in [str(e).upper() for e in extensions]:
-            placeholders = ','.join(['?' for _ in extensions])
-            where_clauses.append(f"LOWER(f.extension) IN ({placeholders})")
-            params.extend([ext.lower() for ext in extensions])
+            # Build extension filter with optional size constraints per extension
+            ext_conditions = []
+            for ext in extensions:
+                ext_lower = ext.lower()
+                
+                # Check if this extension has size constraints
+                if ext in extension_filters:
+                    ext_filter = extension_filters[ext]
+                    size_conditions = []
+                    
+                    if 'max_size' in ext_filter:
+                        max_size = ext_filter['max_size']
+                        size_conditions.append(f"f.size <= {max_size}")
+                        logger.info(f"Query: extension {ext} with max_size={max_size}")
+                    
+                    if 'min_size' in ext_filter:
+                        min_size = ext_filter['min_size']
+                        size_conditions.append(f"f.size >= {min_size}")
+                        logger.info(f"Query: extension {ext} with min_size={min_size}")
+                    
+                    # Combine extension match with size conditions
+                    if size_conditions:
+                        size_clause = " AND ".join(size_conditions)
+                        ext_conditions.append(f"(LOWER(f.extension) = '{ext_lower}' AND {size_clause})")
+                    else:
+                        ext_conditions.append(f"LOWER(f.extension) = '{ext_lower}'")
+                else:
+                    # No size filter for this extension
+                    ext_conditions.append(f"LOWER(f.extension) = '{ext_lower}'")
+            
+            # Combine all extension conditions with OR
+            if ext_conditions:
+                where_clauses.append(f"({' OR '.join(ext_conditions)})")
+                logger.info(f"Extension filter conditions: {' OR '.join(ext_conditions)}")
 
         # Source directory filter
         if source_dir:
