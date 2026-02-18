@@ -1531,13 +1531,41 @@ class TransFS(Passthrough):
         """
         Read data from an open file.
         Uses trio thread offloading to avoid blocking the async event loop.
+        Implements retry logic to handle FUSE short reads on large files.
         """
         logger.info("READ: fh=%s off=%s size=%s", fh, off, size)
         try:
             # Use trio.to_thread.run_sync to offload blocking I/O to a thread
             def _do_read():
                 os.lseek(fh, off, os.SEEK_SET)
-                return os.read(fh, size)
+                # Work around FUSE short read limitation by retrying if needed
+                # FUSE kernel module appears to truncate reads to ~64KB chunks
+                data = b''
+                bytes_to_read = size
+                max_retries = 100
+                retry_count = 0
+                last_chunk_size = size
+                
+                while len(data) < size and retry_count < max_retries:
+                    chunk = os.read(fh, bytes_to_read)
+                    if not chunk:  # EOF reached
+                        break
+                    data += chunk
+                    last_chunk_size = len(chunk)
+                    bytes_to_read = size - len(data)
+                    
+                    # If we got less than requested and not EOF, keep retrying
+                    if len(chunk) < bytes_to_read:
+                        retry_count += 1
+                        if retry_count <= 5:  # Log first few retries only
+                            logger.debug(f"READ RETRY: got {len(chunk)}, total {len(data)}/{size}, retry={retry_count}")
+                    else:
+                        break  # Got full read or EOF
+                
+                if len(data) != size and retry_count > 0:
+                    logger.info(f"READ FINAL: requested {size}, got {len(data)}, retries={retry_count}")
+                
+                return data
             
             data = await trio.to_thread.run_sync(_do_read)
             logger.info("READ: fh=%s off=%s size=%s -> %d bytes", fh, off, size, len(data))
