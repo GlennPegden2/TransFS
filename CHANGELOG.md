@@ -11,6 +11,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Verification: Full 104.8 MB boot.vhd file now delivers completely with correct MD5 checksum
   - Impact: All files through SMB/FUSE are now served in full, not truncated after first chunk
 
+- **Query Map File Access** - Fixed inability to open files from query map directories
+  - Issue: Files listed in query maps (e.g., HDs/) couldn't be opened - returned "file not found"
+  - Root Cause: File resolution code didn't query database for actual file locations
+  - Solution: Added database lookup in `TransFS.open()` to resolve query map filenames to actual paths
+  - Verification: Query maps now list and open files correctly, full reads work with correct checksums
+  - Impact: Query map-based views (HDs, FDs, etc.) are now fully functional
+
 ### Added (Phase 3 Batch Testing - WIP)
 - Batch dual-mode verification for target systems via legacy scripts (filesystem vs database counts)
 - Helper scripts moved to legacy for non-production use: `fix_systems_batch.py`, `phase3_batch_verify.py`, `phase3_sync_and_cleanup.py`, `phase3_diff_report.py`, `phase3_dualmode_batch.py`
