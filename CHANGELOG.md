@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+- **Critical: Large File Delivery via SMB** - Resolved FUSE short read limitation causing file truncation
+  - Issue: pyfuse3 kernel module was returning incomplete reads (~65KB) when large files accessed via SMB
+  - Solution: Implemented aggressive retry logic in `TransFS.read()` that concatenates multiple os.read() calls
+  - Verification: Full 104.8 MB boot.vhd file now delivers completely with correct MD5 checksum
+  - Impact: All files through SMB/FUSE are now served in full, not truncated after first chunk
+
 ### Added (Phase 3 Batch Testing - WIP)
 - Batch dual-mode verification for target systems via legacy scripts (filesystem vs database counts)
 - Helper scripts moved to legacy for non-production use: `fix_systems_batch.py`, `phase3_batch_verify.py`, `phase3_sync_and_cleanup.py`, `phase3_diff_report.py`, `phase3_dualmode_batch.py`
