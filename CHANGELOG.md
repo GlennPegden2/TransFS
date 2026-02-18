@@ -5,6 +5,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **Database-Only Architecture for Query Maps** - Complete end-to-end database-driven file access
+  - Query maps (FDs, HDs, etc.) now bypass parse_trans_path entirely
+  - Three-tier database-only implementation:
+    1. **Readdir**: query_files_by_client_system_and_map() → 76+ files, pagination support
+    2. **Getattr**: query_file_by_client_system_map_and_name() → stat structures with mtime/size
+    3. **Open**: Direct database lookup → transform pipeline → source file access
+  - Validated: 76 FDs files + 420 HDs files successfully listed, stat'd, and read
+  - File integrity verified: 143KB test file copied correctly (bit-for-bit match)
+  - Performance: Database queries replace expensive parse_trans_path/filesystem traversal
+
 - **Database-Only Readdir for Query Maps** - Query map directories now list files from database without filesystem access
   - Eliminates parse_trans_path overhead for directory listings
   - Direct database queries via query_files_by_client_system_and_map()
