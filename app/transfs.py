@@ -1573,51 +1573,44 @@ class TransFS(Passthrough):
         """
         Read data from an open file.
         Uses trio thread offloading to avoid blocking the async event loop.
-        Implements retry logic to handle FUSE short reads on large files.
+        Includes hex dump diagnostics to analyze data patterns.
         """
         logger.info("READ: fh=%s off=%s size=%s", fh, off, size)
         try:
             # Use trio.to_thread.run_sync to offload blocking I/O to a thread
             def _do_read():
                 os.lseek(fh, off, os.SEEK_SET)
-                # Verify we're at the right position
-                current_pos = os.lseek(fh, 0, os.SEEK_CUR)
-                if current_pos != off:
-                    logger.error(f"READ: Seek mismatch! off={off} but current_pos={current_pos}")
-                
-                # Work around FUSE short read limitation by retrying if needed
-                # FUSE kernel module appears to truncate reads to ~64KB chunks
-                data = b''
-                bytes_remaining = size
-                max_retries = 100
-                retry_count = 0
-                
-                while len(data) < size and retry_count < max_retries:
-                    chunk = os.read(fh, bytes_remaining)
-                    if not chunk:  # EOF reached
-                        logger.debug(f"READ: EOF at offset {off + len(data)}")
-                        break
-                    data += chunk
-                    bytes_remaining = size - len(data)
-                    
-                    # If we didn't get everything we asked for, keep retrying
-                    if len(data) < size:
-                        retry_count += 1
-                        if retry_count <= 5:  # Log first few retries only
-                            logger.debug(f"READ RETRY: got {len(chunk)}, total {len(data)}/{size}, retry={retry_count}")
-                    # Continue loop to try to fill the request
-                
-                if len(data) != size and retry_count > 0:
-                    logger.info(f"READ FINAL: requested {size}, got {len(data)}, retries={retry_count}")
-                
-                # Log first and last bytes for diagnostics
-                if data and len(data) >= 16:
-                    logger.debug(f"READ: first 16 bytes: {data[:16].hex()}, last 16 bytes: {data[-16:].hex()}")
-                
-                return data
-            
+                return os.read(fh, size)
+
             data = await trio.to_thread.run_sync(_do_read)
             logger.info("READ: fh=%s off=%s size=%s -> %d bytes", fh, off, size, len(data))
+            
+            # Hex dump diagnostics for first and last 64 bytes
+            if len(data) >= 128:
+                first_64 = data[:64]
+                last_64 = data[-64:]
+                logger.debug(f"READ HEX FIRST 64: {first_64.hex()}")
+                logger.debug(f"READ HEX LAST 64: {last_64.hex()}")
+            elif len(data) > 0:
+                logger.debug(f"READ HEX (full {len(data)} bytes): {data.hex()}")
+            
+            # Track read stats for diagnostics
+            try:
+                stats = self._fd_read_stats.get(fh)
+                if stats is not None:
+                    stats["total"] += len(data)
+                    end = off + len(data)
+                    if end > stats["max_end"]:
+                        stats["max_end"] = end
+                    path = self._fd_path_map.get(fh, "")
+                    if path.endswith("/Acorn/Atom/Software/VHD/hoglet67.vhd"):
+                        logger.info(
+                            "READ_STATS: fh=%s total=%d max_end=%d path=%s",
+                            fh, stats["total"], stats["max_end"], path
+                        )
+            except Exception:
+                pass
+            return data
             # Track read stats for diagnostics
             try:
                 stats = self._fd_read_stats.get(fh)
