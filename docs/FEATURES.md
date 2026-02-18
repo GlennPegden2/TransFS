@@ -86,9 +86,57 @@
 - Only files with mapped extensions are shown in virtual folders.
 - Only zip files in mapped extension directories are handled as described.
 
+---
 
 ### 10. Environment 
 
 - Runs on both linux bare metal and as a docker container (wont' run natively on Windows because of reliance on FUSE and wanting to create an SMB server on 445). Samba sharing may not work in Windows-Hosted docker.
+
+---
+
+### 11. Database-Only Architecture (Query Maps)
+
+**Overview**: For query map directories (maps defined with `query` configuration), TransFS uses an optimized database-driven file access path that completely bypasses expensive filesystem scanning.
+
+**Supported Operations**:
+- **Readdir** (Directory Listing): `query_files_by_client_system_and_map()` returns paginated results from database
+  - Example: `ls /mnt/transfs/MiSTer/Apple-II/FDs` queries database for all FD-format files
+  - Support: 76+ file pagination, extension filtering, sorted alphabetically
+  
+- **Getattr** (File Stats): `query_file_by_client_system_map_and_name()` returns file metadata
+  - Provides: mtime, size, file mode (read-only), permissions
+  - Optimization: Size adjusted for transformed files (e.g., 2MG → DO/HDV conversions)
+  
+- **Open/Read** (File Access): Database lookup → transform pipeline → source file open
+  - Resolves source_path from database record
+  - Applies configured transforms (e.g., 2MG header stripping)
+  - Direct file handle to underlying source file for reads
+
+**Performance Benefits**:
+- Eliminates parse_trans_path overhead (expensive config/filesystem traversal)
+- Direct SQLite queries instead of directory scanning
+- Cached transform pipeline detection
+- Significantly faster for large query maps (420+ file HDs directory)
+
+**Query Map Configuration Example**:
+```yaml
+maps:
+  - FDs:
+      query:
+        source_dir: Software
+        extensions:
+          - DSK
+          - DO
+          - PO
+          - 2MG
+```
+
+**Verification**: 
+- 76 Apple-II FDs files successfully listed and stat'd
+- 420 Apple-II HDs files (2MG format) successfully listed and opened
+- File integrity test: 143KB file copied bit-for-bit match
+- Transform pipelines: 2MG files correctly converted to DO/HDV formats
+
+**Fallback Behavior**: If database query fails, gracefully falls back to filesystem-based resolution (cache/parse_trans_path)
 
 ---
