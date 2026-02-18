@@ -5,6 +5,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **Query Map Listing Performance** - Avoided expensive per-entry resolution in query map directories
+  - Issue: Large query map directories (e.g., Apple-II FDs) took several minutes to list
+  - Solution: Added fast-path readdir for query maps to emit entries without per-file stat
+  - Impact: Listings return immediately; file stats are resolved on demand
+
 - **Data Corruption in Large File Delivery** - REVERTED problematic retry logic in read() function
   - Issue: Previous "fix" for FUSE short reads introduced data corruption
   - Root Cause: Concatenating multiple os.read() calls corrupted the byte stream

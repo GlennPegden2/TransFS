@@ -59,6 +59,7 @@ clients:
                 path: Software/MMB/ElkBEEB.zip
                 unzip: true
                 zip_internal_file: BEEB.MMB
+                supports_zaparoo: true
           - FDs:
               query:
                 source_dir: Software
@@ -216,6 +217,9 @@ clients:
                   - HDV
                 supports_zip: false
                 supports_zaparoo: true
+              transforms:
+                2MG:
+                  - type: two_mg
 
       # --- Atari ---
       - name: Atari2600

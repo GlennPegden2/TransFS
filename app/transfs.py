@@ -479,6 +479,34 @@ class TransFS(Passthrough):
                         is_query_map_dir = bool(map_config and is_query_map(map_config))
         except Exception:
             pass
+
+        # Fast-path for query map directories: avoid per-entry resolution and stat
+        # This keeps listings responsive for large query maps and defers stat to getattr.
+        if is_query_map_dir and virtual_entries:
+            sent_count = 0
+            for entry_id, entry_name in enumerate(virtual_entries, start=1):
+                if entry_id <= start_id:
+                    continue
+                entry_path = os.path.join(xfull_path, entry_name)
+                entry_inode = self._make_synthetic_inode(entry_path)
+                now = int(time.time())
+                stat_dict = {
+                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                    'st_gid': 0, 'st_uid': 0,
+                    'st_mode': 0o100444, 'st_nlink': 1, 'st_size': 0,
+                }
+                entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
+                if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                    logger.info(f"READDIR: client buffer full after {sent_count} entries (fast query map)")
+                    break
+                sent_count += 1
+
+            t_total = time.time() - t_start
+            logger.info(
+                f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} "
+                f"cache_hits=0 hit_rate=0.0% parse={t_parse:.4f}s batch=0.0000s total={t_total:.4f}s"
+            )
+            return
         
         # Determine hierarchy level to decide if implicit mappings are allowed
         # Level 0 (root): /mnt/transfs - only show clients from config
