@@ -13,6 +13,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Graceful fallback to filesystem mode if database fails
   - Validates query map configuration before attempting database mode
 
+- **Database-Only Getattr for Query Maps** - File attribute queries now use database-only lookups
+  - Query single files by client/system/map/filename via query_file_by_client_system_map_and_name()
+  - Proper stat structures with size and mtime from database
+  - Transform size adjustment for transformed files
+  - Significantly faster than filesystem-based stat calls
+
+- **Database-Only Open for Query Maps** - File opens now resolved via database lookups
+  - Simplifies source path resolution for files in query maps
+  - Applies transform pipelines after database lookup
+  - Complete database-driven file access without parse_trans_path overhead
+  - Tested: Successfully reading file contents for Apple-II disks
+
 ### Fixed
 - **Query Map Extension Configuration** - Fixed readdir not finding extensions in query config
   - Issue: Extensions were stored under query.extensions but code looked for top-level extensions

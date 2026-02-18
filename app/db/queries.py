@@ -475,3 +475,59 @@ def query_files_by_client_system_and_map(
     except Exception as e:
         logger.error(f"Error querying files for {client}/{system}/{map_name}: {e}", exc_info=True)
         return []
+
+
+def query_file_by_client_system_map_and_name(
+    client: str,
+    system: str,
+    map_name: str,
+    filename: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Query a single file by client, system, map, and filename.
+    
+    Used by getattr() in database-only mode to fetch file attributes.
+    
+    Args:
+        client: Client name (e.g., 'MiSTer')
+        system: System name (e.g., 'Apple-II')
+        map_name: Map name (e.g., 'FDs', 'HDs')
+        filename: Filename to search for
+    
+    Returns:
+        File record with source_path, virtual_path, extension, size, mtime, or None
+    """
+    try:
+        # Direct SQLite connection instead of using get_connection() to avoid init issues
+        import sqlite3
+        db_path = "/mnt/filestorefs/.transfs_metadata.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ? AND filename = ?"
+        params = [client, system, map_name, filename]
+        
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            logger.debug(f"No file found for {client}/{system}/{map_name}/{filename}")
+            return None
+        
+        result = {
+            'file_id': row[0],
+            'source_path': row[1],
+            'virtual_path': row[2],
+            'filename': row[3],
+            'extension': row[4],
+            'size': row[5],
+            'mtime': row[6],
+        }
+        
+        logger.debug(f"query_file_by_client_system_map_and_name: found {filename} in {client}/{system}/{map_name}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error querying file {client}/{system}/{map_name}/{filename}: {e}", exc_info=True)
+        return None

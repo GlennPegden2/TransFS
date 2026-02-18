@@ -531,6 +531,140 @@ class TransFS(Passthrough):
             logger.error(f"READDIR_DB_ONLY: error: {e}", exc_info=True)
             return True  # Fall back to filesystem
 
+    async def _getattr_database_only(self, path: str, map_info: tuple):
+        """
+        Get file attributes using ONLY database queries (no filesystem lookup).
+        
+        This is used for files within query map directories.
+        Returns stat_dict if found in database, None if should fall back.
+        """
+        client_name, system_name, map_name = map_info
+        filename = os.path.basename(path)
+        
+        logger.info(f"GETATTR_DB_ONLY: {path} client={client_name} system={system_name} map={map_name} file={filename}")
+        
+        try:
+            # Query database for this specific file
+            from db.queries import query_file_by_client_system_map_and_name
+            file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
+            
+            if not file_record:
+                logger.debug(f"GETATTR_DB_ONLY: file {filename} not found in database")
+                return None  # Fall back to filesystem
+            
+            # Build stat structure from database record
+            size = file_record.get('size', 0)
+            mtime = file_record.get('mtime', int(time.time()))
+            source_path = file_record.get('source_path', '')
+            
+            # For transformed files, check if we need to adjust size
+            transformed_size = size
+            if source_path and os.path.exists(source_path):
+                try:
+                    # Get transform pipeline for this file
+                    from pathutils import find_map_entry, get_map_config
+                    client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                    if client_config:
+                        system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
+                        if system_info:
+                            map_entry = find_map_entry(system_info, map_name)
+                            if map_entry:
+                                map_config = get_map_config(map_entry)
+                                if map_config:
+                                    # Build transform map to get output size
+                                    system_transform_map = self._build_system_transform_map(path)
+                                    if system_transform_map:
+                                        ext = file_record.get('extension', '').upper()
+                                        pipeline = system_transform_map.get(ext)
+                                        if pipeline:
+                                            source_stat = os.lstat(source_path)
+                                            transformed_size = self._get_transform_output_size(pipeline, source_stat.st_size)
+                                            if transformed_size < 0:
+                                                transformed_size = size
+                                            logger.debug(f"GETATTR_DB_ONLY: applied transform for {filename}: {size} -> {transformed_size}")
+                except Exception as e:
+                    logger.debug(f"GETATTR_DB_ONLY: error applying transform: {e}")
+            
+            # Create stat structure
+            stat_dict = {
+                'st_atime': int(mtime) if mtime else int(time.time()),
+                'st_ctime': int(mtime) if mtime else int(time.time()),
+                'st_mtime': int(mtime) if mtime else int(time.time()),
+                'st_gid': 0,
+                'st_uid': 0,
+                'st_mode': 0o100444,  # Regular file, read-only
+                'st_nlink': 1,
+                'st_size': transformed_size,
+            }
+            
+            logger.info(f"GETATTR_DB_ONLY: returning stat for {filename} (size={transformed_size})")
+            return stat_dict
+            
+        except Exception as e:
+            logger.error(f"GETATTR_DB_ONLY: error: {e}", exc_info=True)
+            return None  # Fall back to filesystem
+
+    async def _open_database_only(self, path: str, map_info: tuple):
+        """
+        Resolve source path for opening using ONLY database queries.
+        
+        Returns either:
+        - A string path to the source file (possibly with transforms)
+        - A tuple (zip_path, internal_file) for zip archive files
+        - None to fall back to filesystem resolution
+        """
+        client_name, system_name, map_name = map_info
+        filename = os.path.basename(path)
+        
+        logger.info(f"OPEN_DB_ONLY: {path} client={client_name} system={system_name} map={map_name} file={filename}")
+        
+        try:
+            # Query database for this specific file
+            from db.queries import query_file_by_client_system_map_and_name
+            file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
+            
+            if not file_record:
+                logger.debug(f"OPEN_DB_ONLY: file {filename} not found in database")
+                return None
+            
+            source_path = file_record.get('source_path')
+            if not source_path:
+                logger.warning(f"OPEN_DB_ONLY: no source_path in database for {filename}")
+                return None
+            
+            if not os.path.exists(source_path):
+                logger.warning(f"OPEN_DB_ONLY: source file does not exist: {source_path}")
+                return None
+            
+            # Check if this file needs transformation
+            try:
+                from sourcepath import get_transform_pipeline_for_file
+                client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                if client_config:
+                    system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
+                    if system_info:
+                        cache_config = self.config.get("cache", {})
+                        pipeline = get_transform_pipeline_for_file(
+                            logger,
+                            system_info,
+                            filename,
+                            map_name,
+                            cache_config,
+                            full_path=source_path,
+                        )
+                        if pipeline:
+                            logger.info(f"OPEN_DB_ONLY: {filename} needs transform pipeline")
+                            return {'path': source_path, 'transform_pipeline': pipeline}
+            except Exception as e:
+                logger.debug(f"OPEN_DB_ONLY: error checking transform: {e}")
+            
+            logger.info(f"OPEN_DB_ONLY: returning source path {source_path}")
+            return source_path
+            
+        except Exception as e:
+            logger.error(f"OPEN_DB_ONLY: error: {e}", exc_info=True)
+            return None
+
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
         Read directory entries with FULL attributes (readdirplus support).
@@ -1346,6 +1480,17 @@ class TransFS(Passthrough):
         
         xfull_path = path  # Already full path from inode map
         
+        # PRIORITY 0.5: Try database-only mode for query map directories first
+        map_info = self._extract_map_info(xfull_path)
+        if map_info:
+            # This is a file within a query map directory, try database-only mode
+            logger.info(f"GETATTR: detected query map file, trying database-only mode")
+            stat_dict = await self._getattr_database_only(xfull_path, map_info)
+            if stat_dict:
+                logger.info(f"GETATTR: database-only mode successful for {xfull_path}")
+                return self._dict_to_entry_attributes(stat_dict, inode)
+            logger.info(f"GETATTR: database-only mode failed, falling back to cache/filesystem")
+        
         # PRIORITY 1: Check getattr cache first (fastest, includes transform sizes)
         t_cache_start = time.time()
         parent_path = str(Path(xfull_path).parent)
@@ -1674,67 +1819,18 @@ class TransFS(Passthrough):
         path = self._inode_to_path(inode)
         logger.info("OPEN: inode=%s, flags=%s, path=%s", inode, flags, path)
         
-        # Check if this is a query map file and we have database support
+        # Try database-only mode for query map files first
         trans_path = None
-        if self.data_adapter and not (flags & os.O_CREAT):
-            try:
-                from pathutils import find_map_entry, is_query_map, get_map_config
-                from pathlib import Path
-                
-                path_parts = Path(path).parts
-                mount_parts = Path(self.mount_path).parts
-                rel_parts = path_parts[len(mount_parts):]
-                
-                # Check if this looks like a query map file: /<client>/<system>/<map>/<file>
-                if len(rel_parts) == 4:
-                    client_name = rel_parts[0]
-                    system_name = rel_parts[1]
-                    map_name = rel_parts[2]
-                    filename = rel_parts[3]
-                    
-                    client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
-                    if client:
-                        system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
-                        if system_info:
-                            map_entry = find_map_entry(system_info, map_name)
-                            map_config = get_map_config(map_entry)
-                            if is_query_map(map_config):
-                                # This is a query map file - search database for matching file
-                                from db.queries import query_files_by_system_and_query
-                                from pathutils import get_system_identifier
-                                
-                                query_cfg = map_config.get("query", {})
-                                system_id = get_system_identifier(system_info)
-                                
-                                if system_id:
-                                    # Query database for files matching this query map
-                                    files = query_files_by_system_and_query(system_id, query_cfg, system_info)
-                                    
-                                    # Look for a matching filename
-                                    name_part = filename.rsplit('.', 1)[0] if '.' in filename else filename
-                                    for file_record in files:
-                                        if file_record.get('filename', '').rsplit('.', 1)[0].lower() == name_part.lower():
-                                            source_path = file_record.get('source_path')
-                                            logger.info("OPEN: query map found file via database: %s -> %s", filename, source_path)
-                                            
-                                            # Check if this file needs transformation
-                                            from sourcepath import get_transform_pipeline_for_file
-                                            cache_config = self.config.get("cache", {})
-                                            pipeline = get_transform_pipeline_for_file(
-                                                logger,
-                                                system_info,
-                                                os.path.basename(source_path),
-                                                map_name,
-                                                cache_config,
-                                                full_path=source_path,
-                                            )
-                                            if pipeline:
-                                                trans_path = {'path': source_path, 'transform_pipeline': pipeline}
-                                            else:
-                                                trans_path = source_path
-                                            break
-            except Exception as e:
-                logger.debug(f"OPEN: error checking query map for {path}: {e}")
+        if not (flags & os.O_CREAT):
+            # Check if this is a file within a query map directory
+            map_info = self._extract_map_info(path)
+            if map_info:
+                logger.info("OPEN: detected query map file, trying database-only mode")
+                trans_path = await self._open_database_only(path, map_info)
+                if trans_path:
+                    logger.info(f"OPEN: database-only mode successful, trans_path={trans_path}")
+                else:
+                    logger.info(f"OPEN: database-only mode failed, falling back to filesystem")
         
         # Fallback to normal source path resolution if database lookup failed or not a query map
         if trans_path is None:
