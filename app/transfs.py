@@ -1266,7 +1266,7 @@ class TransFS(Passthrough):
             logger.debug("DEBUG getattr fallback: parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
 
             if name in entries:
-                # Check if it's a virtual directory
+                # Check if it's a virtual directory (legacy ...Name... style or query map)
                 if name.startswith('...') and name.endswith('...'):
                     now = int(time.time())
                     result = {
@@ -1281,6 +1281,37 @@ class TransFS(Passthrough):
                     }
                     cache_getattr(xfull_path, parent_dir, result)
                     return self._dict_to_entry_attributes(result, inode)
+                
+                # Check if it's a query map directory
+                from pathutils import find_map_entry, is_query_map, get_map_config
+                path_parts = Path(xfull_path).parts
+                mount_parts = Path(self.mount_path).parts
+                rel_parts = path_parts[len(mount_parts):]
+                if len(rel_parts) == 3:  # /<client>/<system>/<map>
+                    client_name = rel_parts[0]
+                    system_name = rel_parts[1]
+                    map_name = rel_parts[2]
+                    client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                    if client:
+                        system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
+                        if system_info:
+                            map_entry = find_map_entry(system_info, map_name)
+                            map_config = get_map_config(map_entry)
+                            if is_query_map(map_config):
+                                now = int(time.time())
+                                result = {
+                                    'st_atime': now,
+                                    'st_ctime': now,
+                                    'st_mtime': now,
+                                    'st_gid': 0,
+                                    'st_uid': 0,
+                                    'st_mode': 0o040755,
+                                    'st_nlink': 2,
+                                    'st_size': 4096,
+                                }
+                                cache_getattr(xfull_path, parent_dir, result)
+                                logger.info(f"GETATTR: returning virtual directory for query map {map_name}")
+                                return self._dict_to_entry_attributes(result, inode)
                 
                 # Retry get_source_path
                 retry_virtual_path = self._filestore_to_mount_path(xfull_path)

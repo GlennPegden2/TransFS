@@ -141,6 +141,16 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if not system_info:
         return None
 
+    # Check if this is a query map directory itself (e.g., /MiSTer/AcornAtom/HDs)
+    if len(rel_parts) == 3:
+        map_name = rel_parts[2]
+        map_entry = find_map_entry(system_info, map_name)
+        map_config = get_map_config(map_entry)
+        if map_config and is_query_map(map_config):
+            # This is a virtual query map directory - return None so GETATTR treats it as virtual
+            logger.debug(f"DEBUG: {translated_path} is a query map directory, returning None")
+            return None
+
     # Try dynamic SoftwareArchives first
     dynamic_result = get_dynamic_source_path(logger, config, system_info, rel_parts)
     if dynamic_result is not None:

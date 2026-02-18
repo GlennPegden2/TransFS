@@ -1,16 +1,9 @@
 cache:
-  # PKL file caches: PERMANENTLY DISABLED
-  # Reason: PKL caches persist stale data across container restarts and config changes.
-  # When config changes (e.g., adding PO to filetypes), old cached entries remain invalid.
-  # Only in-memory session caches are now used (cleared on every restart, preventing staleness).
-  # Persistent metadata is retrieved from the database when database.enabled=true.
-  dir_cache_enabled: false  # Disabled - in-memory session cache only
-  dir_listing_cache_enabled: false  # Disabled - in-memory session cache only
-  getattr_cache_enabled: false  # Disabled - in-memory session cache only
+  dir_cache_enabled: false
+  dir_listing_cache_enabled: false
+  force_pkl_caches: false
+  getattr_cache_enabled: false
   getattr_cache_save_interval: 5.0
-  force_pkl_caches: false  # Force PKL caches off - they cause staleness issues
-  
-  # In-memory caches (always enabled, session-scoped, no staleness risk)
   readdir_direntry_cache_enabled: true
   readdir_skip_cache_lookup_with_direntry: true
   transform_output_size_cache_enabled: true
@@ -24,10 +17,10 @@ cache_warmer:
   max_depth: 12
 database:
   auto_sync: true
-  enabled: false
-  mode: hybrid
-  sync_on_startup: true
+  enabled: true
+  mode: enabled
   path: /mnt/filestorefs/.transfs_metadata.db
+  sync_on_startup: true
 filestore: /mnt/filestorefs
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:
