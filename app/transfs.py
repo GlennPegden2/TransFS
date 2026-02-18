@@ -366,16 +366,167 @@ class TransFS(Passthrough):
             return os.path.join(self.mount_path, rel_path)
         return path
 
+    def _extract_map_info(self, path: str) -> Optional[tuple]:
+        """
+        Extract client, system, and map_name from a virtual path.
+        Returns tuple (client_name, system_name, map_name) or None.
+        
+        Example: /mnt/transfs/MiSTer/Apple-II/FDs -> ('MiSTer', 'Apple-II', 'FDs')
+        """
+        try:
+            from pathutils import get_client, get_system_info
+            
+            rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
+            if len(rel_parts) < 3:
+                return None
+            
+            client_name = rel_parts[0]
+            system_name = rel_parts[1]
+            map_name = rel_parts[2]
+            
+            # Verify this is a valid client/system/map
+            client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if not client_config:
+                return None
+            
+            system_info = get_system_info(client_config, list(rel_parts), Path(client_config['default_target_path']).parts)
+            if not system_info:
+                return None
+            
+            return (client_name, system_name, map_name)
+        except Exception as e:
+            logger.debug(f"_extract_map_info error for {path}: {e}")
+            return None
+
+    async def _readdir_database_only(self, path: str, start_id: int, token, map_info: tuple):
+        """
+        Read directory entries using ONLY database queries (no filesystem fallback).
+        
+        This is the primary mode for query map directories.
+        Returns False if completed successfully, True if should fall back to filesystem.
+        """
+        client_name, system_name, map_name = map_info
+        logger.info(f"READDIR_DB_ONLY: {path} client={client_name} system={system_name} map={map_name}")
+        
+        try:
+            # Get map configuration to find allowed extensions
+            from pathutils import find_map_entry, get_map_config
+            client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if not client_config:
+                logger.warning(f"READDIR_DB_ONLY: client {client_name} not found")
+                return True  # Fall back to filesystem
+            
+            system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
+            if not system_info:
+                logger.warning(f"READDIR_DB_ONLY: system {system_name} not found")
+                return True
+            
+            map_entry = find_map_entry(system_info, map_name)
+            if not map_entry:
+                logger.warning(f"READDIR_DB_ONLY: map {map_name} not found")
+                return True
+            
+            map_config = get_map_config(map_entry)
+            if not map_config:
+                logger.warning(f"READDIR_DB_ONLY: no config for map {map_name}")
+                return True
+            
+            # Extract allowed extensions from map config
+            allowed_extensions = map_config.get('extensions', [])
+            if not allowed_extensions:
+                logger.info(f"READDIR_DB_ONLY: no extensions configured for {map_name}")
+                return True
+            
+            # Query database for files in this map
+            from db.queries import query_files_by_client_system_and_map
+            db_files = query_files_by_client_system_and_map(client_name, system_name, map_name, allowed_extensions)
+            
+            logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in database")
+            
+            if not db_files:
+                # Empty directory
+                logger.info(f"READDIR_DB_ONLY: no files found, returning empty directory")
+                return False
+            
+            # Build system transform map for extension-based renaming
+            system_transform_map = self._build_system_transform_map(path)
+            
+            # Send entries to client
+            sent_count = 0
+            for entry_id, file_record in enumerate(db_files, start=1):
+                if entry_id <= start_id:
+                    continue
+                
+                filename = file_record.get('filename', '')
+                source_path = file_record.get('source_path', '')
+                extension = file_record.get('extension', '').upper()
+                size = file_record.get('size', 0)
+                mtime = file_record.get('mtime', int(time.time()))
+                
+                # Create stat dict
+                now = int(time.time())
+                st_mtime = int(mtime) if mtime else now
+                stat_dict = {
+                    'st_atime': st_mtime,
+                    'st_ctime': st_mtime,
+                    'st_mtime': st_mtime,
+                    'st_gid': 0,
+                    'st_uid': 0,
+                    'st_mode': 0o100444,
+                    'st_nlink': 1,
+                    'st_size': size,
+                }
+                
+                entry_path = os.path.join(path, filename)
+                entry_inode = self._make_synthetic_inode(entry_path)
+                self._add_path(entry_inode, entry_path)
+                entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+                
+                # Apply transform renaming
+                display_name = filename
+                if system_transform_map:
+                    _, ext = os.path.splitext(filename)
+                    ext = ext[1:].upper() if ext else ""
+                    pipeline = system_transform_map.get(ext)
+                    if pipeline:
+                        effective_ext = pipeline.get_effective_output_extension()
+                        if effective_ext:
+                            base_name, _ = os.path.splitext(filename)
+                            display_name = f"{base_name}.{effective_ext}"
+                            logger.debug(f"READDIR_DB_ONLY: {filename} -> {display_name}")
+                
+                if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
+                    logger.info(f"READDIR_DB_ONLY: client buffer full after {sent_count} entries")
+                    break
+                sent_count += 1
+            
+            logger.info(f"READDIR_DB_ONLY: complete, sent {sent_count}/{len(db_files)} entries")
+            return False  # Successfully completed database-only readdir
+            
+        except Exception as e:
+            logger.error(f"READDIR_DB_ONLY: error: {e}", exc_info=True)
+            return True  # Fall back to filesystem
+
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
         Read directory entries with FULL attributes (readdirplus support).
         Optimized to batch-resolve virtual paths and use cache efficiently.
+        Database-only mode for query map directories.
         """
         t_start = time.time()
         path = self._inode_to_path(fh)
         # Normalize to virtual path for consistency
         path = self._normalize_to_virtual_path(path)
         logger.info("READDIR START: path=%s start_id=%d", path, start_id)
+        
+        # Try database-only mode for query map directories first
+        map_info = self._extract_map_info(path)
+        if map_info:
+            logger.info(f"READDIR: detected query map directory, using database-only mode")
+            should_fallback = await self._readdir_database_only(path, start_id, token, map_info)
+            if not should_fallback:
+                return  # Successfully completed database-only readdir
+            logger.info(f"READDIR: database-only mode failed, falling back to filesystem")
         
         # Try database mode first if enabled and path is suitable
         if self._can_use_database(path):

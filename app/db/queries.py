@@ -404,3 +404,69 @@ def query_system_statistics(system: str) -> Dict[str, Any]:
             'extension_counts': {},
             'extensions': []
         }
+
+
+def query_files_by_client_system_and_map(
+    client: str,
+    system: str,
+    map_name: str,
+    extensions: Optional[List[str]] = None,
+    limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Query files for a specific client, system, and map.
+    
+    Used by readdir() in database-only mode.
+    
+    Args:
+        client: Client name (e.g., 'MiSTer')
+        system: System name (e.g., 'Apple-II')
+        map_name: Map name (e.g., 'FDs', 'HDs')
+        extensions: Optional list of extensions to filter (e.g., ['DSK', 'DO', 'PO'])
+        limit: Maximum number of results
+    
+    Returns:
+        List of file records with source_path, filename, extension, size, mtime, etc.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ?"
+        params = [client, system, map_name]
+        
+        # Add extension filter if provided
+        if extensions:
+            placeholders = ','.join(['?' for _ in extensions])
+            query += f" AND LOWER(extension) IN ({placeholders})"
+            params.extend([ext.lower() for ext in extensions])
+        
+        query += " ORDER BY filename"
+        if limit:
+            query += f" LIMIT {limit}"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        if not rows:
+            logger.info(f"No files found for client={client}, system={system}, map={map_name}")
+            return []
+        
+        result = []
+        for row in rows:
+            result.append({
+                'file_id': row[0],
+                'source_path': row[1],
+                'virtual_path': row[2],
+                'filename': row[3],
+                'extension': row[4],
+                'size': row[5],
+                'mtime': row[6],
+            })
+        
+        logger.info(f"query_files_by_client_system_and_map: found {len(result)} files for {client}/{system}/{map_name}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error querying files for {client}/{system}/{map_name}: {e}", exc_info=True)
+        return []
