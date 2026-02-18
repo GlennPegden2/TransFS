@@ -1394,8 +1394,55 @@ class TransFS(Passthrough):
         path = self._inode_to_path(inode)
         logger.info("OPEN: inode=%s, flags=%s, path=%s", inode, flags, path)
         
-        # Path from _inode_to_path is already in mount format
-        trans_path = get_source_path(logger, self.config, self.mount_path, path)
+        # Check if this is a query map file and we have database support
+        trans_path = None
+        if self.data_adapter and not (flags & os.O_CREAT):
+            try:
+                from pathutils import find_map_entry, is_query_map, get_map_config
+                from pathlib import Path
+                
+                path_parts = Path(path).parts
+                mount_parts = Path(self.mount_path).parts
+                rel_parts = path_parts[len(mount_parts):]
+                
+                # Check if this looks like a query map file: /<client>/<system>/<map>/<file>
+                if len(rel_parts) == 4:
+                    client_name = rel_parts[0]
+                    system_name = rel_parts[1]
+                    map_name = rel_parts[2]
+                    filename = rel_parts[3]
+                    
+                    client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                    if client:
+                        system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
+                        if system_info:
+                            map_entry = find_map_entry(system_info, map_name)
+                            map_config = get_map_config(map_entry)
+                            if is_query_map(map_config):
+                                # This is a query map file - search database for matching file
+                                from db.queries import query_files_by_system_and_query
+                                from pathutils import get_system_identifier
+                                
+                                query_cfg = map_config.get("query", {})
+                                system_id = get_system_identifier(system_info)
+                                
+                                if system_id:
+                                    # Query database for files matching this query map
+                                    files = query_files_by_system_and_query(system_id, query_cfg, system_info)
+                                    
+                                    # Look for a matching filename
+                                    name_part = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                                    for file_record in files:
+                                        if file_record.get('filename', '').rsplit('.', 1)[0].lower() == name_part.lower():
+                                            trans_path = file_record.get('source_path')
+                                            logger.info("OPEN: query map found file via database: %s -> %s", filename, trans_path)
+                                            break
+            except Exception as e:
+                logger.debug(f"OPEN: error checking query map for {path}: {e}")
+        
+        # Fallback to normal source path resolution if database lookup failed or not a query map
+        if trans_path is None:
+            trans_path = get_source_path(logger, self.config, self.mount_path, path)
         logger.info("OPEN: trans_path=%s", trans_path)
 
         if trans_path is None:
