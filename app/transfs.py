@@ -302,7 +302,8 @@ class TransFS(Passthrough):
                     system_info, 
                     filename_for_detection, 
                     virtual_folder,
-                    cache_config
+                    cache_config,
+                    full_path=sample_file  # Pass actual file path for format detection
                 )
                 if pipeline:
                     pipeline_map[ext.upper()] = pipeline
@@ -387,8 +388,12 @@ class TransFS(Passthrough):
                 t_config = time.time() - t_config_start
                 logger.info(f"READDIR DATABASE: config allows {len(config_entries)} entries (parsed in {t_config:.4f}s)")
                 
+                # Build system transform map for efficient extension-based renaming
+                system_transform_map = self._build_system_transform_map(path)
+                
                 # Get entries from database
                 db_entries = self.data_adapter.readdir_entries(path)
+                logger.info(f"READDIR DATABASE: got {len(db_entries) if db_entries else 0} entries from adapter")
                 if db_entries:
                     sent_count = 0
                     filtered_count = 0
@@ -436,7 +441,23 @@ class TransFS(Passthrough):
                         entry_inode = self._make_synthetic_inode(entry_path)
                         self._add_path(entry_inode, entry_path)
                         entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
-                        if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                        
+                        # Apply transform renaming using system transform map
+                        display_name = entry_name
+                        if system_transform_map:
+                            _, ext = os.path.splitext(entry_name)
+                            ext = ext[1:].upper() if ext else ""
+                            pipeline = system_transform_map.get(ext)
+                            logger.info(f"READDIR database: entry={entry_name}, ext={ext}, pipeline={pipeline is not None}")
+                            if pipeline:
+                                effective_ext = pipeline.get_effective_output_extension()
+                                logger.info(f"READDIR database: effective_ext={effective_ext}")
+                                if effective_ext:
+                                    base_name, _ = os.path.splitext(entry_name)
+                                    display_name = f"{base_name}.{effective_ext}"
+                                    logger.info(f"READDIR database: Renamed {entry_name} -> {display_name}")
+                        
+                        if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
                             break
                         sent_count += 1
                     t_total = time.time() - t_start
@@ -483,6 +504,10 @@ class TransFS(Passthrough):
         # Fast-path for query map directories: avoid per-entry resolution and stat
         # This keeps listings responsive for large query maps and defers stat to getattr.
         if is_query_map_dir and virtual_entries:
+            # Build system transform map once for efficient extension-based renaming
+            system_transform_map = self._build_system_transform_map(xfull_path)
+            logger.info(f"READDIR fast-path: built transform map with {len(system_transform_map)} extensions")
+            
             sent_count = 0
             for entry_id, entry_name in enumerate(virtual_entries, start=1):
                 if entry_id <= start_id:
@@ -496,7 +521,21 @@ class TransFS(Passthrough):
                     'st_mode': 0o100444, 'st_nlink': 1, 'st_size': 0,
                 }
                 entry = self._dict_to_entry_attributes(stat_dict, entry_inode, cache_timeout=1.0)
-                if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                
+                # Apply transform renaming using system transform map
+                display_name = entry_name
+                if system_transform_map:
+                    _, ext = os.path.splitext(entry_name)
+                    ext = ext[1:].upper() if ext else ""
+                    pipeline = system_transform_map.get(ext)
+                    if pipeline:
+                        effective_ext = pipeline.get_effective_output_extension()
+                        if effective_ext:
+                            base_name, _ = os.path.splitext(entry_name)
+                            display_name = f"{base_name}.{effective_ext}"
+                            logger.debug(f"READDIR fast-path: Renamed {entry_name} -> {display_name}")
+                
+                if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
                     logger.info(f"READDIR: client buffer full after {sent_count} entries (fast query map)")
                     break
                 sent_count += 1
@@ -1500,8 +1539,24 @@ class TransFS(Passthrough):
                                     name_part = filename.rsplit('.', 1)[0] if '.' in filename else filename
                                     for file_record in files:
                                         if file_record.get('filename', '').rsplit('.', 1)[0].lower() == name_part.lower():
-                                            trans_path = file_record.get('source_path')
-                                            logger.info("OPEN: query map found file via database: %s -> %s", filename, trans_path)
+                                            source_path = file_record.get('source_path')
+                                            logger.info("OPEN: query map found file via database: %s -> %s", filename, source_path)
+                                            
+                                            # Check if this file needs transformation
+                                            from sourcepath import get_transform_pipeline_for_file
+                                            cache_config = self.config.get("cache", {})
+                                            pipeline = get_transform_pipeline_for_file(
+                                                logger,
+                                                system_info,
+                                                os.path.basename(source_path),
+                                                map_name,
+                                                cache_config,
+                                                full_path=source_path,
+                                            )
+                                            if pipeline:
+                                                trans_path = {'path': source_path, 'transform_pipeline': pipeline}
+                                            else:
+                                                trans_path = source_path
                                             break
             except Exception as e:
                 logger.debug(f"OPEN: error checking query map for {path}: {e}")
@@ -1567,16 +1622,18 @@ class TransFS(Passthrough):
                     
                     # Calculate output size
                     output_size = self._get_transform_output_size(pipeline, source_size)
+                    logger.info(f"OPEN: transform source_size={source_size}, output_size={output_size}")
                     
                     # Read and transform all data
                     # For now, read entire file - could optimize for large files later
                     transformed_data = pipeline.apply_transforms(source_file, 0, output_size if output_size >= 0 else source_size)
+                    logger.info(f"OPEN: transformed_data length={len(transformed_data)}")
                     
                     # Write to temp file
                     temp = tempfile.NamedTemporaryFile(mode='wb', delete=False)
                     temp.write(transformed_data)
                     temp.close()
-                    logger.debug("DEBUG: open created transformed temp file at %s (size: %d -> %d)", 
+                    logger.info("OPEN: created transformed temp file at %s (size: %d -> %d)", 
                                 temp.name, source_size, len(transformed_data))
                     
                     # Open temp file

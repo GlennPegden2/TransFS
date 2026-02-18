@@ -5,6 +5,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **2MG Transform Bogus Header Support** - Fixed reading 2MG files with invalid data_offset values
+  - Issue: 2MG files with bogus data_offset=819200 (should be 64) only read 69 bytes instead of 819KB
+  - Root Cause: Header field pointed beyond actual data, clamping calculation limited reads
+  - Solution: Added validation in `_parse_header()` to detect and reject bogus offsets
+  - Validation: If data_offset leaves <1KB data remaining, use header_size (64) instead
+  - Impact: Also fixes format detection (FD vs HD) which was using bogus offset in calculations
+  - Verification: Files now read full 819200 bytes with correct disk data (not "2IMGRVLW" header)
+
+
 - **Query Map Listing Performance** - Avoided expensive per-entry resolution in query map directories
   - Issue: Large query map directories (e.g., Apple-II FDs) took several minutes to list
   - Solution: Added fast-path readdir for query maps to emit entries without per-file stat

@@ -51,6 +51,7 @@ def get_transform_pipeline_for_file(
     map_entry = find_map_entry(system_info, virtual_folder)
     map_config = get_map_config(map_entry)
     transform_map = get_map_transforms(map_config)
+    logger.info(f"get_transform_pipeline_for_file: filename={filename}, virtual_folder={virtual_folder}, transform_map keys={list(transform_map.keys()) if transform_map else None}")
     if not transform_map:
         # Fallback to legacy SoftwareArchives transforms
         sa_entry = find_software_archive_entry(system_info)
@@ -68,21 +69,27 @@ def get_transform_pipeline_for_file(
     _, ext = os.path.splitext(filename)
     ext = ext[1:].upper()  # Remove dot and uppercase
     
+    logger.info(f"get_transform_pipeline_for_file: extracted ext='{ext}', checking if in transform_map keys={list(transform_map.keys())}")
+    
     # Check if transforms are configured for this extension
     if ext not in transform_map:
+        logger.info(f"get_transform_pipeline_for_file: ext '{ext}' NOT in transform_map, returning None")
         return None
 
     cache_key = None
     # Note: Only use cache for generic pipelines (e.g., during initialization)
     # When we have a real full_path, we need to rebuild to trigger detection
     use_cache = pipeline_cache_enabled and not full_path
+    logger.info(f"get_transform_pipeline_for_file: use_cache={use_cache}, full_path={full_path is not None}")
     if use_cache:
         cache_key = _get_transform_cache_key(system_info, virtual_folder, ext)
         if cache_key in _transform_pipeline_cache:
+            logger.info(f"get_transform_pipeline_for_file: returning cached pipeline")
             return _transform_pipeline_cache[cache_key]
     
     # Build transform pipeline
     transform_specs = transform_map[ext]
+    logger.info(f"get_transform_pipeline_for_file: building pipeline with specs={transform_specs}")
     try:
         # Use full_path if provided for actual file operations, otherwise use filename
         pipeline_path = full_path if full_path else filename
@@ -365,6 +372,60 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
             candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
             if os.path.exists(candidate):
                 return candidate
+        
+        # REVERSE MAPPING: If not found, check if this extension is a transform output
+        # E.g., requesting Game.hdv might actually be Game.2mg with two_mg transform
+        transform_map = get_map_transforms(map_config)
+        if transform_map and virt_ext:
+            for source_ext, transform_specs in transform_map.items():
+                # Check if this transform outputs the requested extension
+                # Try to find a file with the source extension
+                real_filename = f"{name}.{source_ext.lower()}"
+                
+                # Resolve extension directory case-insensitively
+                ext_dir_name = source_ext
+                for candidate_dir in (source_ext, source_ext.lower(), source_ext.upper()):
+                    if os.path.isdir(os.path.join(source_dir, candidate_dir)):
+                        ext_dir_name = candidate_dir
+                        break
+                
+                # Try extension subfolder
+                candidate = os.path.join(source_dir, ext_dir_name, *subpath[:-1], real_filename)
+                if os.path.exists(candidate):
+                    logger.info(f"REVERSE MAPPING: found {candidate} for requested {last}")
+                    # Build transform pipeline for this file
+                    from pathutils import get_client, get_system_info
+                    cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                    pipeline = get_transform_pipeline_for_file(
+                        logger,
+                        system_info,
+                        real_filename,
+                        map_name,
+                        cache_config,
+                        full_path=candidate,
+                    )
+                    if pipeline:
+                        return {'path': candidate, 'transform_pipeline': pipeline}
+                    return candidate
+                    
+                # Try flat layout
+                candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
+                if os.path.exists(candidate):
+                    logger.info(f"REVERSE MAPPING: found {candidate} for requested {last}")
+                    # Build transform pipeline for this file
+                    cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                    pipeline = get_transform_pipeline_for_file(
+                        logger,
+                        system_info,
+                        real_filename,
+                        map_name,
+                        cache_config,
+                        full_path=candidate,
+                    )
+                    if pipeline:
+                        return {'path': candidate, 'transform_pipeline': pipeline}
+                    return candidate
+        
         return None
 
     # Dynamic ...SoftwareArchives... mappings require the special entry

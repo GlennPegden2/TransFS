@@ -85,11 +85,24 @@ class TwoMGTransform(Transform):
                 hdr_size = struct.unpack("<H", header[8:10])[0]
                 data_off = struct.unpack("<I", header[28:32])[0]
                 data_len = struct.unpack("<I", header[32:36])[0]
+                
+                logger.info(f"TwoMGTransform._parse_header: raw header values: hdr_size={hdr_size}, data_off={data_off}, data_len={data_len}, source_size={source_size}")
 
                 header_size = hdr_size if hdr_size > 0 else header_size
-                # Validate data_offset is within file bounds, otherwise use header_size
-                data_offset = data_off if (data_off > 0 and data_off < source_size) else header_size
+                # Validate data_offset is within file bounds and makes sense
+                # Some 2MG files have bogus data_offset values (e.g., 819200 for an 800KB file)
+                # In these cases, use the header_size as the data_offset
+                if data_off > 0 and data_off < source_size and (source_size - data_off) > 1024:
+                    # data_off seems valid (points to somewhere in the file with enough data after it)
+                    data_offset = data_off
+                else:
+                    # Bogus or missing data_off - use header_size
+                    data_offset = header_size
+                    logger.info(f"TwoMGTransform._parse_header: data_off={data_off} looks invalid, using header_size={header_size}")
+                
                 data_length = data_len if data_len > 0 else max(0, source_size - data_offset)
+                
+                logger.info(f"TwoMGTransform._parse_header: after validation: header_size={header_size}, data_offset={data_offset}, data_length={data_length}")
             except struct.error:
                 pass
 
@@ -100,6 +113,7 @@ class TwoMGTransform(Transform):
         if data_length <= 0 or data_length > max_length:
             data_length = max_length
 
+        logger.info(f"TwoMGTransform._parse_header: final values: header_size={header_size}, data_offset={data_offset}, data_length={data_length}")
         return header_size, data_offset, data_length
 
     def _get_effective_length(self, input_size: int) -> int:

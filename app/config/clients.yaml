@@ -204,17 +204,14 @@ clients:
                   - DSK
                   - DO
                   - PO
-                  - 2MG
                 supports_zip: false
                 supports_zaparoo: true
-              transforms:
-                2MG:
-                  - type: two_mg
           - HDs:
               query:
                 source_dir: Software
                 extensions:
                   - HDV
+                  - 2MG
                 supports_zip: false
                 supports_zaparoo: true
               transforms:
