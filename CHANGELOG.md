@@ -13,6 +13,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Impact: Also fixes format detection (FD vs HD) which was using bogus offset in calculations
   - Verification: Files now read full 819200 bytes with correct disk data (not "2IMGRVLW" header)
 
+- **2MG Format Detection Threshold** - Updated floppy/hard disk threshold to 800KB
+  - Changed from 200KB to 800KB to match Apple IIe 3.5" floppy capacity
+  - Files ≤800KB: Classified as floppy (.do/.po based on format byte)
+  - Files >800KB: Classified as hard disk (.hdv)
+  - Supports both 140KB (5.25") and 800KB (3.5") floppy formats
+
 
 - **Query Map Listing Performance** - Avoided expensive per-entry resolution in query map directories
   - Issue: Large query map directories (e.g., Apple-II FDs) took several minutes to list
