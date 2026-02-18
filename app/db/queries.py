@@ -429,7 +429,10 @@ def query_files_by_client_system_and_map(
         List of file records with source_path, filename, extension, size, mtime, etc.
     """
     try:
-        conn = get_connection()
+        # Direct SQLite connection instead of using get_connection() to avoid init issues
+        import sqlite3
+        db_path = "/mnt/filestorefs/.transfs_metadata.db"
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ?"
@@ -450,6 +453,7 @@ def query_files_by_client_system_and_map(
         
         if not rows:
             logger.info(f"No files found for client={client}, system={system}, map={map_name}")
+            conn.close()
             return []
         
         result = []
@@ -465,6 +469,7 @@ def query_files_by_client_system_and_map(
             })
         
         logger.info(f"query_files_by_client_system_and_map: found {len(result)} files for {client}/{system}/{map_name}")
+        conn.close()
         return result
         
     except Exception as e:

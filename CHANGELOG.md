@@ -4,7 +4,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **Database-Only Readdir for Query Maps** - Query map directories now list files from database without filesystem access
+  - Eliminates parse_trans_path overhead for directory listings
+  - Direct database queries via query_files_by_client_system_and_map()
+  - Proper extension filtering from query.extensions configuration
+  - Pagination support for large directories (tested with 76 FD files)
+  - Graceful fallback to filesystem mode if database fails
+  - Validates query map configuration before attempting database mode
+
 ### Fixed
+- **Query Map Extension Configuration** - Fixed readdir not finding extensions in query config
+  - Issue: Extensions were stored under query.extensions but code looked for top-level extensions
+  - Solution: Updated _readdir_database_only to use get_query_config() to access nested extensions
+
 - **2MG Transform Bogus Header Support** - Fixed reading 2MG files with invalid data_offset values
   - Issue: 2MG files with bogus data_offset=819200 (should be 64) only read 69 bytes instead of 819KB
   - Root Cause: Header field pointed beyond actual data, clamping calculation limited reads

@@ -59,6 +59,15 @@ class TransFS(Passthrough):
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
         from config import read_config
         self.config = read_config()
+        
+        # Initialize database connection for queries
+        try:
+            from db.connection import init_database as db_init_database
+            db_init_database()
+            logger.info("Database connection initialized")
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f"Failed to initialize database connection: {e}")
+        
         try:
             from dirlisting import set_cache_config
             cache_config = self.config.get("cache", {})
@@ -374,8 +383,6 @@ class TransFS(Passthrough):
         Example: /mnt/transfs/MiSTer/Apple-II/FDs -> ('MiSTer', 'Apple-II', 'FDs')
         """
         try:
-            from pathutils import get_client, get_system_info
-            
             rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
             if len(rel_parts) < 3:
                 return None
@@ -387,12 +394,27 @@ class TransFS(Passthrough):
             # Verify this is a valid client/system/map
             client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if not client_config:
+                logger.debug(f"_extract_map_info: client {client_name} not found")
                 return None
             
-            system_info = get_system_info(client_config, list(rel_parts), Path(client_config['default_target_path']).parts)
+            system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
             if not system_info:
+                logger.debug(f"_extract_map_info: system {system_name} not found")
                 return None
             
+            # Check if map exists
+            map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == map_name), None)
+            if not map_entry:
+                logger.debug(f"_extract_map_info: map {map_name} not found in {system_name}")
+                return None
+            
+            # Check if it's a query map
+            map_config = map_entry.get(map_name)
+            if not map_config or 'query' not in map_config:
+                logger.debug(f"_extract_map_info: {map_name} is not a query map")
+                return None
+            
+            logger.debug(f"_extract_map_info: found query map {client_name}/{system_name}/{map_name}")
             return (client_name, system_name, map_name)
         except Exception as e:
             logger.debug(f"_extract_map_info error for {path}: {e}")
@@ -431,8 +453,10 @@ class TransFS(Passthrough):
                 logger.warning(f"READDIR_DB_ONLY: no config for map {map_name}")
                 return True
             
-            # Extract allowed extensions from map config
-            allowed_extensions = map_config.get('extensions', [])
+            # Extract allowed extensions from map config (inside query key)
+            from pathutils import get_query_config
+            query_config = get_query_config(map_config)
+            allowed_extensions = query_config.get('extensions', [])
             if not allowed_extensions:
                 logger.info(f"READDIR_DB_ONLY: no extensions configured for {map_name}")
                 return True
