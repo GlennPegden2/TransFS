@@ -44,6 +44,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Validation: Apple-II FDs (2MG ≤ 865KB) = 76 files, HDs (2MG > 865KB) = 210 files correctly separated
 
 ### Fixed
+- **Explicit output_extension Configuration for Transformed Files** - Large 2MG files in HDs now appear as .hdv
+  - Issue: 2MG files ≥ 908,289 bytes appearing with wrong extension (.do) in HDs directory
+  - Root cause: TwoMGTransform auto-detection returning "do" format override explicit "output_extension: hdv" config
+  - Solution: Modified TransformPipeline.get_effective_output_extension() to prioritize explicit config over auto-detection
+  - Result: Files in HDs map now correctly display as .hdv, FDs files still show as .do/.po based on detection
+  - 494 FDs files properly filtered and displayed, 6 HDs files with large 2MG images now in .hdv format
+
+- **Case-Insensitive Extension Transform Lookup** - Fixed transforms not applying when extension case mismatched
+  - Issue: Database stored extensions as lowercase (e.g., "2mg") but FUSE code looked up transforms with uppercase keys ("2MG")
+  - Solution: Updated all extension lookups in transform map to try both uppercase and lowercase
+  - Impacts: READDIR file renaming, getattr size adjustment, all places using system_transform_map
+  - Tested: 2MG files correctly transformed regardless of extension case in database
+
+- **Extension-Aware Sample File Selection** - Transform detection now uses appropriate sample files for size-filtered extensions
+  - Issue: Building transform pipeline for 2MG files in HDs was finding small floppy samples instead of large drives
+  - Solution: When building system transform map, filter sample files by extension_filters to match the map's size constraints
+  - Result: HDs map correctly detects hard drive format characteristics using large 2MG file samples
+
 - **System Name Format Normalization** - Fixed FUSE queries failing to find files in database
   - Issue: Database stored system names as "Apple/AppleII" (from source_path extraction) but FUSE queries used "Apple-II" format
   - Root cause: System name mismatch prevented query_files_by_client_system_and_map() from matching database records

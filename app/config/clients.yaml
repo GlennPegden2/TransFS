@@ -227,6 +227,7 @@ clients:
               transforms:
                 2MG:
                   - type: two_mg
+                    output_extension: hdv  # Large 2MG files in HDs should appear as .hdv
 
       # --- Atari ---
       - name: Atari2600

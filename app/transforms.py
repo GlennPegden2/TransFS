@@ -132,12 +132,18 @@ class TransformPipeline:
     
     def get_effective_output_extension(self) -> Optional[str]:
         """
-        Get the output extension, checking last transform for dynamic extension.
+        Get the output extension, with proper priority handling.
         
-        Returns the transform's detected extension if available, otherwise
-        falls back to the static output_extension from config.
+        Returns the extension in this priority order:
+        1. Explicit output_extension from config (e.g., "hdv" for HDs maps)
+        2. Dynamic extension from last transform's auto-detection (e.g., "do"/"po" from TwoMGTransform)
+        3. None if no output extension configured
         """
-        # Check if last transform has dynamic extension (e.g., TwoMGTransform)
+        # If explicitly configured in map config, use that
+        if self.output_extension:
+            return self.output_extension
+        
+        # Otherwise, check if last transform has dynamic extension (e.g., TwoMGTransform detecting do/po/hdv)
         if self.stages:
             last_transform = self.stages[-1]
             if hasattr(last_transform, 'get_output_extension'):
@@ -145,8 +151,7 @@ class TransformPipeline:
                 if dynamic_ext:
                     return dynamic_ext
         
-        # Fall back to static extension from config
-        return self.output_extension
+        return None
 
     def get_output_size(self, input_size: int) -> int:
         """

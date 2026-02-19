@@ -281,25 +281,71 @@ class TransFS(Passthrough):
             for ext in transform_map.keys():
                 # Try to find a real file with this extension for accurate detection
                 sample_file = None
+                
+                # Get extension filters from query config to help select appropriate sample file
+                extension_filters = {}
+                if map_config and isinstance(map_config, dict):
+                    query_cfg = map_config.get("query", {})
+                    if isinstance(query_cfg, dict):
+                        extension_filters = query_cfg.get("extension_filters", {})
+                
                 if source_dir and os.path.isdir(source_dir):
                     # Check for extension-specific subdirectory first
                     ext_subdir = os.path.join(source_dir, ext.upper())
                     if os.path.isdir(ext_subdir):
                         try:
+                            candidates = []
                             for entry in os.scandir(ext_subdir):
                                 if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
-                                    sample_file = entry.path
-                                    break
+                                    candidates.append(entry.path)
+                            
+                            # If extension has size filters, find a file matching this map's filter
+                            if candidates and ext.upper() in extension_filters:
+                                filters = extension_filters[ext.upper()]
+                                min_size = filters.get('min_size')
+                                max_size = filters.get('max_size')
+                                
+                                # Find first file matching size constraint
+                                for candidate in candidates:
+                                    try:
+                                        size = os.path.getsize(candidate)
+                                        if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
+                                            sample_file = candidate
+                                            break
+                                    except OSError:
+                                        pass
+                            else:
+                                # No size filter, just use first file
+                                sample_file = candidates[0] if candidates else None
                         except OSError:
                             pass
                     
                     # If not found in subdir, check main directory
                     if not sample_file:
                         try:
+                            candidates = []
                             for entry in os.scandir(source_dir):
                                 if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
-                                    sample_file = entry.path
-                                    break
+                                    candidates.append(entry.path)
+                            
+                            # If extension has size filters, find a file matching this map's filter
+                            if candidates and ext.upper() in extension_filters:
+                                filters = extension_filters[ext.upper()]
+                                min_size = filters.get('min_size')
+                                max_size = filters.get('max_size')
+                                
+                                # Find first file matching size constraint
+                                for candidate in candidates:
+                                    try:
+                                        size = os.path.getsize(candidate)
+                                        if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
+                                            sample_file = candidate
+                                            break
+                                    except OSError:
+                                        pass
+                            else:
+                                # No size filter, just use first file
+                                sample_file = candidates[0] if candidates else None
                         except OSError:
                             pass
                 
@@ -527,7 +573,8 @@ class TransFS(Passthrough):
                 if system_transform_map:
                     _, ext = os.path.splitext(filename)
                     ext = ext[1:].upper() if ext else ""
-                    pipeline = system_transform_map.get(ext)
+                    # Try both uppercase and lowercase for case-insensitive lookup
+                    pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
                     if pipeline:
                         effective_ext = pipeline.get_effective_output_extension()
                         if effective_ext:
@@ -591,7 +638,7 @@ class TransFS(Passthrough):
                                     system_transform_map = self._build_system_transform_map(path)
                                     if system_transform_map:
                                         ext = file_record.get('extension', '').upper()
-                                        pipeline = system_transform_map.get(ext)
+                                        pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
                                         if pipeline:
                                             source_stat = os.lstat(source_path)
                                             transformed_size = self._get_transform_output_size(pipeline, source_stat.st_size)
@@ -772,7 +819,7 @@ class TransFS(Passthrough):
                         if system_transform_map:
                             _, ext = os.path.splitext(entry_name)
                             ext = ext[1:].upper() if ext else ""
-                            pipeline = system_transform_map.get(ext)
+                            pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
                             logger.info(f"READDIR database: entry={entry_name}, ext={ext}, pipeline={pipeline is not None}")
                             if pipeline:
                                 effective_ext = pipeline.get_effective_output_extension()
@@ -852,7 +899,7 @@ class TransFS(Passthrough):
                 if system_transform_map:
                     _, ext = os.path.splitext(entry_name)
                     ext = ext[1:].upper() if ext else ""
-                    pipeline = system_transform_map.get(ext)
+                    pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
                     if pipeline:
                         effective_ext = pipeline.get_effective_output_extension()
                         if effective_ext:
@@ -1432,7 +1479,7 @@ class TransFS(Passthrough):
                 if not pipeline and system_transform_map:
                     _, ext = os.path.splitext(entry_name)
                     ext = ext[1:].upper() if ext else ""
-                    pipeline = system_transform_map.get(ext)
+                    pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
             
             if pipeline:
                 effective_ext = pipeline.get_effective_output_extension()
