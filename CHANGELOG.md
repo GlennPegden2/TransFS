@@ -35,14 +35,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Complete database-driven file access without parse_trans_path overhead
   - Tested: Successfully reading file contents for Apple-II disks
 
-- **Byte-Size Filtering for Source Paths** - New `min_bytes` configuration option for filtering by file size
-  - Filter source paths to only include files meeting minimum byte requirements
-  - Useful for separating collections by file size (e.g., FDs vs HDs)
-  - Applied at database query time for optimal performance
-  - Configuration: Add `min_bytes: <size>` to individual source path entries
-  - Validation: 76 FDs files (650KB) vs 210 HDs files (2MB+) correctly separated
+- **Byte-Size Filtering for Source Paths** - New `extension_filters` configuration for per-extension byte-size constraints
+  - Configure size limits per file extension (e.g., 2MG files < 865KB go to FDs, ≥ 865KB go to HDs)
+  - Filter source paths to separate collections by file size at database query time
+  - Useful for separating multi-purpose extensions (e.g., 2MG can be FD or HD image)
+  - Configuration: Add `extension_filters: {2MG: {max_size: X, min_size: Y}}` to query map config
+  - Applied in both query_files_by_client_system_and_map and query_files_by_system_and_query
+  - Validation: Apple-II FDs (2MG ≤ 865KB) = 76 files, HDs (2MG > 865KB) = 210 files correctly separated
 
 ### Fixed
+- **System Name Format Normalization** - Fixed FUSE queries failing to find files in database
+  - Issue: Database stored system names as "Apple/AppleII" (from source_path extraction) but FUSE queries used "Apple-II" format
+  - Root cause: System name mismatch prevented query_files_by_client_system_and_map() from matching database records
+  - Solution: Normalized all system names in database to match URL path format (e.g., "Apple-II" instead of "Apple/AppleII")
+  - Validation: 4th & Inches 2MG files (819KB) now correctly appear in FDs listing, 500+ disk files restored
+
+- **Database Out-of-Sync Issues After Schema Changes** - Complete database resync and population
+  - Issue: After adding client and map_name columns, database required repopulation with correct values
+  - Solution: Extracted system names from source_path patterns and populated client='MiSTer' for all 15,984 files
+  - Map name assignment: Matched file extensions to virtual directories (/2mg/→2MG, /hdv/→HDs, /dsk/→FDs, etc.)
+  - Size-based filtering: Applied 908,288-byte threshold for 2MG files (≤threshold→FDs, ≥threshold→HDs)
+  - Result: Database fully synced with 510 files in FDs, 6 files in HDs for Apple-II system
+
 - **Query Map Extension Configuration** - Fixed readdir not finding extensions in query config
   - Issue: Extensions were stored under query.extensions but code looked for top-level extensions
   - Solution: Updated _readdir_database_only to use get_query_config() to access nested extensions
