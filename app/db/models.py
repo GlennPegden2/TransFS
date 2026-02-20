@@ -144,6 +144,48 @@ class FileMetadata:
 
 
 @dataclass
+class FileMetadataRecord:
+    """Normalized metadata record (file_metadata)."""
+    file_id: int
+    transfs_path: Optional[str] = None
+    extension: Optional[str] = None
+    media_type_id: Optional[int] = None
+    region_id: Optional[int] = None
+    language_id: Optional[int] = None
+    genre_id: Optional[int] = None
+    app_type_id: Optional[int] = None
+    publisher_id: Optional[int] = None
+    release_date: Optional[str] = None
+    release_year: Optional[int] = None
+    release_precision: Optional[str] = None
+    rom_size: Optional[int] = None
+    is_revision: bool = False
+    is_prototype: bool = False
+    is_homebrew: bool = False
+
+    @classmethod
+    def from_row(cls, row) -> 'FileMetadataRecord':
+        return cls(
+            file_id=row['file_id'],
+            transfs_path=row['transfs_path'],
+            extension=row['extension'],
+            media_type_id=row['media_type_id'],
+            region_id=row['region_id'],
+            language_id=row['language_id'],
+            genre_id=row['genre_id'],
+            app_type_id=row['app_type_id'],
+            publisher_id=row['publisher_id'],
+            release_date=row['release_date'],
+            release_year=row['release_year'],
+            release_precision=row['release_precision'],
+            rom_size=row['rom_size'],
+            is_revision=bool(row['is_revision']),
+            is_prototype=bool(row['is_prototype']),
+            is_homebrew=bool(row['is_homebrew']),
+        )
+
+
+@dataclass
 class Collection:
     """User-defined collection of files."""
     collection_id: Optional[int] = None

@@ -11,7 +11,7 @@ Tables:
 """
 
 # SQLite schema with indexes optimized for common queries
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 CREATE_TABLES = """
 -- Core files table
@@ -89,6 +89,116 @@ CREATE INDEX IF NOT EXISTS idx_metadata_region ON metadata(region);
 CREATE INDEX IF NOT EXISTS idx_metadata_year ON metadata(year);
 CREATE INDEX IF NOT EXISTS idx_metadata_publisher ON metadata(publisher);
 
+-- Controlled vocab tables
+CREATE TABLE IF NOT EXISTS media_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS regions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS languages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS genres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS app_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS publishers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+-- File metadata v2 (normalized)
+CREATE TABLE IF NOT EXISTS file_metadata (
+    file_id INTEGER PRIMARY KEY,
+    transfs_path TEXT,
+    extension TEXT,
+    title TEXT,
+    media_type_id INTEGER,
+    region_id INTEGER,
+    language_id INTEGER,
+    genre_id INTEGER,
+    app_type_id INTEGER,
+    publisher_id INTEGER,
+    release_date TEXT,
+    release_year INTEGER,
+    release_precision TEXT,
+    rom_size INTEGER,
+    is_revision BOOLEAN DEFAULT 0,
+    is_prototype BOOLEAN DEFAULT 0,
+    is_homebrew BOOLEAN DEFAULT 0,
+    FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+    FOREIGN KEY (media_type_id) REFERENCES media_types(id),
+    FOREIGN KEY (region_id) REFERENCES regions(id),
+    FOREIGN KEY (language_id) REFERENCES languages(id),
+    FOREIGN KEY (genre_id) REFERENCES genres(id),
+    FOREIGN KEY (app_type_id) REFERENCES app_types(id),
+    FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_metadata_media_type ON file_metadata(media_type_id);
+CREATE INDEX IF NOT EXISTS idx_file_metadata_region ON file_metadata(region_id);
+CREATE INDEX IF NOT EXISTS idx_file_metadata_language ON file_metadata(language_id);
+CREATE INDEX IF NOT EXISTS idx_file_metadata_genre ON file_metadata(genre_id);
+CREATE INDEX IF NOT EXISTS idx_file_metadata_release_year ON file_metadata(release_year);
+
+-- Flexible tag list for peripherals/flags/etc.
+CREATE TABLE IF NOT EXISTS file_tags (
+    file_id INTEGER NOT NULL,
+    tag_type TEXT NOT NULL,
+    tag_value TEXT NOT NULL,
+    PRIMARY KEY (file_id, tag_type, tag_value),
+    FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_tags_type ON file_tags(tag_type);
+
+-- Packs and file membership
+CREATE TABLE IF NOT EXISTS packs (
+    pack_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    source TEXT,
+    version TEXT,
+    ruleset TEXT,
+    ruleset_overrides TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_packs (
+    file_id INTEGER NOT NULL,
+    pack_id INTEGER NOT NULL,
+    PRIMARY KEY (file_id, pack_id),
+    FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
+    FOREIGN KEY (pack_id) REFERENCES packs(pack_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_packs_pack ON file_packs(pack_id);
+
+-- Optional manual edit audit
+CREATE TABLE IF NOT EXISTS metadata_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    edited_at INTEGER NOT NULL,
+    edited_by TEXT,
+    FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_metadata_edits_file_id ON metadata_edits(file_id);
+
 -- Collections table
 CREATE TABLE IF NOT EXISTS collections (
     collection_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,12 +261,12 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 # Optimized SQLite configuration for read-heavy workload
+# Note: WAL mode disabled for WSL filesystem compatibility
 PRAGMA_SETTINGS = """
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = DELETE;
 PRAGMA synchronous = NORMAL;
 PRAGMA cache_size = -64000;
 PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 268435456;
 PRAGMA foreign_keys = ON;
 """
 

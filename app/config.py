@@ -14,6 +14,7 @@ class Pack:
     post_process: Optional[list[dict]] = None  # Declarative post-processing operations
     build_script: Optional[str] = None  # Legacy bash script for complex cases
     info_links: Optional[list[dict]] = None  # List of {"label": "...", "url": "..."} info links
+    metadata: Optional[dict] = None  # Optional pack-level metadata defaults
 
 @dataclass
 class SystemConfig:
@@ -23,7 +24,7 @@ class SystemConfig:
     canonical_name: str
     local_base_path: str
     packs: list[Pack]
-    download_layout: str = "folder_based"  # folder_based (default) | flat
+    download_layout: str = "folder_based"  # folder_based (default) | flat | source_based
 
 def read_app_config(config_dir="config"):
     """Read application configuration (mountpoint, filestore, web_api, ssl_ignore_hosts)."""
@@ -55,6 +56,14 @@ def read_config(config_dir="config"):
     
     # Read clients config
     clients_config = read_clients_config(config_dir)
+
+    # Apply client-level download_layout defaults to systems
+    for client in clients_config.get("clients", []):
+        client_layout = client.get("download_layout")
+        if not client_layout:
+            continue
+        for system in client.get("systems", []):
+            system.setdefault("download_layout", client_layout)
     
     # Build archive_sources by discovering all source files
     archive_sources = {}
@@ -168,16 +177,18 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
                 sources=pack_data.get("sources", []),
                 post_process=pack_data.get("post_process"),
                 build_script=pack_data.get("build_script"),
-                info_links=pack_data.get("info_links")
+                info_links=pack_data.get("info_links"),
+                metadata=pack_data.get("metadata")
             ))
     
     # Get download_layout from clients config
     download_layout = "folder_based"  # default
     for client in clients_config.get("clients", []):
         if client.get("name") == client_name:
+            client_layout = client.get("download_layout")
             for system in client.get("systems", []):
                 if system.get("name") == system_name:
-                    download_layout = system.get("download_layout", "folder_based")
+                    download_layout = system.get("download_layout", client_layout or "folder_based")
                     break
             break
     

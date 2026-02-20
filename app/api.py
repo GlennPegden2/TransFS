@@ -9,6 +9,7 @@ DO NOT expose this API to untrusted networks or public internet.
 import asyncio
 import base64
 import fnmatch
+import io
 import logging
 import math
 import os
@@ -42,6 +43,7 @@ from config import (
     read_config,
 )
 from post_process import PostProcessor
+from sync_database import DatabaseSync
 app = FastAPI()
 
 
@@ -285,6 +287,55 @@ def normalize_source_urls(source: dict, default_folder: str = "") -> list[dict]:
             })
     
     return normalized
+
+
+def _sanitize_source_folder_name(source_name: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", (source_name or "").strip())
+    return sanitized or "source"
+
+
+def _is_bios_folder(folder: str) -> bool:
+    if not folder:
+        return False
+    normalized = folder.replace("\\", "/").lower().strip("/")
+    if normalized == "bios" or normalized.startswith("bios/"):
+        return True
+    return "/bios/" in f"/{normalized}/"
+
+
+def _resolve_source_folder(
+    source_name: str,
+    folder: str,
+    download_layout: str,
+    base_path_rel: str | None = None,
+) -> str:
+    folder = folder or ""
+    if download_layout != "source_based":
+        return folder
+    if _is_bios_folder(folder):
+        return folder
+
+    normalized = folder.replace("\\", "/").lower()
+    if "sources/" in normalized:
+        return folder
+
+    safe_name = _sanitize_source_folder_name(source_name)
+    if base_path_rel:
+        base_norm = base_path_rel.replace("\\", "/").lower().rstrip("/")
+        if base_norm.endswith("software"):
+            return os.path.join("Sources", safe_name)
+
+    return os.path.join("Software", "Sources", safe_name)
+
+
+def _get_download_layout_for_system(clients: list, manufacturer: str, canonical_name: str) -> str:
+    for client in clients:
+        client_layout = client.get("download_layout")
+        for system in client.get("systems", []):
+            system_canonical = system.get("system_mapping_name") or system.get("cananonical_system_name")
+            if system.get("manufacturer") == manufacturer and system_canonical == canonical_name:
+                return system.get("download_layout", client_layout or "folder_based")
+    return "folder_based"
 
 
 class DownloadRequest(BaseModel):
@@ -1557,6 +1608,159 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
     except Exception as e:  # pylint: disable=broad-except
         return {"error": f"Unexpected error: {str(e)}"}
 
+
+@app.get("/file-metadata")
+def file_metadata(path: str):
+    """Get metadata for a file from the database.
+    
+    Args:
+        path: Virtual filesystem path (e.g., /mnt/transfs/...)
+    
+    Returns:
+        JSON with file metadata including genre, language, region, year, etc.
+    """
+    try:
+        from db.connection import get_connection, init_database
+        
+        config = read_config()
+        db_path = config.get("database", {}).get("path", "/mnt/filestorefs/.transfs_metadata.db")
+        
+        # Normalize path
+        if not path.startswith("/mnt/transfs") and not path.startswith("/mnt/filestorefs"):
+            return {"error": "Invalid path"}
+        
+        # Convert /mnt/transfs paths to /mnt/filestorefs for database lookup
+        db_path_lookup = path.replace("/mnt/transfs", "/mnt/filestorefs")
+        
+        try:
+            # Initialize database connection pool if needed (safe: only creates tables if missing)
+            try:
+                init_database(db_path)
+            except Exception:
+                # If init fails, continue - connection pool might already be initialized
+                pass
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Get file info
+            cursor.execute("""
+                SELECT file_id, filename, extension, size, mtime, is_archive, content_type
+                FROM files
+                WHERE source_path = ? OR virtual_path = ?
+            """, (db_path_lookup, path))
+            
+            file_row = cursor.fetchone()
+            if not file_row:
+                return {"error": "File not found in metadata database"}
+            
+            file_id, filename, extension, size, mtime, is_archive, content_type = file_row
+            
+            # Get normalized metadata with joins to get actual lookup table values
+            cursor.execute("""
+                SELECT 
+                    mt.name as media_type,
+                    r.name as region,
+                    l.name as language,
+                    p.name as publisher,
+                    fm.release_year,
+                    fm.release_date,
+                    fm.release_precision,
+                    fm.rom_size,
+                    fm.is_revision,
+                    fm.is_prototype,
+                    fm.is_homebrew
+                FROM file_metadata fm
+                LEFT JOIN media_types mt ON fm.media_type_id = mt.id
+                LEFT JOIN regions r ON fm.region_id = r.id
+                LEFT JOIN languages l ON fm.language_id = l.id
+                LEFT JOIN publishers p ON fm.publisher_id = p.id
+                WHERE fm.file_id = ?
+            """, (file_id,))
+            
+            normalized_row = cursor.fetchone()
+            
+            # Also check extended metadata table for any data
+            cursor.execute("""
+                SELECT genre, subgenre, language, region, year, publisher, developer,
+                       rating, play_count, last_played, is_prototype, is_homebrew,
+                       is_translation, is_hack, tags, raw_metadata
+                FROM metadata
+                WHERE file_id = ?
+            """, (file_id,))
+            
+            meta_row = cursor.fetchone()
+            
+            # Build response
+            response = {
+                "file_id": file_id,
+                "filename": filename,
+                "extension": extension,
+                "size": size,
+                "mtime": mtime,
+                "is_archive": is_archive,
+                "content_type": content_type,
+                "metadata": {}
+            }
+            
+            # Prefer normalized metadata (with joins) as primary source
+            if normalized_row:
+                (media_type, region, language, publisher, release_year, release_date,
+                 release_precision, rom_size, is_revision, is_prototype, is_homebrew) = normalized_row
+                
+                response["metadata"] = {
+                    "media_type": media_type,
+                    "region": region,
+                    "language": language,
+                    "publisher": publisher,
+                    "release_year": release_year,
+                    "release_date": release_date,
+                    "release_precision": release_precision,
+                    "rom_size": rom_size,
+                    "is_revision": is_revision,
+                    "is_prototype": is_prototype,
+                    "is_homebrew": is_homebrew
+                }
+            
+            # Add extended metadata if available (will overwrite normalized if both exist)
+            if meta_row:
+                (genre, subgenre, language, region, year, publisher, developer,
+                 rating, play_count, last_played, is_prototype, is_homebrew,
+                 is_translation, is_hack, tags, raw_metadata) = meta_row
+                
+                extended = {
+                    "genre": genre,
+                    "subgenre": subgenre,
+                    "language": language,
+                    "region": region,
+                    "year": year,
+                    "publisher": publisher,
+                    "developer": developer,
+                    "rating": rating,
+                    "play_count": play_count,
+                    "last_played": last_played,
+                    "is_prototype": is_prototype,
+                    "is_homebrew": is_homebrew,
+                    "is_translation": is_translation,
+                    "is_hack": is_hack,
+                    "tags": tags,
+                    "raw_metadata": raw_metadata
+                }
+                # Merge, with extended metadata taking precedence for overlapping fields
+                response["metadata"].update({k: v for k, v in extended.items() if v is not None})
+            
+            # Filter out None values for cleaner output
+            response["metadata"] = {k: v for k, v in response["metadata"].items() if v is not None}
+            
+            return response
+            
+        except Exception as e:  # pylint: disable=broad-except
+            return {"error": f"Database query failed: {str(e)}"}
+            
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": f"Failed to retrieve file metadata: {str(e)}"}
+
+
 @app.get("/clients")
 def api_get_clients():
     """Return a list of all configured clients."""
@@ -1711,6 +1915,14 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                     if not url_entries:
                         yield f"⚠ Warning: Source '{source_name}' has no URL(s) configured\n"
                         continue
+
+                    for url_entry in url_entries:
+                        url_entry["folder"] = _resolve_source_folder(
+                            source_name=source_name,
+                            folder=url_entry.get("folder", ""),
+                            download_layout=system_config.download_layout,
+                            base_path_rel=system_config.local_base_path,
+                        )
                     
                     # Handle rename at source level (applied after all URLs downloaded)
                     source_rename_pairs = source.get("rename")
@@ -1754,7 +1966,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                             if total:
                                                 percent = int(downloaded_bytes * 100 / total)
                                                 if percent % 10 == 0:  # Report every 10%
-                                                    yield f"      {percent}% "
+                                                    yield f"\r      {percent:3d}%   "
                                 
                                 yield f"\n      ✓ Downloaded '{filename}' ({downloaded_bytes} bytes)\n"
                                 
@@ -1860,6 +2072,9 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
+                        if system_config.download_layout == "source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                            organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])
                             conflict_strategy = source.get("organize_on_conflict", "increment")
@@ -2044,6 +2259,9 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
+                        if system_config.download_layout == "source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                            organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])
                             conflict_strategy = source.get("organize_on_conflict", "increment")
@@ -2182,7 +2400,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                     s = h.status()
                                     percent = int(s.progress * 100)
                                     if percent != last_percent and percent % 10 == 0:
-                                        yield f"      {percent}% ({s.download_rate/1000:.1f} kB/s) "
+                                        yield f"\r      {percent:3d}% ({s.download_rate/1000:.1f} kB/s)   "
                                         last_percent = percent
                                     await asyncio.sleep(2)
                                 
@@ -2194,6 +2412,9 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
+                        if system_config.download_layout == "source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                            organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])
                             conflict_strategy = source.get("organize_on_conflict", "increment")
@@ -2378,6 +2599,48 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
         
         yield "\n" + "=" * 60 + "\n"
         yield "All selected packs processed\n"
+        
+        # Run database sync at the end of pack installation
+        try:
+            yield "\n" + "=" * 60 + "\n"
+            yield "🔄 Starting database synchronization...\n"
+            yield "=" * 60 + "\n\n"
+            
+            # Set up logging to capture sync output
+            log_capture = io.StringIO()
+            log_handler = logging.StreamHandler(log_capture)
+            log_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(message)s')
+            log_handler.setFormatter(formatter)
+            
+            # Add handler to sync_database logger
+            sync_logger = logging.getLogger('sync_database')
+            sync_logger.addHandler(log_handler)
+            sync_logger.setLevel(logging.INFO)
+            
+            # Create DatabaseSync instance and run full sync
+            config = read_config()
+            db_sync = DatabaseSync(config)
+            db_sync.full_sync(client_filter=client_name, system_filter=system_name)
+            
+            # Stream captured log output
+            sync_output = log_capture.getvalue()
+            if sync_output:
+                for line in sync_output.split('\n'):
+                    if line.strip():
+                        yield f"  {line}\n"
+            else:
+                yield "  (sync completed with no log output)\n"
+            
+            # Remove handler
+            sync_logger.removeHandler(log_handler)
+            log_handler.close()
+            
+            yield "\n" + "=" * 60 + "\n"
+            yield "✓ Database synchronization completed\n"
+            yield "=" * 60 + "\n"
+        except Exception as e:  # pylint: disable=broad-except
+            yield f"\n✗ Database synchronization failed: {str(e)}\n"
     
     return StreamingResponse(run_and_stream(), media_type="text/plain")
 
@@ -2483,6 +2746,7 @@ async def api_download_stream(req: DownloadRequest):
         base_path_rel = system_entry.get("base_path", "")
         base_path = os.path.join(filestore, "Native" , base_path_rel)
         sources = system_entry.get("sources", [])
+        download_layout = _get_download_layout_for_system(clients, req.manufacturer, req.system)
 
         # --- Find filetypes for this client/system ---
         filetypes = None
@@ -2525,6 +2789,7 @@ async def api_download_stream(req: DownloadRequest):
 
         found = False
         for entry in sources:
+            source_name = entry.get("name", "source")
             source_type = entry.get("type")
             
             # Normalize URLs for all source types that use direct downloads
@@ -2533,6 +2798,14 @@ async def api_download_stream(req: DownloadRequest):
                 if not url_entries:
                     yield "Source has no URL(s) configured\n"
                     continue
+
+                for url_entry in url_entries:
+                    url_entry["folder"] = _resolve_source_folder(
+                        source_name=source_name,
+                        folder=url_entry.get("folder", ""),
+                        download_layout=download_layout,
+                        base_path_rel=base_path_rel,
+                    )
                 
                 found = True
                 for idx, url_entry in enumerate(url_entries, 1):
@@ -2585,7 +2858,12 @@ async def api_download_stream(req: DownloadRequest):
             elif source_type == "IA-COL":
                 found = True
                 url = entry.get("url")
-                folder = entry.get("folder", "")
+                folder = _resolve_source_folder(
+                    source_name=source_name,
+                    folder=entry.get("folder", ""),
+                    download_layout=download_layout,
+                    base_path_rel=base_path_rel,
+                )
                 print(f"Downloading IA-COL {url} to {base_path} for {req.manufacturer} / {req.system}")
                 try:
                     for msg in download_ia_collection(url, base_path, folder, filetypes=filetypes):
@@ -2599,7 +2877,12 @@ async def api_download_stream(req: DownloadRequest):
             elif entry.get("type") == "tor":
                 found = True
                 url = entry.get("url")
-                folder = entry.get("folder", "")
+                folder = _resolve_source_folder(
+                    source_name=source_name,
+                    folder=entry.get("folder", ""),
+                    download_layout=download_layout,
+                    base_path_rel=base_path_rel,
+                )
                 dest_dir = os.path.join(base_path, folder)
                 os.makedirs(dest_dir, exist_ok=True)
                 yield f"Starting torrent download: {url}\n"

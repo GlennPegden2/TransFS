@@ -32,6 +32,41 @@ logger = logging.getLogger("transfs")
 logger.info("TransFS logging initialized (pyfuse3 version)")
 
 
+def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
+    layout = system_info.get("download_layout") if system_info else None
+    if layout != "source_based":
+        return source_dir
+    normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
+    if "sources" in normalized:
+        return source_dir
+    if "bios" in normalized.split("/"):
+        return source_dir
+    return os.path.join(source_dir, "Sources")
+
+
+def _find_sample_file_recursive(source_dir: str, ext: str, extension_filters: dict) -> Optional[str]:
+    if not source_dir or not os.path.isdir(source_dir):
+        return None
+    ext_upper = ext.upper()
+    filters = extension_filters.get(ext_upper)
+    min_size = filters.get('min_size') if filters else None
+    max_size = filters.get('max_size') if filters else None
+    for root, _, files in os.walk(source_dir):
+        for filename in files:
+            if not filename.upper().endswith(f'.{ext_upper}'):
+                continue
+            candidate = os.path.join(root, filename)
+            if min_size is None and max_size is None:
+                return candidate
+            try:
+                size = os.path.getsize(candidate)
+            except OSError:
+                continue
+            if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
+                return candidate
+    return None
+
+
 class TransFS(Passthrough):
     """
     FUSE filesystem for translating virtual paths to real files with zip support.
@@ -57,6 +92,8 @@ class TransFS(Passthrough):
         self._pending_utime = {}  # inode -> (atime_ns, mtime_ns) deferred for open fh
         self._fd_path_map = {}  # fd -> real path for read diagnostics
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
+        self._db_readdir_cache = {}  # path -> (timestamp, db_files)
+        self._db_readdir_cache_ttl = 120.0  # seconds
         from config import read_config
         self.config = read_config()
         
@@ -266,6 +303,7 @@ class TransFS(Passthrough):
                 query_cfg = map_config.get("query", {})
                 source_subdir = query_cfg.get("source_dir") if isinstance(query_cfg, dict) else None
                 if source_subdir:
+                    source_subdir = _adjust_source_dir_for_layout(source_subdir, system_info)
                     source_dir = os.path.join(
                         self.config.get("filestore", "/mnt/filestorefs"),
                         "Native",
@@ -348,6 +386,9 @@ class TransFS(Passthrough):
                                 sample_file = candidates[0] if candidates else None
                         except OSError:
                             pass
+
+                    if not sample_file and system_info.get("download_layout") == "source_based":
+                        sample_file = _find_sample_file_recursive(source_dir, ext, extension_filters)
                 
                 # Use sample file if found, otherwise fallback to dummy
                 filename_for_detection = sample_file if sample_file else f"test.{ext.lower()}"
@@ -520,11 +561,24 @@ class TransFS(Passthrough):
                 if not extension_filters:
                     logger.debug(f"READDIR_DB_ONLY: no extension_filters in query config")
             
-            # Query database for files in this map
-            from db.queries import query_files_by_client_system_and_map
-            db_files = query_files_by_client_system_and_map(
-                client_name, system_name, map_name, allowed_extensions, extension_filters
-            )
+            # Query database for files in this map (with cache)
+            cache_entry = self._db_readdir_cache.get(path)
+            if cache_entry:
+                cached_at, cached_files = cache_entry
+                if (time.time() - cached_at) <= self._db_readdir_cache_ttl:
+                    db_files = cached_files
+                else:
+                    self._db_readdir_cache.pop(path, None)
+                    db_files = None
+            else:
+                db_files = None
+
+            if db_files is None:
+                from db.queries import query_files_by_client_system_and_map
+                db_files = query_files_by_client_system_and_map(
+                    client_name, system_name, map_name, allowed_extensions, extension_filters
+                )
+                self._db_readdir_cache[path] = (time.time(), db_files)
             
             logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in database")
 

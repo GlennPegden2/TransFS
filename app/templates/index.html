@@ -735,8 +735,126 @@
                         }
                     }
                     
+                    // Add info button for files in virtual tab (always show, regardless of zaparoo)
+                    let infoBtn = null;
+                    if (type === 'virtual' && entryType !== 'directory') {
+                        infoBtn = document.createElement('button');
+                        infoBtn.className = 'info-btn';
+                        infoBtn.textContent = 'ℹ️';
+                        infoBtn.title = 'Show file metadata';
+                        infoBtn.style.position = 'relative';
+                        infoBtn.style.padding = '0';
+                        infoBtn.style.marginLeft = '0';
+                        infoBtn.style.background = 'transparent';
+                        infoBtn.style.border = 'none';
+                        infoBtn.style.cursor = 'help';
+                        infoBtn.style.display = 'flex';
+                        infoBtn.style.alignItems = 'center';
+                        infoBtn.style.justifyContent = 'center';
+                        infoBtn.style.width = '35px';
+                        infoBtn.style.height = '35px';
+                        infoBtn.style.fontSize = '1.4em';
+                        infoBtn.style.lineHeight = '1';
+                        
+                        // Prevent click from triggering file selection
+                        infoBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                        });
+                        
+                        // Create tooltip container (initially empty)
+                        const tooltip = document.createElement('div');
+                        tooltip.className = 'metadata-tooltip';
+                        tooltip.innerHTML = '';
+                        infoBtn.appendChild(tooltip);
+                        
+                        // Load metadata on hover
+                        let metadataLoaded = false;
+                        let metadataLoading = false;
+                        infoBtn.addEventListener('mouseenter', async () => {
+                            // Position tooltip (fixed positioning)
+                            const rect = infoBtn.getBoundingClientRect();
+                            tooltip.style.left = (rect.left + rect.width / 2 - 160) + 'px'; // Center horizontally (160px is half of max-width 320px)
+                            tooltip.style.top = (rect.top - 10) + 'px'; // Position above icon with small gap
+                            
+                            if (!metadataLoaded && !metadataLoading) {
+                                metadataLoading = true;
+                                tooltip.innerHTML = '<div class="metadata-tooltip-loading">Loading metadata...</div>';
+                                try {
+                                    const response = await fetch(`/api/file-metadata?path=${encodeURIComponent(fullPath)}`);
+                                    const data = await response.json();
+                                    
+                                    if (data.error) {
+                                        tooltip.innerHTML = `<div class="metadata-tooltip-error">Error: ${data.error}</div>`;
+                                    } else if (data.metadata && Object.keys(data.metadata).length > 0) {
+                                        // Format metadata for display
+                                        let html = '';
+                                        const metadataFields = [
+                                            { key: 'media_type', label: 'Media Type' },
+                                            { key: 'region', label: 'Region' },
+                                            { key: 'language', label: 'Language' },
+                                            { key: 'publisher', label: 'Publisher' },
+                                            { key: 'developer', label: 'Developer' },
+                                            { key: 'release_year', label: 'Release Year' },
+                                            { key: 'year', label: 'Year' },
+                                            { key: 'genre', label: 'Genre' },
+                                            { key: 'subgenre', label: 'Subgenre' },
+                                            { key: 'rating', label: 'Rating' },
+                                            { key: 'play_count', label: 'Play Count' }
+                                        ];
+                                        
+                                        for (const field of metadataFields) {
+                                            const value = data.metadata[field.key];
+                                            if (value !== null && value !== undefined && value !== '') {
+                                                html += `<div class="metadata-tooltip-entry">
+                                                    <span class="metadata-tooltip-label">${field.label}:</span>
+                                                    <span class="metadata-tooltip-value">${escapeHtml(String(value))}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        // Add flags
+                                        const flags = [];
+                                        if (data.metadata.is_prototype) flags.push('Prototype');
+                                        if (data.metadata.is_homebrew) flags.push('Homebrew');
+                                        if (data.metadata.is_translation) flags.push('Translation');
+                                        if (data.metadata.is_hack) flags.push('Hack');
+                                        if (data.metadata.is_revision) flags.push('Revision');
+                                        
+                                        if (flags.length > 0) {
+                                            html += `<div class="metadata-tooltip-entry">
+                                                <span class="metadata-tooltip-label">Flags:</span>
+                                                <span class="metadata-tooltip-value">${flags.join(', ')}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        tooltip.innerHTML = html || '<div style="color: #ccc;">No metadata available</div>';
+                                    } else {
+                                        tooltip.innerHTML = '<div style="color: #ccc;">No metadata available</div>';
+                                    }
+                                    
+                                    metadataLoaded = true;
+                                } catch (e) {
+                                    console.error('Failed to load metadata:', e);
+                                    tooltip.innerHTML = '<div class="metadata-tooltip-error">Failed to load metadata</div>';
+                                    metadataLoaded = true;
+                                }
+                                metadataLoading = false;
+                            }
+                        });
+                    }
+                    
                     rightMeta.appendChild(sizeSpan);
-                    if (launchBtn) rightMeta.appendChild(launchBtn);
+                    
+                    // Create button container for side-by-side layout
+                    const buttonContainer = document.createElement('div');
+                    buttonContainer.style.display = 'flex';
+                    buttonContainer.style.gap = '0.3em';
+                    buttonContainer.style.alignItems = 'center';
+                    
+                    if (launchBtn) buttonContainer.appendChild(launchBtn);
+                    if (infoBtn) buttonContainer.appendChild(infoBtn);
+                    
+                    if (launchBtn || infoBtn) rightMeta.appendChild(buttonContainer);
                     div.append(iconSpan, nameSpan, rightMeta);
                     fragment.appendChild(div);
                 };
@@ -1516,9 +1634,50 @@
             }
         }
 
+        // Initialize log state tracker
+        window.logState = { 
+            lines: [],  // Array of completed lines
+            currentLine: '',  // Current line being built
+            carriage_return_mode: false  // Are we in overwrite mode (after \r)?
+        };
+
         function appendLog(msg) {
             const logDiv = document.getElementById('log');
-            logDiv.textContent += msg;
+            const state = window.logState;
+            
+            for (let i = 0; i < msg.length; i++) {
+                const char = msg[i];
+                
+                if (char === '\r') {
+                    // Carriage return: enter overwrite mode, clearing current line
+                    state.currentLine = '';
+                    state.carriage_return_mode = true;
+                } else if (char === '\n') {
+                    // Newline: finalize the current line and start a new one
+                    state.lines.push(state.currentLine);
+                    state.currentLine = '';
+                    state.carriage_return_mode = false;
+                } else {
+                    // Regular character
+                    if (state.carriage_return_mode) {
+                        // In overwrite mode: characters replace from start (build new line)
+                        state.currentLine += char;
+                    } else {
+                        // Normal mode: just append
+                        state.currentLine += char;
+                    }
+                }
+            }
+            
+            // Reconstruct the full content: completed lines + current line
+            let fullContent = state.lines.join('\n');
+            if (state.lines.length > 0 && state.currentLine) {
+                fullContent += '\n' + state.currentLine;
+            } else if (state.currentLine) {
+                fullContent = state.currentLine;
+            }
+            
+            logDiv.textContent = fullContent;
             logDiv.scrollTop = logDiv.scrollHeight;
         }
         

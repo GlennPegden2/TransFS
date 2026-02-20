@@ -10,6 +10,27 @@ import logging
 
 logger = logging.getLogger("transfs")
 
+
+def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
+    layout = system_info.get("download_layout") if system_info else None
+    if layout != "source_based":
+        return source_dir
+    normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
+    if "sources" in normalized:
+        return source_dir
+    if "bios" in normalized.split("/"):
+        return source_dir
+    return os.path.join(source_dir, "Sources")
+
+
+def _find_file_recursive(base_dir: str, filename: str) -> str | None:
+    if not os.path.isdir(base_dir):
+        return None
+    for root, _, files in os.walk(base_dir):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
+
 # Shared cache file between processes (persistent across container restarts)
 CACHE_FILE = "/mnt/filestorefs/.transfs_cache.pkl"
 GETATTR_CACHE_FILE = "/mnt/filestorefs/.transfs_getattr_cache.pkl"
@@ -418,7 +439,10 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     extensions = query_cfg.get("extensions", [])
     extension_map = query_cfg.get("extension_map", {}) or {}
     extension_map = {str(k).upper(): str(v).upper() for k, v in extension_map.items()}
-    source_dir = query_cfg.get("source_dir", "Software")
+    source_dir = _adjust_source_dir_for_layout(
+        query_cfg.get("source_dir", "Software"),
+        system,
+    )
     supports_zip = query_cfg.get("supports_zip", True)
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
 
@@ -455,8 +479,14 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         from pathutils import get_system_identifier
 
         system_id = get_system_identifier(system)
-        if not system_id:
-            logger.warning(f"Query map requested but system identifier not found for {system.get('name')}")
+        system_name = system.get("name") if isinstance(system, dict) else None
+        system_candidates = []
+        if system_id:
+            system_candidates.append(system_id)
+        if system_name and system_name not in system_candidates:
+            system_candidates.append(system_name)
+        if not system_candidates:
+            logger.warning(f"Query map requested but no system identifier found for {system.get('name')}")
             return []
 
         # If navigating within a subpath, fall back to filesystem/zip handling
@@ -475,6 +505,8 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 zip_path = os.path.join(base_dir, zip_name)
                 if not os.path.isfile(zip_path):
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = _find_file_recursive(base_dir, zip_name)
                 if os.path.isfile(zip_path):
                     target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
                     try:
@@ -499,13 +531,20 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                     entries.add(entry)
             return sorted(entries)
 
-        logger.info(f"QUERY MAP: system={system_id}, map={map_name}, extensions={extensions}")
-        db_entries = query_files_by_system_and_query(
-            system=system_id,
-            query=query_cfg,
-            system_config=system,
-            limit=10000
-        )
+        query_db = dict(query_cfg)
+        query_db["source_dir"] = source_dir
+
+        db_entries = []
+        for system_key in system_candidates:
+            logger.info(f"QUERY MAP: system={system_key}, map={map_name}, extensions={extensions}")
+            db_entries = query_files_by_system_and_query(
+                system=system_key,
+                query=query_db,
+                system_config=system,
+                limit=10000
+            )
+            if db_entries:
+                break
 
         if not db_entries:
             t_func_elapsed = time.time() - t_func_start
@@ -544,6 +583,8 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 zip_path = os.path.join(base_dir, zip_name)
                 if not os.path.isfile(zip_path):
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = _find_file_recursive(base_dir, zip_name)
                 if os.path.isfile(zip_path):
                     try:
                         internal = zippath_listdir(zip_path)

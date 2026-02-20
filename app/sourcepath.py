@@ -22,6 +22,27 @@ from transforms import build_transform_pipeline, TransformPipeline
 _transform_pipeline_cache: dict[tuple[str, str, str], Optional[TransformPipeline]] = {}
 
 
+def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
+    layout = system_info.get("download_layout") if system_info else None
+    if layout != "source_based":
+        return source_dir
+    normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
+    if "sources" in normalized:
+        return source_dir
+    if "bios" in normalized.split("/"):
+        return source_dir
+    return os.path.join(source_dir, "Sources")
+
+
+def _find_file_recursive(base_dir: str, filename: str) -> Optional[str]:
+    if not os.path.isdir(base_dir):
+        return None
+    for root, _, files in os.walk(base_dir):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
+
+
 def _get_transform_cache_key(system_info: dict, virtual_folder: str, ext: str) -> tuple[str, str, str]:
     manufacturer = system_info.get("manufacturer", "")
     canonical = system_info.get("system_mapping_name") or system_info.get("cananonical_system_name", "")
@@ -316,11 +337,15 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         supports_zip = query_cfg.get("supports_zip", True)
         zip_mode = query_cfg.get("zip_mode", "hierarchical")
 
+        source_subdir = _adjust_source_dir_for_layout(
+            query_cfg.get("source_dir", "Software"),
+            system_info,
+        )
         source_dir = os.path.join(
             config["filestore"],
             "Native",
             system_info["local_base_path"],
-            query_cfg.get("source_dir", "Software")
+            source_subdir,
         )
 
         subpath = rel_parts[3:]
@@ -335,6 +360,8 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
             zip_path = os.path.join(source_dir, zip_name)
             if not os.path.isfile(zip_path):
                 zip_path = os.path.join(source_dir, "ZIP", zip_name)
+            if not os.path.isfile(zip_path):
+                zip_path = _find_file_recursive(source_dir, zip_name)
             if os.path.isfile(zip_path):
                 if inner_parts:
                     return (zip_path, "/".join(inner_parts))
@@ -372,6 +399,11 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
             candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
             if os.path.exists(candidate):
                 return candidate
+
+            if system_info.get("download_layout") == "source_based":
+                recursive_match = _find_file_recursive(source_dir, real_filename)
+                if recursive_match:
+                    return recursive_match
         
         # REVERSE MAPPING: If not found, check if this extension is a transform output
         # E.g., requesting Game.hdv might actually be Game.2mg with two_mg transform

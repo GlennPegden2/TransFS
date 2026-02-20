@@ -41,6 +41,12 @@ def init_database(db_path: str = "/mnt/filestorefs/.transfs_metadata.db") -> Non
         
         # Create tables
         conn.executescript(CREATE_TABLES)
+
+        # Ensure newer columns exist for existing databases
+        cursor = conn.execute("PRAGMA table_info(file_metadata)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "title" not in columns:
+            conn.execute("ALTER TABLE file_metadata ADD COLUMN title TEXT")
         
         # Check/update schema version
         cursor = conn.execute("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1")
@@ -55,8 +61,12 @@ def init_database(db_path: str = "/mnt/filestorefs/.transfs_metadata.db") -> Non
             )
             conn.commit()
         elif row[0] < current_version:
-            # Future: Handle schema migrations here
-            pass
+            # Minimal migration tracking: record new schema version
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (current_version, int(time.time()))
+            )
+            conn.commit()
             
     finally:
         conn.close()

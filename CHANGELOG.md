@@ -5,6 +5,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **Browse Virtual Metadata Tooltip**
+  - Added info icon next to Zaparoo button with hover tooltip for file metadata
+  - Added `/api/file-metadata` endpoint to serve normalized metadata for UI display
+- **Source-Based Download Layout**
+  - Added source-based download layout option to store files under Software/Sources/<source>
+  - Applied MiSTer default download layout to source-based storage
+  - Sync, listing, and source-path resolution now support recursive source folders
+- **Atarimania Ruleset**
+  - Renamed Atari 2600 ruleset to atarimania
+  - Linked Atari 2600 pack metadata and client config to the renamed ruleset
+- **Filename Parsing Enhancements for Atari 2600**
+  - Date/Year bracket detection to derive title prefix and publisher candidate
+  - Fallback publisher extraction from remaining tags (excluding Prototype/CX/MT/DA)
+  - Added PAL/SECAM region recognition
+  - Stored parsed title in file metadata
 - **Database-Only Architecture for Query Maps** - Complete end-to-end database-driven file access
   - Query maps (FDs, HDs, etc.) now bypass parse_trans_path entirely
   - Three-tier database-only implementation:
@@ -43,7 +58,44 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Applied in both query_files_by_client_system_and_map and query_files_by_system_and_query
   - Validation: Apple-II FDs (2MG ≤ 865KB) = 76 files, HDs (2MG > 865KB) = 210 files correctly separated
 
+- **Normalized Metadata Tables (Initial Implementation)**
+  - Added controlled vocab tables (media types, regions, languages, genres, app types, publishers)
+  - Added `file_metadata`, `file_tags`, `packs`, `file_packs`, and `metadata_edits` tables
+
 ### Fixed
+- **Download Log CR Handling**
+  - Added carriage-return-aware progress output for DDL and torrent downloads
+  - Updated UI log renderer to handle in-place progress updates without line spam
+  - Added filename-based metadata enrichment hook during database sync
+  - Pack-level metadata defaults now flow into metadata enrichment during sync
+  - Added starter ruleset files for GoodTools and TOSEC in config/metadata/rulesets
+- **Query Map Database Lookup Alignment**
+  - Aligns database query `source_dir` with source-based layout
+  - Falls back to system name when manufacturer/system identifiers differ
+  - Prevents slow filesystem scans for large ROM directories when database mode is enabled
+- **Database Readdir Cache for Query Maps**
+  - Caches database-only readdir results to avoid repeated full queries during large listings
+  - Reduces listing time for large ROM directories (e.g., Atari 2600 ROMs)
+- **Unique Virtual Filenames for Duplicates**
+  - Disambiguates virtual filenames when multiple source files would collide
+  - Prevents duplicate entries in virtual listings and avoids OS confusion
+  - Reuses existing virtual filename when the same source path already exists (update instead of duplicate)
+
+### Fixed
+- **Database Sync Schema Initialization** - Sync now uses centralized schema initialization
+  - Ensures v2 metadata tables are created during sync
+  - Prevents missing-table errors during metadata enrichment
+
+- **SQLite PRAGMA Compatibility on WSL Mounts** - Disabled WAL mode to avoid disk I/O errors
+  - Uses DELETE journal mode for mounted filesystem compatibility
+
+- **Pack Context Folder Matching** - Normalized pack folder paths during sync
+  - Supports folders that already include Software/ prefixes
+  - Enables pack defaults to match files stored under Software/BIN layouts
+
+- **Atari 2600 Pack Source Folder Alignment** - Source folder now matches on-disk Software/BIN layout
+  - Allows pack metadata defaults to resolve against actual file paths
+
 - **Explicit output_extension Configuration for Transformed Files** - Large 2MG files in HDs now appear as .hdv
   - Issue: 2MG files ≥ 908,289 bytes appearing with wrong extension (.do) in HDs directory
   - Root cause: TwoMGTransform auto-detection returning "do" format override explicit "output_extension: hdv" config

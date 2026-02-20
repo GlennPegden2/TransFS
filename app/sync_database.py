@@ -19,8 +19,10 @@ Options:
 import os
 import sys
 import time
+import re
 import sqlite3
 import argparse
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
 import logging
@@ -31,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import read_config
 from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map, get_query_config
 from transforms import build_transform_pipeline
+from metadata import enrich_file_metadata, PackContext
 
 logger = logging.getLogger(__name__)
 
@@ -62,58 +65,89 @@ class DatabaseSync:
         
         # Track seen source paths for deletion detection
         self.seen_source_paths: Set[str] = set()
+        self._pack_context_by_folder = self._build_pack_context_index()
+
+    def _build_pack_context_index(self) -> Dict[str, Dict[str, dict]]:
+        """
+        Build a lookup of {manufacturer/system: {folder: pack_context_dict}}.
+        Folder corresponds to sources[].folder (e.g., ROMs, BIN).
+        """
+        index: Dict[str, Dict[str, dict]] = {}
+        archive_sources = self.config.get("archive_sources", {})
+        for manufacturer, systems in archive_sources.items():
+            for canonical_name, source_config in systems.items():
+                system_key = f"{manufacturer}::{canonical_name}"
+                index[system_key] = {}
+                download_layout = self._get_download_layout(manufacturer, canonical_name)
+                sources = source_config.get("sources", [])
+                source_by_name = {src.get("name"): src for src in sources}
+                for pack in source_config.get("packs", []) or []:
+                    metadata = pack.get("metadata") or {}
+                    pack_context = PackContext(
+                        pack_name=pack.get("name") or pack.get("id"),
+                        ruleset=metadata.get("ruleset"),
+                        ruleset_overrides=metadata.get("overrides"),
+                        defaults=metadata.get("defaults"),
+                        tags=metadata.get("tags") or [],
+                    )
+                    for source_name in pack.get("sources", []) or []:
+                        source = source_by_name.get(source_name)
+                        if not source:
+                            continue
+                        folder = self._resolve_source_folder_for_layout(
+                            folder=source.get("folder"),
+                            source_name=source_name,
+                            download_layout=download_layout,
+                        )
+                        if folder and folder not in index[system_key]:
+                            index[system_key][folder] = pack_context
+        return index
+
+    def _resolve_source_folder_for_layout(self, folder: Optional[str], source_name: str,
+                                          download_layout: Optional[str]) -> Optional[str]:
+        if download_layout != "source_based":
+            return folder
+        if not source_name:
+            return folder
+        folder = folder or ""
+        normalized = folder.replace("\\", "/").lower().strip("/")
+        if normalized.startswith("bios") or "/bios/" in f"/{normalized}/":
+            return folder
+        if "sources/" in normalized:
+            return folder
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", source_name.strip()) or "source"
+        return os.path.join("Software", "Sources", safe_name)
+
+    def _get_download_layout(self, manufacturer: str, canonical_name: str) -> Optional[str]:
+        for client in self.config.get("clients", []):
+            client_layout = client.get("download_layout")
+            for system in client.get("systems", []):
+                system_canonical = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                if system.get("manufacturer") == manufacturer and system_canonical == canonical_name:
+                    return system.get("download_layout", client_layout)
+        return None
+
+    def _get_pack_context_for_file(self, manufacturer: str, canonical_name: str, source_path: str) -> Optional[dict]:
+        system_key = f"{manufacturer}::{canonical_name}"
+        folder_map = self._pack_context_by_folder.get(system_key, {})
+        if not folder_map:
+            return None
+        for folder, context in folder_map.items():
+            normalized_folder = (folder or "").replace("\\", "/").strip("/")
+            if normalized_folder.lower().startswith("software/"):
+                needle = f"/{normalized_folder}/"
+            else:
+                needle = f"/Software/{normalized_folder}/"
+            if needle.lower() in source_path.lower():
+                return context
+        return None
     
     def init_database(self):
-        """Initialize database schema if needed."""
+        """Initialize database schema using centralized schema."""
+        from db.connection import init_database as db_init_database
+        
         logger.info(f"Initializing database: {self.db_path}")
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Create files table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS files (
-                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_path TEXT NOT NULL UNIQUE,
-                virtual_path TEXT,
-                filename TEXT NOT NULL,
-                extension TEXT,
-                size INTEGER NOT NULL,
-                mtime INTEGER NOT NULL,
-                ctime INTEGER NOT NULL,
-                atime INTEGER NOT NULL,
-                ino INTEGER,
-                mode INTEGER,
-                is_directory BOOLEAN DEFAULT 0,
-                is_archive BOOLEAN DEFAULT 0,
-                system TEXT,
-                client TEXT,
-                map_name TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-        """)
-        
-        # Add missing columns if table already exists
-        existing_columns = [row[1] for row in cursor.execute("PRAGMA table_info(files)")]
-        if 'client' not in existing_columns:
-            logger.info("Adding 'client' column to files table")
-            cursor.execute("ALTER TABLE files ADD COLUMN client TEXT")
-        if 'map_name' not in existing_columns:
-            logger.info("Adding 'map_name' column to files table")
-            cursor.execute("ALTER TABLE files ADD COLUMN map_name TEXT")
-        
-        # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_source_path ON files(source_path)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_virtual_path ON files(virtual_path)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_system ON files(system)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_client ON files(client)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_map ON files(map_name)")
-        
-        conn.commit()
-        conn.close()
-        
+        db_init_database(self.db_path)
         logger.info("Database schema initialized")
     
     def full_sync(self, client_filter: Optional[str] = None, system_filter: Optional[str] = None):
@@ -198,6 +232,7 @@ class DatabaseSync:
         
         extensions = query_cfg.get("extensions", [])
         source_dir = query_cfg.get("source_dir", "Software")
+        source_dir = self._resolve_source_dir_for_layout(source_dir, system_config)
         extension_map = query_cfg.get("extension_map", {})
         transforms = map_config.get("transforms", {})
         
@@ -216,30 +251,36 @@ class DatabaseSync:
         
         # Scan for files with matching extensions
         file_count = 0
-        for ext in extensions:
-            ext_upper = ext.upper()
+        if system_config.get("download_layout") == "source_based":
+            file_count += self._scan_directory_recursive(
+                source_path, client_name, system_name, map_name,
+                extensions, extension_map, transforms
+            )
+        else:
+            for ext in extensions:
+                ext_upper = ext.upper()
+                
+                # Check extension subdirectory (e.g., Software/DSK/)
+                ext_dir = os.path.join(source_path, ext_upper)
+                if os.path.isdir(ext_dir):
+                    file_count += self._scan_directory(
+                        ext_dir, client_name, system_name, map_name,
+                        [ext_upper], extension_map, transforms
+                    )
+                
+                # Also check lowercase
+                ext_dir_lower = os.path.join(source_path, ext.lower())
+                if os.path.isdir(ext_dir_lower) and ext_dir_lower != ext_dir:
+                    file_count += self._scan_directory(
+                        ext_dir_lower, client_name, system_name, map_name,
+                        [ext_upper], extension_map, transforms
+                    )
             
-            # Check extension subdirectory (e.g., Software/DSK/)
-            ext_dir = os.path.join(source_path, ext_upper)
-            if os.path.isdir(ext_dir):
-                file_count += self._scan_directory(
-                    ext_dir, client_name, system_name, map_name,
-                    [ext_upper], extension_map, transforms
-                )
-            
-            # Also check lowercase
-            ext_dir_lower = os.path.join(source_path, ext.lower())
-            if os.path.isdir(ext_dir_lower) and ext_dir_lower != ext_dir:
-                file_count += self._scan_directory(
-                    ext_dir_lower, client_name, system_name, map_name,
-                    [ext_upper], extension_map, transforms
-                )
-        
-        # Also scan source_dir directly for files (flat layout)
-        file_count += self._scan_directory(
-            source_path, client_name, system_name, map_name,
-            extensions, extension_map, transforms
-        )
+            # Also scan source_dir directly for files (flat layout)
+            file_count += self._scan_directory(
+                source_path, client_name, system_name, map_name,
+                extensions, extension_map, transforms
+            )
         
         logger.info(f"      Found {file_count} files in {map_name}")
     
@@ -275,6 +316,43 @@ class DatabaseSync:
             self.stats['errors'] += 1
         
         return file_count
+
+    def _scan_directory_recursive(self, dir_path: str, client_name: str, system_name: str,
+                                 map_name: str, extensions: List[str], extension_map: dict,
+                                 transforms: dict) -> int:
+        """Recursively scan a directory for files and add them to database."""
+        if not os.path.isdir(dir_path):
+            return 0
+
+        file_count = 0
+        extensions_upper = {e.upper() for e in extensions}
+        try:
+            for root, _, files in os.walk(dir_path):
+                for filename in files:
+                    _, ext = os.path.splitext(filename)
+                    ext = ext[1:].upper() if ext else ""
+                    if ext in extensions_upper:
+                        self._add_file_to_database(
+                            os.path.join(root, filename), client_name, system_name, map_name,
+                            ext, extension_map, transforms
+                        )
+                        file_count += 1
+        except Exception as e:
+            logger.error(f"Error scanning directory {dir_path}: {e}")
+            self.stats['errors'] += 1
+
+        return file_count
+
+    def _resolve_source_dir_for_layout(self, source_dir: str, system_config: dict) -> str:
+        layout = system_config.get("download_layout")
+        if layout != "source_based":
+            return source_dir
+        normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
+        if "sources" in normalized:
+            return source_dir
+        if "bios" in normalized.split("/"):
+            return source_dir
+        return os.path.join(source_dir, "Sources")
     
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
@@ -323,12 +401,66 @@ class DatabaseSync:
             # Insert or update in database
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+
+            # If this source_path already exists, keep its current virtual_path
+            cursor.execute(
+                "SELECT file_id, virtual_path, filename, extension FROM files WHERE source_path = ?",
+                (source_path,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                existing_virtual_path = existing[1]
+                existing_filename = existing[2]
+                existing_extension = existing[3]
+                if existing_virtual_path:
+                    virtual_path = existing_virtual_path
+                if existing_filename:
+                    virtual_filename = existing_filename
+                if existing_extension:
+                    virtual_ext = existing_extension
+
+            # Ensure virtual path is unique within the database
+            cursor.execute(
+                "SELECT source_path FROM files WHERE virtual_path = ? AND source_path != ?",
+                (virtual_path, source_path)
+            )
+            if cursor.fetchone():
+                hash_suffix = hashlib.sha1(source_path.encode("utf-8")).hexdigest()[:8]
+                unique_filename = f"{base_name} [{hash_suffix}].{virtual_ext.lower()}"
+                unique_path = os.path.join(
+                    self.mount_path,
+                    client_name,
+                    system_name,
+                    map_name,
+                    unique_filename
+                )
+
+                counter = 1
+                while True:
+                    cursor.execute(
+                        "SELECT source_path FROM files WHERE virtual_path = ? AND source_path != ?",
+                        (unique_path, source_path)
+                    )
+                    if not cursor.fetchone():
+                        virtual_filename = unique_filename
+                        virtual_path = unique_path
+                        break
+                    counter += 1
+                    unique_filename = f"{base_name} [{hash_suffix}-{counter}].{virtual_ext.lower()}"
+                    unique_path = os.path.join(
+                        self.mount_path,
+                        client_name,
+                        system_name,
+                        map_name,
+                        unique_filename
+                    )
             
             now = int(time.time())
             
             # Check if exists
-            cursor.execute("SELECT file_id FROM files WHERE source_path = ?", (source_path,))
-            existing = cursor.fetchone()
+            if not existing:
+                cursor.execute("SELECT file_id FROM files WHERE source_path = ?", (source_path,))
+                existing = cursor.fetchone()
             
             if existing:
                 # Update
@@ -365,6 +497,7 @@ class DatabaseSync:
                     source_path
                 ))
                 self.stats['files_updated'] += 1
+                file_id = existing[0]
             else:
                 # Insert
                 cursor.execute("""
@@ -393,6 +526,36 @@ class DatabaseSync:
                     now
                 ))
                 self.stats['files_added'] += 1
+                file_id = cursor.lastrowid
+
+            pack_context = None
+            if system_name and client_name:
+                # Resolve manufacturer/canonical from config
+                manufacturer = None
+                canonical_name = None
+                for client in self.config.get("clients", []):
+                    if client.get("name") == client_name:
+                        for system in client.get("systems", []):
+                            if system.get("name") == system_name:
+                                manufacturer = system.get("manufacturer")
+                                canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                                break
+                        break
+                if manufacturer and canonical_name:
+                    pack_context = self._get_pack_context_for_file(manufacturer, canonical_name, source_path)
+
+            enrich_file_metadata(
+                conn,
+                {
+                    "file_id": file_id,
+                    "filename": virtual_filename,
+                    "extension": virtual_ext,
+                    "map_name": map_name,
+                    "virtual_path": virtual_path,
+                    "size": stat.st_size,
+                },
+                pack_context=pack_context
+            )
             
             conn.commit()
             conn.close()

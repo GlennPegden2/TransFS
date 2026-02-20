@@ -1,9 +1,84 @@
 # Atari 2600 Software Sources
 
-base_path: Atari/2600/Software
+# Base path must match clients.yaml local_base_path (no Software/ suffix)
+base_path: Atari/2600/
 
 sources:
-  - name: TOSEC Atari 2600 Collection
+  - name: tosec_2600_2012_04_23
     type: ddl
-    url: https://archive.org/download/Atari_2600_TOSEC_2012_04_23/Atari_2600_TOSEC_2012_04_23.zip
-    folder: ROMs
+    urls: 
+     - https://archive.org/download/tosec-full-2022-07-10/Atari/2600%20%26%20VCS/Games/Atari%202600%20%26%20VCS%20-%20Games.7z
+     - https://archive.org/download/tosec-full-2022-07-10/Atari/2600%20%26%20VCS/Applications/Atari%202600%20%26%20VCS%20-%20Applications.7z
+     - https://archive.org/download/tosec-full-2022-07-10/Atari/2600%20%26%20VCS/Educational/Atari%202600%20%26%20VCS%20-%20Educational.7z
+     - https://archive.org/download/tosec-full-2022-07-10/Atari/2600%20%26%20VCS/Demos/Atari%202600%20%26%20VCS%20-%20Demos.7z
+    folder: Software/Sources/TOSEC-2012-04-23
+    extract: true
+
+  - name: RomHunter-Full
+    type: ddl
+    url: https://www.atarimania.com/roms/Atari-2600-VCS-ROM-Collection.zip
+    folder: Software/Sources/RomHunter-Full
+    extract: true
+
+  - name: DataGhost-Full
+    type: ddl
+    url: https://archive.org/download/Atari2600FullRomCollectionReuploadByDataghost/Atari%202600.7z
+    folder: Software/Sources/DataGhost-Full
+    extract: true
+
+
+packs:
+  - id: atari2600-tosec-2012
+    name: Atari 2600 TOSEC (2012-04-23)
+    description: TOSEC Atari 2600 ROM.
+    estimated_size: 90MB
+    sources: [tosec_2600_2012_04_23]
+    info_links:
+      - label: TOSEC collection
+        url: https://archive.org/download/Atari_2600_TOSEC_2012_04_23/
+    metadata:
+      ruleset: TOSEC
+      defaults:
+        media_type: ROM
+        app_type: Game
+        region: World
+        language: English
+      tags:
+        - TOSEC
+
+  - id: dataghost
+    name: Atari 2600 Full Rom Collection Reupload By Dataghost
+    description: Atari 2600 Full Rom Collection Reupload By Dataghost
+    estimated_size: 1.9MB
+    sources: [DataGhost-Full]
+    info_links:
+      - label: IA Page
+        url: https://archive.org/details/Atari2600FullRomCollectionReuploadByDataghost
+    metadata:
+      ruleset: TOSEC
+      defaults:
+        media_type: ROM
+        app_type: Game
+        region: World
+        language: English
+      tags:
+        - TOSEC
+
+
+  - id: atarimania-full
+    name: Atarimania Rom Hunter's complete Atari 2600 ROM Collection (all langs, all versions)
+    description: A probably complete collection of every released (and many unreleased) Atari 2600 cart, including prototypes, homebrews, PAL versions and multiple revisions.
+    estimated_size: 20MB
+    sources: [RomHunter-Full]
+    info_links:
+      - label: Atarimania Roms Collection Page
+        url: https://www.atarimania.com/rom_collection_archive_atari_2600_roms.html
+    metadata:
+      ruleset: atarimania
+      defaults:
+        media_type: ROM
+        app_type: Game
+        region: World
+        language: English
+      tags:
+        - atarimania

@@ -224,6 +224,89 @@ button:hover, button:focus {
     box-shadow: none;
 }
 
+.info-btn {
+    background: transparent;
+    border: none;
+    cursor: help;
+    padding: 0;
+    margin-left: 0.5em;
+    font-size: 1.2em;
+    color: #2d8cf0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+    position: relative;
+    width: 1.2em;
+    height: 1.2em;
+    line-height: 1;
+}
+
+.info-btn:hover {
+    color: #0d5aa8;
+}
+
+/* Tooltip for metadata */
+.metadata-tooltip {
+    position: fixed;
+    background: #2d3e50;
+    color: #fff;
+    padding: 0.8em 1em;
+    border-radius: 6px;
+    font-size: 0.9em;
+    z-index: 99999;
+    max-width: 320px;
+    box-shadow: 0 4px 12px #0003;
+    pointer-events: none;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    display: block !important;
+    transition: opacity 0.2s, visibility 0.2s;
+    white-space: normal;
+    word-break: break-word;
+    min-width: 200px;
+    line-height: 1.5;
+}
+
+.info-btn:hover .metadata-tooltip {
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+/* Alternative: tooltip below (comment out above and uncomment below if preferred) */
+/* 
+.metadata-tooltip {
+    top: 100%;
+    margin-top: 0.5em;
+}
+*/
+
+.metadata-tooltip-loading {
+    text-align: center;
+    padding: 0.5em;
+}
+
+.metadata-tooltip-error {
+    color: #ff9800;
+}
+
+.metadata-tooltip-entry {
+    margin: 0.4em 0;
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+.metadata-tooltip-label {
+    font-weight: 600;
+    color: #b3e5fc;
+    display: inline;
+}
+
+.metadata-tooltip-value {
+    color: #e0f2f1;
+    display: inline;
+}
+
 @keyframes slideIn {
     from {
         transform: translateX(100%);

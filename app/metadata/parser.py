@@ -118,6 +118,21 @@ class FilenameParser:
         'Hack': 'is_hack',
         'Alt': 'is_hack',
     }
+
+    DATE_TAG_PATTERNS = [
+        re.compile(r'^(19\d{2}|20\d{2})$'),
+        re.compile(r'^(19\d{2}|20\d{2})[-.](0[1-9]|1[0-2])$'),
+        re.compile(r'^(19\d{2}|20\d{2})[-.](0[1-9]|1[0-2])[-.](0[1-9]|[12]\d|3[01])$'),
+        re.compile(r'^(0[1-9]|1[0-2])[-.](0[1-9]|[12]\d|3[01]|XX)[-.](19\d{2}|20\d{2})$', re.IGNORECASE),
+        re.compile(r'^(0[1-9]|1[0-2])[-.](19\d{2}|20\d{2})$'),
+    ]
+
+    PUBLISHER_IGNORE_PATTERNS = [
+        re.compile(r'^Prototype$', re.IGNORECASE),
+        re.compile(r'^CX\d+.*$', re.IGNORECASE),
+        re.compile(r'^MT\d+.*$', re.IGNORECASE),
+        re.compile(r'^DA\d+.*$', re.IGNORECASE),
+    ]
     
     # Translation patterns
     TRANSLATION_PATTERNS = [
@@ -139,30 +154,50 @@ class FilenameParser:
         # Remove extension
         name_without_ext = filename.rsplit('.', 1)[0]
         
-        # Extract tags in parentheses and brackets
-        tags_in_parens = re.findall(r'\(([^)]+)\)', name_without_ext)
-        tags_in_brackets = re.findall(r'\[([^\]]+)\]', name_without_ext)
-        all_tags = tags_in_parens + tags_in_brackets
+        # Extract tags in parentheses and brackets (preserve order)
+        tag_matches = list(re.finditer(r'(\(|\[)([^)\]]+)(\)|\])', name_without_ext))
+        all_tags = [match.group(2) for match in tag_matches]
         
         # Remove tags from title to get clean name
         clean_name = re.sub(r'\([^)]+\)', '', name_without_ext)
         clean_name = re.sub(r'\[([^\]]+)\]', '', clean_name)
         clean_name = clean_name.strip()
         
-        result = ParsedFilename(
-            title=clean_name,
-            raw_tags=all_tags
+        title_override, publisher_from_date = self._extract_title_and_publisher_from_date_tag(
+            name_without_ext,
+            tag_matches,
         )
+
+        result = ParsedFilename(
+            title=title_override or clean_name,
+            raw_tags=all_tags,
+        )
+
+        if publisher_from_date:
+            result.publisher = publisher_from_date
+            result.tags.append(f"Publisher:{publisher_from_date}")
         
         # Parse each tag
         for tag in all_tags:
             self._parse_tag(tag, result)
+
+        if result.publisher is None:
+            publisher_from_tags = self._extract_publisher_from_remaining_tags(all_tags)
+            if publisher_from_tags:
+                result.publisher = publisher_from_tags
+                result.tags.append(f"Publisher:{publisher_from_tags}")
         
         return result
     
     def _parse_tag(self, tag: str, result: ParsedFilename):
         """Parse individual tag and update result."""
         tag_clean = tag.strip()
+
+        region_override = self._parse_special_region(tag_clean)
+        if region_override:
+            result.region = region_override
+            result.tags.append(f"Region:{region_override}")
+            return
         
         # Check for region
         for region_code, region_name in self.REGIONS.items():
@@ -218,6 +253,53 @@ class FilenameParser:
             year_match,
         ]):
             result.tags.append(tag_clean)
+
+    def _parse_special_region(self, tag_clean: str) -> Optional[str]:
+        if tag_clean.upper() in {"PAL", "SECAM", "SECOM"}:
+            return "SECAM" if tag_clean.upper() == "SECOM" else tag_clean.upper()
+        return None
+
+    def _is_date_or_year_tag(self, tag_clean: str) -> bool:
+        return any(pattern.match(tag_clean) for pattern in self.DATE_TAG_PATTERNS)
+
+    def _extract_title_and_publisher_from_date_tag(
+        self,
+        name_without_ext: str,
+        tag_matches: List[re.Match],
+    ) -> tuple[Optional[str], Optional[str]]:
+        for index, match in enumerate(tag_matches):
+            tag_clean = match.group(2).strip()
+            if self._is_date_or_year_tag(tag_clean):
+                title_prefix = name_without_ext[:match.start()].strip().rstrip("-_").strip()
+                publisher = None
+                if index + 1 < len(tag_matches):
+                    publisher = self._publisher_from_tag(tag_matches[index + 1].group(2))
+                return title_prefix or None, publisher
+        return None, None
+
+    def _publisher_from_tag(self, tag_clean: str) -> Optional[str]:
+        tag_clean = tag_clean.strip()
+        if not tag_clean:
+            return None
+        if ',' in tag_clean:
+            return tag_clean.split(',', 1)[0].strip() or None
+        return tag_clean or None
+
+    def _extract_publisher_from_remaining_tags(self, tags: List[str]) -> Optional[str]:
+        remaining = []
+        for tag in tags:
+            tag_clean = tag.strip()
+            if not tag_clean:
+                continue
+            if self._is_date_or_year_tag(tag_clean):
+                continue
+            if any(pattern.match(tag_clean) for pattern in self.PUBLISHER_IGNORE_PATTERNS):
+                continue
+            remaining.append(tag_clean)
+
+        if len(remaining) == 1:
+            return self._publisher_from_tag(remaining[0])
+        return None
     
     def parse_to_dict(self, filename: str) -> Dict[str, Any]:
         """
