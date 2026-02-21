@@ -475,7 +475,7 @@ def api_source_paths(path: str):
 
 @app.get("/browse", tags=["File Browsing"])
 def api_browse_directory(path: str):
-    """Browse a directory and return its contents with metadata and cache status.\"\"\"
+    """Browse a directory and return its contents with metadata and cache status."""
     import time
     start_time = time.time()
     
