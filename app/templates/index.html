@@ -1718,15 +1718,68 @@
 
         async function runDbSync() {
             appendLog("\nStarting database sync...\n");
-            try {
-                const resp = await fetch('/api/db/sync', { method: 'POST' });
-                const data = await resp.json();
-                if (data.success) {
-                    const stats = data.stats ? JSON.stringify(data.stats) : '';
-                    appendLog(`Database sync complete. ${stats}\n`);
-                } else {
-                    appendLog(`Database sync failed: ${data.message}\n`);
+            
+            // Get selected client and system for optimized sync
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
+            
+            // Build query parameters for filtered sync
+            let syncUrl = '/api/db/sync?stream=true';
+            if (checkedClient) {
+                syncUrl += `&client=${encodeURIComponent(checkedClient.value)}`;
+                appendLog(`Filtering sync to client: ${checkedClient.value}\n`);
+            }
+            if (checkedSystems.length === 1) {
+                const systemEntry = systemsMetaMap[checkedSystems[0].value];
+                if (systemEntry && systemEntry.name) {
+                    syncUrl += `&system=${encodeURIComponent(systemEntry.name)}`;
+                    appendLog(`Filtering sync to system: ${systemEntry.name}\n`);
                 }
+            }
+            
+            try {
+                // Use EventSource for streaming progress updates
+                const eventSource = new EventSource(syncUrl);
+                
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        // Handle different progress events
+                        if (data.status === 'starting' || data.status === 'initialized') {
+                            appendLog(`${data.message || 'Initializing...'}\n`);
+                        } else if (data.status === 'syncing') {
+                            appendLog(`${data.message}\n`);
+                        } else if (data.status === 'client') {
+                            appendLog(`Processing client ${data.client} (${data.progress}/${data.total})...\n`);
+                        } else if (data.status === 'system') {
+                            appendLog(`  Syncing ${data.client}/${data.system}...\n`);
+                        } else if (data.status === 'files') {
+                            appendLog(`    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`);
+                        } else if (data.status === 'system_complete') {
+                            appendLog(`  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`);
+                        } else if (data.status === 'cleanup') {
+                            appendLog(`${data.message}\n`);
+                        } else if (data.status === 'complete' || data.status === 'done') {
+                            const stats = data.stats ? `${data.stats.files_added} added, ${data.stats.files_updated} updated, ${data.stats.files_deleted} deleted` : '';
+                            const duration = data.duration ? ` in ${data.duration.toFixed(1)}s` : '';
+                            appendLog(`Database sync complete: ${stats}${duration}\n`);
+                            eventSource.close();
+                        } else if (data.status === 'error') {
+                            appendLog(`ERROR: ${data.message}\n`);
+                            eventSource.close();
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse SSE data:', e);
+                    }
+                };
+                
+                eventSource.onerror = (error) => {
+                    console.error('EventSource error:', error);
+                    appendLog(`Database sync connection error\n`);
+                    eventSource.close();
+                };
+                
             } catch (e) {
                 appendLog(`Database sync failed: ${e.message}\n`);
             }

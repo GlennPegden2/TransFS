@@ -1,0 +1,7 @@
+# RetroBat Client Configuration
+# Defines system mappings and file organization for RetroBat frontend
+
+name: RetroBat
+default_target_path: "{name}/{system_name}/{maps}"
+
+systems: []

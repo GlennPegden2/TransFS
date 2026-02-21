@@ -34,10 +34,28 @@ def read_app_config(config_dir="config"):
         return yaml.safe_load(f)
 
 def read_clients_config(config_dir="config"):
-    """Read clients configuration (all client definitions and system mappings)."""
-    path = os.path.join(config_dir, "clients.yaml")
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """Read clients configuration from individual client files in clients/ directory."""
+    clients = []
+    clients_dir = os.path.join(config_dir, "clients")
+    
+    # If clients directory doesn't exist, fall back to clients.yaml for backward compatibility
+    if not os.path.exists(clients_dir):
+        legacy_path = os.path.join(config_dir, "clients.yaml")
+        if os.path.exists(legacy_path):
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        return {"clients": []}
+    
+    # Load all client YAML files from clients directory
+    for filename in sorted(os.listdir(clients_dir)):
+        if filename.endswith(".yaml"):
+            client_path = os.path.join(clients_dir, filename)
+            with open(client_path, "r", encoding="utf-8") as f:
+                client_data = yaml.safe_load(f)
+                if client_data and isinstance(client_data, dict):
+                    clients.append(client_data)
+    
+    return {"clients": clients}
 
 def read_source_config(manufacturer: str, canonical_name: str, config_dir="config") -> Optional[dict]:
     """Read source configuration for a specific system."""

@@ -658,16 +658,18 @@ def cache_clear_all():
 
 
 @app.post("/db/sync")
-async def db_sync(path: str | None = None, stream: bool = False):
+@app.get("/db/sync")
+async def db_sync(path: str | None = None, stream: bool = False, client: str | None = None, system: str | None = None):
     """
     Synchronize database with filesystem.
     
     Args:
         path: Optional path to sync (currently ignored, syncs full filestore)
         stream: If True, returns Server-Sent Events with progress updates
+        client: Optional client name to sync only that client
+        system: Optional system name to sync only that system
     
-    Note: Currently syncs the entire filestore regardless of path parameter.
-    The database filtering happens at query time based on configuration.
+    Supports filtered syncing by client and/or system for faster targeted updates.
     
     Requires database mode to be enabled.
     """
@@ -718,7 +720,7 @@ async def db_sync(path: str | None = None, stream: bool = False):
                 def run_sync():
                     nonlocal sync_complete, sync_error
                     try:
-                        db_sync_inst.full_sync()
+                        db_sync_inst.full_sync(client_filter=client, system_filter=system)
                         progress_queue.put({'status': 'done', 'stats': db_sync_inst.stats})
                     except Exception as e:
                         sync_error = str(e)
@@ -759,16 +761,21 @@ async def db_sync(path: str | None = None, stream: bool = False):
         
         filestore_path = config.get("filestore", "/mnt/filestorefs")
         
-        logger.info(f"Starting database sync for filestore: {filestore_path}")
+        if client and system:
+            logger.info(f"Starting database sync for client '{client}', system '{system}'")
+        elif client:
+            logger.info(f"Starting database sync for client '{client}'")
+        elif system:
+            logger.info(f"Starting database sync for system '{system}'")
+        else:
+            logger.info(f"Starting database sync for filestore: {filestore_path}")
         
         # Initialize database connection if needed (uses environment variables)
         init_database()
         
-        # Create DatabaseSync instance and run full sync
-        # Note: DatabaseSync is client-aware and will properly populate
-        # system, client, and map_name fields unlike the old FilesystemSync
+        # Create DatabaseSync instance and run full sync with filters
         db_sync = DatabaseSync(config)
-        db_sync.full_sync()
+        db_sync.full_sync(client_filter=client, system_filter=system)
         
         stats = db_sync.stats
         

@@ -1,0 +1,7 @@
+# MAME Client Configuration
+# Defines system mappings and file organization for MAME emulator
+
+name: Mame
+default_target_path: "{name}/{system_name}/{maps}"
+
+systems: []

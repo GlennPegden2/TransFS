@@ -5,6 +5,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **Modular Client Configuration**: Refactored clients.yaml into per-client files for better maintainability
+  - Created `app/config/clients/` directory with individual YAML files: `mister.yaml`, `mame.yaml`, `retrobat.yaml`, `retropie.yaml`, `generic.yaml`
+  - Updated `read_clients_config()` to dynamically discover and load all YAML files from clients directory
+  - Maintains backward compatibility with legacy `clients.yaml` as fallback
+  - Enables parallel contributions and reduces merge conflicts as configs grow
+  - MiSTer client: 40+ systems with detailed mappings in dedicated mister.yaml
 - **Streaming Sync Progress**: Database sync API now supports Server-Sent Events for real-time progress updates
   - Added `stream=true` parameter to `/api/db/sync` endpoint
   - Streams progress messages for client/system processing, file counts, and completion status
