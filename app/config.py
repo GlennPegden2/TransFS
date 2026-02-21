@@ -134,26 +134,23 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
             name = system.get("name")
             if manufacturer and mapping_name:
                 manufacturer_map.setdefault(manufacturer, {})
-                # Use client_name + name as unique key to avoid overwriting systems with same mapping_name
-                unique_key = f"{client_name}||{name}"
-                manufacturer_map[manufacturer][unique_key] = {
-                    "mapping_name": mapping_name,
-                    "display_name": display_name,
-                    "name": name,
-                    "client": client_name,
-                }
-    # Convert dicts to sorted lists (deduplicate by display_name + mapping_name combo)
+                # Use mapping_name as key and track all clients that support it
+                key = mapping_name
+                if key not in manufacturer_map[manufacturer]:
+                    manufacturer_map[manufacturer][key] = {
+                        "mapping_name": mapping_name,
+                        "display_name": display_name,
+                        "name": name,
+                        "supported_by": []
+                    }
+                # Add this client to the supported_by list if not already there
+                if client_name not in manufacturer_map[manufacturer][key]["supported_by"]:
+                    manufacturer_map[manufacturer][key]["supported_by"].append(client_name)
+    
+    # Convert dicts to sorted lists
     result = {}
     for man, systems in manufacturer_map.items():
-        # Deduplicate: keep first occurrence of each display_name + mapping_name combo
-        seen = set()
-        unique_systems = []
-        for system in sorted(systems.values(), key=lambda s: s.get("display_name", s.get("mapping_name", ""))):
-            key = (system["display_name"], system["mapping_name"])
-            if key not in seen:
-                seen.add(key)
-                unique_systems.append(system)
-        result[man] = unique_systems
+        result[man] = sorted(systems.values(), key=lambda s: s.get("display_name", s.get("mapping_name", "")))
     return result
 
 def get_web_api_config(config_dir="config") -> dict:

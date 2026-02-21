@@ -1974,6 +1974,42 @@ def api_get_packs(client_name: str, system_name: str):
     }
 
 
+@app.get("/systems/{manufacturer}/{system_name}/packs")
+def api_get_packs_no_client(manufacturer: str, system_name: str):
+    """Return available packs for a system without requiring client context."""
+    # Use any client that supports this system to get the pack info
+    # Since packs are client-agnostic (downloads go to same location), 
+    # we just need to find any client that defines this system
+    clients_config = read_clients_config()
+    
+    for client in clients_config.get("clients", []):
+        for system in client.get("systems", []):
+            if (system.get("manufacturer") == manufacturer and 
+                system.get("name") == system_name):
+                # Found a client with this system, use it to get packs
+                system_config = get_system_config(client["name"], system_name)
+                if system_config:
+                    return {
+                        "system": system_config.name,
+                        "manufacturer": system_config.manufacturer,
+                        "canonical_name": system_config.canonical_name,
+                        "packs": [
+                            {
+                                "id": pack.id,
+                                "name": pack.name,
+                                "description": pack.description,
+                                "estimated_size": pack.estimated_size,
+                                "has_build_script": pack.build_script is not None,
+                                "info_links": pack.info_links or [],
+                                "supported_by": pack.supported_by or []
+                            }
+                            for pack in system_config.packs
+                        ]
+                    }
+    
+    return {"error": "System not found"}
+
+
 @app.post("/clients/{client_name}/systems/{system_name}/install-packs")
 async def api_install_packs(client_name: str, system_name: str, req: PackInstallRequest):
     """

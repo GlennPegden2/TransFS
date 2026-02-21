@@ -26,7 +26,7 @@
     <form id="selectionForm">
         <div class="columns">
             <div>
-                <h2>Clients</h2>
+                <h2>Clients <span style="font-size: 0.7em; color: #888; font-weight: normal;">(optional filter)</span></h2>
                 <div id="clients"></div>
             </div>
             <div>
@@ -1320,6 +1320,7 @@
                     const mappingName = systemEntry.mapping_name || systemEntry.name || s;
                     const displayName = systemEntry.display_name || systemEntry.name || mappingName;
                     const systemName = systemEntry.name || mappingName;
+                    const supportedBy = systemEntry.supported_by || [];
                     
                     // Store in lookup map for pack loading
                     systemsMetaMap[`${manufacturer}|||${mappingName}`] = systemEntry;
@@ -1327,6 +1328,7 @@
                     const safeSystem = escapeHtml(displayName);
                     const card = document.createElement('div');
                     card.className = 'system-card';
+                    card.style.position = 'relative'; // For positioning client icons
 
                     const label = document.createElement('label');
                     const input = document.createElement('input');
@@ -1347,6 +1349,32 @@
                     label.appendChild(img);
                     label.appendChild(span);
                     card.appendChild(label);
+                    
+                    // Add client icons for this system
+                    if (supportedBy.length > 0) {
+                        const clientIconsDiv = document.createElement('div');
+                        clientIconsDiv.style.position = 'absolute';
+                        clientIconsDiv.style.bottom = '0.3em';
+                        clientIconsDiv.style.right = '0.3em';
+                        clientIconsDiv.style.display = 'flex';
+                        clientIconsDiv.style.gap = '0.2em';
+                        
+                        supportedBy.forEach(clientName => {
+                            const clientLogoName = clientName.toLowerCase().replace(/\s+/g, '');
+                            const clientImg = document.createElement('img');
+                            clientImg.src = `/static/logos/clients/${clientLogoName}.png`;
+                            clientImg.alt = clientName;
+                            clientImg.title = `Supported by ${clientName}`;
+                            clientImg.style.height = '1em';
+                            clientImg.style.width = 'auto';
+                            clientImg.style.opacity = '0.6';
+                            clientImg.onerror = () => { clientImg.style.display = 'none'; };
+                            clientIconsDiv.appendChild(clientImg);
+                        });
+                        
+                        card.appendChild(clientIconsDiv);
+                    }
+                    
                     systemGrid.appendChild(card);
                 });
 
@@ -1389,7 +1417,7 @@
             const safeSystemName = escapeHtml(data.system);
             const packsInfo = document.getElementById('packs-info');
             
-            // Filter packs if not showing all
+            // Filter packs if not showing all AND a client is selected
             let packsToShow = data.packs;
             if (!showAllPacks && clientName) {
                 packsToShow = data.packs.filter(pack => isPackSupportedByClient(pack, clientName));
@@ -1399,14 +1427,16 @@
             if (packsToShow.length === 0 && !showAllPacks && clientName) {
                 packsInfo.textContent = `No packs available for ${safeSystemName} on ${clientName}`;
             } else if (showAllPacks) {
-                packsInfo.textContent = `Available packs for ${safeSystemName} (showing all):`;
+                packsInfo.textContent = `Available packs for ${safeSystemName} (all clients):`;
+            } else if (clientName) {
+                packsInfo.textContent = `Available packs for ${safeSystemName} (filtered for ${clientName}):`;
             } else {
                 packsInfo.textContent = `Available packs for ${safeSystemName}:`;
             }
             
             // Show/hide toggle button
             const toggleBtn = document.getElementById('toggleFilterBtn');
-            const hasFilteredOut = data.packs.length > packsToShow.length;
+            const hasFilteredOut = clientName && (data.packs.length > packsToShow.length);
             toggleBtn.style.display = hasFilteredOut ? 'block' : 'none';
             
             // Render packs
@@ -1444,8 +1474,6 @@
                 input.type = 'checkbox';
                 input.name = 'packs';
                 input.value = safePackId;
-                input.dataset.client = safeClientName;
-                input.dataset.system = safeSystemName;
                 input.disabled = !isSupported;
 
                 const textContainer = document.createElement('div');
@@ -1545,11 +1573,10 @@
         }
         
         async function loadPacksForSelection() {
-            const checkedClient = document.querySelector('input[name="clients"]:checked');
             const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
             
-            if (!checkedClient || checkedSystems.length === 0) {
-                document.getElementById('packs-info').textContent = 'Select a client and system to view available packs';
+            if (checkedSystems.length === 0) {
+                document.getElementById('packs-info').textContent = 'Select a system to view available packs';
                 document.getElementById('packs').innerHTML = '';
                 document.getElementById('toggleFilterBtn').style.display = 'none';
                 return;
@@ -1562,7 +1589,6 @@
                 return;
             }
             
-            const clientName = checkedClient.value;
             const checkboxValue = checkedSystems[0].value;
             
             // Look up the full system entry from our metadata map
@@ -1574,11 +1600,14 @@
                 return;
             }
             
-            // Use the 'name' field (filesystem name) for the API call
+            // Extract manufacturer and system name from checkbox value (format: manufacturer|||mapping_name)
+            const parts = checkboxValue.split('|||');
+            const manufacturer = parts[0];
             const systemName = systemEntry.name;
             
             try {
-                const response = await fetch(`/api/clients/${clientName}/systems/${systemName}/packs`);
+                // Use client-agnostic endpoint
+                const response = await fetch(`/api/systems/${encodeURIComponent(manufacturer)}/${encodeURIComponent(systemName)}/packs`);
                 if (!response.ok) {
                     document.getElementById('packs-info').textContent = 'Failed to load packs';
                     document.getElementById('packs').innerHTML = '';
@@ -1593,6 +1622,10 @@
                     document.getElementById('toggleFilterBtn').style.display = 'none';
                     return;
                 }
+                
+                // Store manufacturer and system name for installation
+                data.manufacturer = manufacturer;
+                data.systemName = systemName;
                 
                 // Store data and reset filter state
                 currentPacksData = data;
@@ -1810,12 +1843,19 @@
                 return;
             }
             
-            // All packs should have the same client/system
-            const client = checkedPacks[0].dataset.client;
-            const system = checkedPacks[0].dataset.system;
+            // Get manufacturer and system from currentPacksData (stored when packs were loaded)
+            const manufacturer = currentPacksData.manufacturer;
+            const system = currentPacksData.systemName;
             const packIds = checkedPacks.map(box => box.value);
             
+            // Find any client that supports this system (for API endpoint)
+            const systemEntry = Object.values(systemsMetaMap).find(s => 
+                s.name === system && s.supported_by && s.supported_by.length > 0
+            );
+            const client = systemEntry ? systemEntry.supported_by[0] : 'MiSTer'; // Fallback to MiSTer
+            
             appendLog(`Installing ${packIds.length} pack(s) for ${system}...\n`);
+            appendLog(`(Downloads are shared across all clients)\n\n`);
             
             const response = await fetch(`/api/clients/${client}/systems/${system}/install-packs`, {
                 method: 'POST',
