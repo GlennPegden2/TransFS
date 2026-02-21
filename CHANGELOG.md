@@ -31,6 +31,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added deduplication logic to preserve file-based map assignment when same file appears in multiple maps
   - Updated upsert query to use COALESCE to preserve existing map_name on conflict
   - Ensures files from file-based maps are synced with correct `client`, `system`, and `map_name` columns
+- **File-Based Map Path Resolution**: Added support for 'file' config format in get_source_path()
+  - Handles file-based maps alongside legacy 'default_source' format
+  - Supports ZIP files with unzip and zip_internal_file options
+  - Enables boot.vhd and other file-based maps to resolve correctly in FUSE filesystem
+  - Fixes missing file-based map entries appearing in system-level directory listings
 
 ### Added
 - **Multi-Config-Set Support**: Switch between different configuration libraries for clients and sources
