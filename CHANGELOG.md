@@ -5,6 +5,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **API Namespace Organization**: All API endpoints now consistently accessible under `/api/` prefix
+  - FastAPI app mounted at `/api` in main.py for clean namespace
+  - Swagger documentation available at `/api/docs` and `/api/redoc`
+  - OpenAPI spec at `/api/openapi.json`
+  - All endpoints properly tagged for Swagger organization (Clients & Systems, Downloads, Database, Cache, File Browsing, System)
+  - Frontend HTML already calling `/api/*` endpoints for compatibility
+
+### Added (Previous)
 - **Modular Client Configuration**: Refactored clients.yaml into per-client files for better maintainability
   - Created `app/config/clients/` directory with individual YAML files: `mister.yaml`, `mame.yaml`, `retrobat.yaml`, `retropie.yaml`, `generic.yaml`
   - Updated `read_clients_config()` to dynamically discover and load all YAML files from clients directory

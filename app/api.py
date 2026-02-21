@@ -67,6 +67,9 @@ Downloads are shared across all clients - the same source files work for MiSTer,
     license_info={
         "name": "MIT",
     },
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 
@@ -3196,7 +3199,7 @@ def get_filename_from_response(resp, url):
 # DATABASE-DRIVEN VIRTUAL MAPPINGS ENDPOINTS
 # ============================================================================
 
-@app.get("/api/systems")
+@app.get("/systems")
 def list_all_systems():
     """
     List all systems available in database.
@@ -3218,7 +3221,7 @@ def list_all_systems():
         return {'error': str(e), 'systems': []}, 500
 
 
-@app.post("/api/systems/{system}/query-mapping")
+@app.post("/systems/{system}/query-mapping")
 def query_custom_mapping(system: str, request: QueryMappingRequest):
     """
     Query files for custom mapping creation.
@@ -3266,7 +3269,7 @@ def query_custom_mapping(system: str, request: QueryMappingRequest):
         return {'error': str(e)}, 500
 
 
-@app.get("/api/systems/{system}/extensions")
+@app.get("/systems/{system}/extensions")
 def get_system_extensions(system: str):
     """
     Get all available file extensions for a system.
@@ -3299,7 +3302,7 @@ def get_system_extensions(system: str):
         return {'error': str(e)}, 500
 
 
-@app.get("/api/systems/{system}/stats")
+@app.get("/systems/{system}/stats")
 def get_system_statistics(system: str):
     """
     Get statistics about a system (file counts, sizes, extensions).
