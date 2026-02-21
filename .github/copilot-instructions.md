@@ -5,7 +5,7 @@
   User PowerShell syntax for host commands, bash for container commands
   However, as powershell formatting can be hard and everything runs inside the container, it normally makes MUCH more sense to run a bash command inside the container via docker exec.
   Our test suite runs INSIDE docker. 
-  the kegacy folder should be used for scripts written during development but are part of the finished app (i.e. are written for testing and verifiaction during feature development)
+  The legacy folder in the root of our project should be used for scripts written during development but are part of the finished app (i.e. are written for testing and verifiaction during feature development). Similarly when files are deprecated they should be moved to legacy
 
 #SOURCE COUNTROL
 
