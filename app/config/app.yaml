@@ -15,6 +15,9 @@ cache_warmer:
   enabled: false
   io_threshold_percent: 20.0
   max_depth: 12
+config_sets:
+  active_client_config: default
+  active_source_config: default
 database:
   auto_sync: true
   enabled: true

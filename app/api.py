@@ -1085,6 +1085,124 @@ def config_set(config_update: ConfigUpdate):
 
 
 # ============================================================================
+# CONFIG SET MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/config/sets", tags=["System"])
+def get_config_sets():
+    """Get list of available client and source config sets."""
+    try:
+        from config import get_available_config_sets
+        return get_available_config_sets()
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/config/sets/active", tags=["System"])
+def get_active_config_sets_endpoint():
+    """Get the currently active client and source config sets."""
+    try:
+        from config import get_active_config_sets
+        return get_active_config_sets()
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+class ConfigSetSwitchRequest(BaseModel):
+    """Request model for switching config sets."""
+    config_type: str  # 'client' or 'source'
+    config_set: str   # Name of the config set to activate
+
+
+@app.post("/config/sets/switch", tags=["System"])
+def switch_config_set(request: ConfigSetSwitchRequest):
+    """Switch the active config set for clients or sources.
+    
+    This will update app.yaml and clear the config cache to force reload.
+    """
+    try:
+        from config import set_active_config_set
+        result = set_active_config_set(request.config_type, request.config_set)
+        return result
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/config/sets/import", tags=["System"])
+async def import_config_set(file: bytes, config_type: str, config_set_name: str):
+    """Import a config set from a ZIP file.
+    
+    Args:
+        file: ZIP file bytes
+        config_type: 'client' or 'source'
+        config_set_name: Name for the new config set (will be the folder name)
+    
+    The ZIP should contain:
+    - For clients: *.yaml files at the root
+    - For sources: manufacturer folders containing *.yaml files
+    
+    Returns success status and prompts to activate if successful.
+    """
+    try:
+        import zipfile
+        from io import BytesIO
+        
+        if not file or not config_type or not config_set_name:
+            return {"success": False, "error": "Missing required parameters: file, config_type, config_set_name"}
+        
+        if config_type not in ['client', 'source']:
+            return {"success": False, "error": "config_type must be 'client' or 'source'"}
+        
+        # Sanitize config set name
+        config_set_name = re.sub(r'[^a-zA-Z0-9_-]', '_', config_set_name)
+        
+        # Determine target directory
+        if config_type == 'client':
+            target_dir = os.path.join("config", "clients", config_set_name)
+        else:
+            target_dir = os.path.join("config", "sources", config_set_name)
+        
+        # Check if directory exists
+        directory_exists = os.path.exists(target_dir)
+        
+        # Extract ZIP
+        zip_file = BytesIO(file)
+        with zipfile.ZipFile(zip_file, 'r') as zf:
+            # Validate ZIP structure
+            file_list = zf.namelist()
+            if config_type == 'client':
+                # Expect *.yaml files at root
+                yaml_files = [f for f in file_list if f.endswith('.yaml') and '/' not in f]
+                if not yaml_files:
+                    return {"success": False, "error": "ZIP must contain .yaml files at the root for client configs"}
+            else:
+                # Expect manufacturer/system.yaml structure
+                yaml_files = [f for f in file_list if f.endswith('.yaml') and f.count('/') >= 1]
+                if not yaml_files:
+                    return {"success": False, "error": "ZIP must contain manufacturer/*.yaml structure for source configs"}
+            
+            # Extract files
+            os.makedirs(target_dir, exist_ok=True)
+            zf.extractall(target_dir)
+        
+        return {
+            "success": True,
+            "config_type": config_type,
+            "config_set_name": config_set_name,
+            "directory_existed": directory_exists,
+            "files_imported": len(file_list),
+            "prompt_activation": True
+        }
+        
+    except zipfile.BadZipFile:
+        return {"success": False, "error": "Invalid ZIP file"}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
 # TEST ENDPOINTS
 # ============================================================================
 

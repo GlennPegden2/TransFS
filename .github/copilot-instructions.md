@@ -1,4 +1,4 @@
-#ENVORNMENT  
+#ENVIRONMENT  
   
   Host enironment is Windows with PowerShell
   Application runs in a Linux Docker container
@@ -11,6 +11,7 @@
 
   github is source control.
   Changlog.md should be updated with a summary of changes after each successful code change task, and should be commited to github with the code changes.
+  API changes shouldadditionally be documented in swaggere/heredoc/openapi.json, and any new features should be documented in FEATURES.md.
   remind the user to commit periodically, after sucessful code change tasks (when the problems are solved)
   Encourage the user to push/sync whenever the test suite is passing, to ensure work is saved and shared.
   When we a preapring to push, we should ensure the docs folder is up to date, with new and changed features documented in FEATURES.md and supporting documentation in the docs folder. We should also ensure the changelog is updated with a summary of changes, and that all code changes are commited to github.
