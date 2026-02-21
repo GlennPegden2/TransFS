@@ -2,6 +2,7 @@ import yaml
 import os
 from dataclasses import dataclass
 from typing import Optional
+from functools import lru_cache
 
 @dataclass
 class Pack:
@@ -46,10 +47,13 @@ def read_source_config(manufacturer: str, canonical_name: str, config_dir="confi
             return yaml.safe_load(f)
     return None
 
+@lru_cache(maxsize=1)
 def read_config(config_dir="config"):
     """
     Compatibility function that merges all config files into a single dict structure.
     Returns a dict with keys: mountpoint, filestore, web_api, ssl_ignore_hosts, clients, archive_sources
+    
+    Note: This function is cached. To reload config after changes, call read_config.cache_clear()
     """
     # Read app config
     app_config = read_app_config(config_dir)
@@ -200,3 +204,8 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
         packs=packs,
         download_layout=download_layout
     )
+
+def reload_config():
+    """Clear the config cache to force reload on next read_config() call."""
+    read_config.cache_clear()
+    return {"status": "Config cache cleared"}

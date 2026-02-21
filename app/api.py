@@ -17,6 +17,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -453,6 +454,9 @@ def api_source_paths(path: str):
 @app.get("/browse")
 def api_browse_directory(path: str):
     """Browse a directory and return its contents."""
+    import time
+    start_time = time.time()
+    
     # Validate path is within allowed directories
     allowed_prefixes = ["/mnt/filestorefs/Native", "/mnt/transfs"]
     if not any(path.startswith(prefix) for prefix in allowed_prefixes):
@@ -460,12 +464,15 @@ def api_browse_directory(path: str):
     
     # Normalize path to prevent directory traversal
     path = os.path.normpath(path)
+    print(f"[BROWSE] validation done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     if not os.path.exists(path):
         return {"error": "Path does not exist"}
+    print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     if not os.path.isdir(path):
         return {"error": "Path is not a directory"}
+    print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
@@ -474,6 +481,7 @@ def api_browse_directory(path: str):
         from pathlib import Path as PathLib
         
         config = read_config()
+        print(f"[BROWSE] config read done, elapsed={time.time()-start_time:.4f}s", flush=True)
         parts = PathLib(path).parts
         root_parts = PathLib("/mnt/transfs").parts
         rel_parts = parts[len(root_parts):]
@@ -481,20 +489,27 @@ def api_browse_directory(path: str):
         # Need at least client/system to determine zaparoo support
         if len(rel_parts) >= 2:
             client = get_client(config, rel_parts)
+            print(f"[BROWSE] get_client done, elapsed={time.time()-start_time:.4f}s", flush=True)
             if client:
                 system = next((s for s in client.get('systems', []) if s['name'] == rel_parts[1]), None)
+                print(f"[BROWSE] system lookup done, elapsed={time.time()-start_time:.4f}s", flush=True)
                 if system:
                     if len(rel_parts) >= 3:
                         map_name = rel_parts[2]
                         map_entry = find_map_entry(system, map_name)
+                        print(f"[BROWSE] find_map_entry done, elapsed={time.time()-start_time:.4f}s", flush=True)
                         map_config = get_map_config(map_entry)
+                        print(f"[BROWSE] get_map_config done, elapsed={time.time()-start_time:.4f}s", flush=True)
                         if map_config and isinstance(map_config, dict):
                             query_cfg = map_config.get("query", {})
                             supports_zaparoo = query_cfg.get("supports_zaparoo")
                     if supports_zaparoo is None:
                         sa_entry = find_software_archive_entry(system)
+                        print(f"[BROWSE] find_software_archive_entry done, elapsed={time.time()-start_time:.4f}s", flush=True)
                         if sa_entry:
                             supports_zaparoo = sa_entry.get("...SoftwareArchives...", {}).get("supports_zaparoo", True)
+        
+        print(f"[BROWSE] zaparoo config done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     try:
         # Optimization: for ZIP-internal paths under /mnt/transfs, translate to real path first
@@ -643,9 +658,13 @@ def cache_clear_all():
 
 
 @app.post("/db/sync")
-def db_sync(path: str | None = None):
+async def db_sync(path: str | None = None, stream: bool = False):
     """
     Synchronize database with filesystem.
+    
+    Args:
+        path: Optional path to sync (currently ignored, syncs full filestore)
+        stream: If True, returns Server-Sent Events with progress updates
     
     Note: Currently syncs the entire filestore regardless of path parameter.
     The database filtering happens at query time based on configuration.
@@ -667,26 +686,91 @@ def db_sync(path: str | None = None):
                 "message": "Database mode is not enabled"
             }
         
-        # Import database sync class and connection
-        from db.sync import FilesystemSync
+        # If streaming requested, use SSE
+        if stream:
+            from fastapi.responses import StreamingResponse
+            import json
+            import asyncio
+            from queue import Queue
+            from threading import Thread
+            
+            async def generate_progress():
+                from sync_database import DatabaseSync
+                from db.connection import init_database
+                
+                # Create a queue for progress updates
+                progress_queue = Queue()
+                
+                # Initialize database
+                init_database()
+                
+                # Send initial message
+                yield f"data: {json.dumps({'status': 'starting', 'message': 'Initializing sync...'})}\n\n"
+                await asyncio.sleep(0)  # Allow event loop to process
+                
+                # Create sync instance with progress callback
+                db_sync_inst = DatabaseSync(config, progress_callback=lambda msg: progress_queue.put(msg))
+                
+                # Run sync in background thread
+                sync_complete = False
+                sync_error = None
+                
+                def run_sync():
+                    nonlocal sync_complete, sync_error
+                    try:
+                        db_sync_inst.full_sync()
+                        progress_queue.put({'status': 'done', 'stats': db_sync_inst.stats})
+                    except Exception as e:
+                        sync_error = str(e)
+                        progress_queue.put({'status': 'error', 'message': str(e)})
+                    finally:
+                        sync_complete = True
+                
+                sync_thread = Thread(target=run_sync, daemon=True)
+                sync_thread.start()
+                
+                # Stream progress updates
+                while not sync_complete or not progress_queue.empty():
+                    try:
+                        # Non-blocking check for messages
+                        if not progress_queue.empty():
+                            msg = progress_queue.get_nowait()
+                            yield f"data: {json.dumps(msg)}\n\n"
+                        else:
+                            # Send heartbeat to keep connection alive
+                            yield ": heartbeat\n\n"
+                            await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.error(f"Stream error: {e}")
+                        yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+                        break
+                
+                # Final message
+                if sync_error:
+                    yield f"data: {json.dumps({'status': 'error', 'message': sync_error})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'status': 'complete'})}\n\n"
+                
+            return StreamingResponse(generate_progress(), media_type="text/event-stream")
+        
+        # Non-streaming mode (original behavior)
+        from sync_database import DatabaseSync
         from db.connection import init_database
         
         filestore_path = config.get("filestore", "/mnt/filestorefs")
-        db_path = config.get("database", {}).get("path", "/mnt/filestorefs/.transfs_metadata.db")
         
         logger.info(f"Starting database sync for filestore: {filestore_path}")
         
-        # Initialize database connection if needed
-        init_database(db_path)
+        # Initialize database connection if needed (uses environment variables)
+        init_database()
         
-        # Create sync instance and run initial scan
-        # We always sync the entire filestore - the filtering happens at query time based on config
-        sync = FilesystemSync(
-            root_path=filestore_path,
-            mount_path="/mnt/transfs"
-        )
+        # Create DatabaseSync instance and run full sync
+        # Note: DatabaseSync is client-aware and will properly populate
+        # system, client, and map_name fields unlike the old FilesystemSync
+        db_sync = DatabaseSync(config)
+        db_sync.full_sync()
         
-        stats = sync.initial_scan()
+        stats = db_sync.stats
         
         return {
             "success": True,
@@ -1463,9 +1547,12 @@ class ZaparooLaunchRequest(BaseModel):
 @app.post("/zaparoo/launch")
 def zaparoo_launch(request: ZaparooLaunchRequest):
     """Launch a file/game using Zaparoo remote launching."""
+    logger = logging.getLogger("api")
     try:
         file_path = request.file_path
         client_name = request.client_name
+        
+        logger.info(f"Zaparoo launch request: file_path={file_path}, client_name={client_name}")
 
         config = read_config()
         zaparoo_config = config.get("zaparoo", {})
@@ -1492,11 +1579,17 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
         if not file_path.startswith("/mnt/transfs"):
             return {"error": "Invalid file path"}
 
-        relative_path = file_path.replace("/mnt/transfs/", "", 1)
+        # Remove /mnt/transfs prefix and clean up any double slashes
+        relative_path = file_path.replace("/mnt/transfs/", "", 1).replace("/mnt/transfs", "", 1)
+        relative_path = relative_path.lstrip("/")  # Remove any leading slashes
+        logger.info(f"Zaparoo relative_path after replace: {relative_path}")
+        
         client_prefix = f"{client_name}/"
         if relative_path.startswith(client_prefix):
             relative_path = relative_path[len(client_prefix):]
+            logger.info(f"Zaparoo relative_path after removing client prefix: {relative_path}")
         else:
+            logger.error(f"Zaparoo path validation failed: relative_path='{relative_path}' does not start with client_prefix='{client_prefix}'")
             return {"error": f"Path does not belong to client '{client_name}'"}
 
         relative_path = relative_path.replace("\\", "/")
@@ -1623,7 +1716,6 @@ def file_metadata(path: str):
         from db.connection import get_connection, init_database
         
         config = read_config()
-        db_path = config.get("database", {}).get("path", "/mnt/filestorefs/.transfs_metadata.db")
         
         # Normalize path
         if not path.startswith("/mnt/transfs") and not path.startswith("/mnt/filestorefs"):
@@ -1633,9 +1725,9 @@ def file_metadata(path: str):
         db_path_lookup = path.replace("/mnt/transfs", "/mnt/filestorefs")
         
         try:
-            # Initialize database connection pool if needed (safe: only creates tables if missing)
+            # Initialize database connection pool if needed (uses environment variables)
             try:
-                init_database(db_path)
+                init_database()
             except Exception:
                 # If init fails, continue - connection pool might already be initialized
                 pass
@@ -1643,18 +1735,30 @@ def file_metadata(path: str):
             conn = get_connection()
             cursor = conn.cursor()
             
-            # Get file info
+            # Get file info via virtual_mappings table (one-to-many mapping)
             cursor.execute("""
-                SELECT file_id, filename, extension, size, mtime, is_archive, content_type
-                FROM files
-                WHERE source_path = ? OR virtual_path = ?
-            """, (db_path_lookup, path))
+                SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path
+                FROM files f
+                JOIN virtual_mappings vm ON f.file_id = vm.file_id
+                WHERE vm.virtual_path = %s
+                LIMIT 1
+            """, (path,))
             
             file_row = cursor.fetchone()
             if not file_row:
+                # Fallback: try direct source_path or legacy virtual_path lookup
+                cursor.execute("""
+                    SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path
+                    FROM files
+                    WHERE source_path = %s OR virtual_path = %s
+                    LIMIT 1
+                """, (db_path_lookup, path))
+                file_row = cursor.fetchone()
+            
+            if not file_row:
                 return {"error": "File not found in metadata database"}
             
-            file_id, filename, extension, size, mtime, is_archive, content_type = file_row
+            file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path = file_row
             
             # Get normalized metadata with joins to get actual lookup table values
             cursor.execute("""
@@ -1675,7 +1779,7 @@ def file_metadata(path: str):
                 LEFT JOIN regions r ON fm.region_id = r.id
                 LEFT JOIN languages l ON fm.language_id = l.id
                 LEFT JOIN publishers p ON fm.publisher_id = p.id
-                WHERE fm.file_id = ?
+                WHERE fm.file_id = %s
             """, (file_id,))
             
             normalized_row = cursor.fetchone()
@@ -1686,7 +1790,7 @@ def file_metadata(path: str):
                        rating, play_count, last_played, is_prototype, is_homebrew,
                        is_translation, is_hack, tags, raw_metadata
                 FROM metadata
-                WHERE file_id = ?
+                WHERE file_id = %s
             """, (file_id,))
             
             meta_row = cursor.fetchone()
@@ -1695,11 +1799,13 @@ def file_metadata(path: str):
             response = {
                 "file_id": file_id,
                 "filename": filename,
+                "display_name": display_name,
                 "extension": extension,
                 "size": size,
                 "mtime": mtime,
                 "is_archive": is_archive,
                 "content_type": content_type,
+                "source_path": source_path,
                 "metadata": {}
             }
             
@@ -2605,6 +2711,10 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
             yield "\n" + "=" * 60 + "\n"
             yield "🔄 Starting database synchronization...\n"
             yield "=" * 60 + "\n\n"
+            
+            # Flush to ensure header is sent immediately
+            sys.stdout.flush()
+            sys.stderr.flush()
             
             # Set up logging to capture sync output
             log_capture = io.StringIO()

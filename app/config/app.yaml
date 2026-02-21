@@ -19,8 +19,15 @@ database:
   auto_sync: true
   enabled: true
   mode: enabled
-  path: /mnt/filestorefs/.transfs_metadata.db
   sync_on_startup: true
+  # PostgreSQL connection (environment variables override these)
+  host: postgres
+  port: 5432
+  name: transfs
+  user: transfs
+  password: transfs_pass
+  pool_size: 20
+  max_overflow: 10
 filestore: /mnt/filestorefs
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:

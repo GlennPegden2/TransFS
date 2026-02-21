@@ -8,7 +8,7 @@ Enables virtual mappings without requiring physical folder structure.
 from typing import List, Optional, Dict, Any
 import logging
 
-from db.connection import get_connection
+from db.connection import get_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,39 @@ def query_files_by_system_and_extensions(
         List of file dictionaries with keys: file_id, filename, extension, virtual_path, size, etc.
     """
     if not extensions:
+        return []
+    
+    try:
+        with get_cursor(commit=False) as cursor:
+            # Convert extensions to lowercase for case-insensitive matching
+            extensions_lower = [ext.lower() for ext in extensions]
+            
+            placeholders = ','.join(['%s' for _ in extensions_lower])
+            
+            query = f"""
+                SELECT 
+                    file_id, filename, extension, source_path, virtual_path,
+                    size, mtime, system
+                FROM files
+                WHERE system = %s 
+                AND LOWER(extension) IN ({placeholders})
+                AND is_directory = false
+                ORDER BY filename
+            """
+            
+            params = [system] + extensions_lower
+            
+            if limit:
+                query += " LIMIT %s"
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
+    
+    except Exception as e:
+        logger.error(f"Error querying files: {e}", exc_info=True)
         return []
 
 
@@ -54,18 +87,17 @@ def query_files_by_system_and_query(
       metadata table: genre, language, region, year, is_prototype, is_homebrew, is_translation, is_hack, tags
     """
     try:
-        conn = get_connection()
+        with get_cursor(commit=False) as cursor:
+            extensions = query.get("extensions") or []
+            source_dir = query.get("source_dir")
+            extension_filters = query.get("extension_filters") or {}
+            filters = query.get("filters") or []
+            logic = (query.get("logic") or "and").lower()
+            if logic not in {"and", "or"}:
+                logic = "and"
 
-        extensions = query.get("extensions") or []
-        source_dir = query.get("source_dir")
-        extension_filters = query.get("extension_filters") or {}
-        filters = query.get("filters") or []
-        logic = (query.get("logic") or "and").lower()
-        if logic not in {"and", "or"}:
-            logic = "and"
-
-        where_clauses = ["f.system = ?", "f.is_directory = 0"]
-        params: List[Any] = [system]
+            where_clauses = ["f.system = %s", "f.is_directory = false"]
+            params: List[Any] = [system]
 
         # Extension filter with optional size constraints (case-insensitive)
         if extensions and "*" not in [str(e) for e in extensions] and "*" not in [str(e).upper() for e in extensions]:
@@ -108,10 +140,10 @@ def query_files_by_system_and_query(
         if source_dir:
             if system_config and system_config.get("local_base_path"):
                 base = f"/mnt/filestorefs/Native/{system_config['local_base_path'].rstrip('/')}/{source_dir.strip('/')}/"
-                where_clauses.append("f.source_path LIKE ?")
+                where_clauses.append("f.source_path LIKE %s")
                 params.append(base + "%")
             else:
-                where_clauses.append("f.source_path LIKE ?")
+                where_clauses.append("f.source_path LIKE %s")
                 params.append(f"%/{source_dir.strip('/')}/%")
 
         # Filter support
@@ -135,32 +167,32 @@ def query_files_by_system_and_query(
                 column = f"f.{field}"
 
             if op in {"=", "eq"}:
-                filter_clauses.append(f"{column} = ?")
+                filter_clauses.append(f"{column} = %s")
                 params.append(value)
             elif op in {"!=" , "ne"}:
-                filter_clauses.append(f"{column} != ?")
+                filter_clauses.append(f"{column} != %s")
                 params.append(value)
             elif op in {">", "gt"}:
-                filter_clauses.append(f"{column} > ?")
+                filter_clauses.append(f"{column} > %s")
                 params.append(value)
             elif op in {">=", "gte"}:
-                filter_clauses.append(f"{column} >= ?")
+                filter_clauses.append(f"{column} >= %s")
                 params.append(value)
             elif op in {"<", "lt"}:
-                filter_clauses.append(f"{column} < ?")
+                filter_clauses.append(f"{column} < %s")
                 params.append(value)
             elif op in {"<=", "lte"}:
-                filter_clauses.append(f"{column} <= ?")
+                filter_clauses.append(f"{column} <= %s")
                 params.append(value)
             elif op == "like":
-                filter_clauses.append(f"{column} LIKE ?")
+                filter_clauses.append(f"{column} LIKE %s")
                 params.append(value)
             elif op == "in" and isinstance(value, list):
-                placeholders = ','.join(['?' for _ in value])
+                placeholders = ','.join(['%s' for _ in value])
                 filter_clauses.append(f"{column} IN ({placeholders})")
                 params.extend(value)
             elif op == "between" and isinstance(value, list) and len(value) == 2:
-                filter_clauses.append(f"{column} BETWEEN ? AND ?")
+                filter_clauses.append(f"{column} BETWEEN %s AND %s")
                 params.extend([value[0], value[1]])
 
         if filter_clauses:
@@ -184,19 +216,16 @@ def query_files_by_system_and_query(
 
         query_sql = select + " WHERE " + " AND ".join(where_clauses) + " ORDER BY f.filename"
         if limit:
-            query_sql += " LIMIT ?"
+            query_sql += " LIMIT %s"
             params.append(limit)
 
-        cursor = conn.execute(query_sql, params)
+        cursor.execute(query_sql, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
     except Exception as e:
         logger.error(f"Error querying files by query: {e}", exc_info=True)
         return []
-    
-    try:
-        conn = get_connection()
         
         # Build WHERE clause for extensions (case-insensitive)
         placeholders = ','.join(['?' for _ in extensions])
@@ -249,31 +278,30 @@ def query_files_by_system_and_content_type(
         return []
     
     try:
-        conn = get_connection()
-        
-        placeholders = ','.join(['?' for _ in content_types])
-        
-        query = f"""
-            SELECT 
-                file_id, filename, extension, source_path, virtual_path,
-                size, mtime, system, content_type
-            FROM files
-            WHERE system = ? 
-            AND content_type IN ({placeholders})
-            AND is_directory = 0
-            ORDER BY filename
-        """
-        
-        params = [system] + content_types
-        
-        if limit:
-            query += " LIMIT ?"
-            params.append(limit)
-        
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-        
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            placeholders = ','.join(['%s' for _ in content_types])
+            
+            query = f"""
+                SELECT 
+                    file_id, filename, extension, source_path, virtual_path,
+                    size, mtime, system, content_type
+                FROM files
+                WHERE system = %s 
+                AND content_type IN ({placeholders})
+                AND is_directory = false
+                ORDER BY filename
+            """
+            
+            params = [system] + content_types
+            
+            if limit:
+                query += " LIMIT %s"
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
     
     except Exception as e:
         logger.error(f"Error querying files by content type: {e}", exc_info=True)
@@ -288,17 +316,16 @@ def query_all_systems() -> List[str]:
         List of system identifiers (e.g., ['Apple/AppleII', 'Nintendo/NES'])
     """
     try:
-        conn = get_connection()
-        
-        cursor = conn.execute("""
-            SELECT DISTINCT system
-            FROM files
-            WHERE system IS NOT NULL
-            ORDER BY system
-        """)
-        
-        rows = cursor.fetchall()
-        return [row['system'] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT DISTINCT system
+                FROM files
+                WHERE system IS NOT NULL
+                ORDER BY system
+            """)
+            
+            rows = cursor.fetchall()
+            return [row['system'] for row in rows]
     
     except Exception as e:
         logger.error(f"Error querying systems: {e}", exc_info=True)
@@ -316,17 +343,16 @@ def query_extensions_by_system(system: str) -> List[str]:
         List of unique extensions found in system
     """
     try:
-        conn = get_connection()
-        
-        cursor = conn.execute("""
-            SELECT DISTINCT LOWER(extension) as ext
-            FROM files
-            WHERE system = ? AND extension IS NOT NULL
-            ORDER BY ext
-        """, (system,))
-        
-        rows = cursor.fetchall()
-        return [row['ext'] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT DISTINCT LOWER(extension) as ext
+                FROM files
+                WHERE system = %s AND extension IS NOT NULL
+                ORDER BY ext
+            """, (system,))
+            
+            rows = cursor.fetchall()
+            return [row['ext'] for row in rows]
     
     except Exception as e:
         logger.error(f"Error querying extensions: {e}", exc_info=True)
@@ -343,16 +369,15 @@ def query_file_count_by_system_and_extension(
     Useful for UI indicators (e.g., "47 .nib files")
     """
     try:
-        conn = get_connection()
-        
-        cursor = conn.execute("""
-            SELECT COUNT(*) as count
-            FROM files
-            WHERE system = ? AND LOWER(extension) = LOWER(?)
-        """, (system, extension))
-        
-        row = cursor.fetchone()
-        return row['count'] if row else 0
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) as count
+                FROM files
+                WHERE system = %s AND LOWER(extension) = LOWER(%s)
+            """, (system, extension))
+            
+            row = cursor.fetchone()
+            return row['count'] if row else 0
     
     except Exception as e:
         logger.error(f"Error querying file count: {e}", exc_info=True)
@@ -362,14 +387,13 @@ def query_file_count_by_system_and_extension(
 def query_file_by_id(file_id: int) -> Optional[Dict[str, Any]]:
     """Get file details by file_id."""
     try:
-        conn = get_connection()
-        
-        cursor = conn.execute("""
-            SELECT * FROM files WHERE file_id = ?
-        """, (file_id,))
-        
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT * FROM files WHERE file_id = %s
+            """, (file_id,))
+            
+            row = cursor.fetchone()
+            return dict(row) if row else None
     
     except Exception as e:
         logger.error(f"Error querying file: {e}", exc_info=True)
@@ -389,45 +413,44 @@ def query_system_statistics(system: str) -> Dict[str, Any]:
         }
     """
     try:
-        conn = get_connection()
-        
-        # Get file count and total size
-        cursor = conn.execute("""
-            SELECT 
-                COUNT(*) as total_files,
-                SUM(size) as total_size
-            FROM files
-            WHERE system = ? AND is_directory = 0
-        """, (system,))
-        
-        row = cursor.fetchone()
-        total_files = row['total_files'] or 0
-        total_size = row['total_size'] or 0
-        
-        # Get extension counts
-        cursor = conn.execute("""
-            SELECT 
-                LOWER(extension) as ext,
-                COUNT(*) as count
-            FROM files
-            WHERE system = ? AND extension IS NOT NULL AND is_directory = 0
-            GROUP BY LOWER(extension)
-            ORDER BY count DESC
-        """, (system,))
-        
-        ext_counts = {}
-        extensions = []
-        for row in cursor.fetchall():
-            ext = row['ext']
-            extensions.append(ext)
-            ext_counts[ext] = row['count']
-        
-        return {
-            'total_files': total_files,
-            'total_size': total_size,
-            'extension_counts': ext_counts,
-            'extensions': extensions
-        }
+        with get_cursor(commit=False) as cursor:
+            # Get file count and total size
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_files,
+                    SUM(size) as total_size
+                FROM files
+                WHERE system = %s AND is_directory = false
+            """, (system,))
+            
+            row = cursor.fetchone()
+            total_files = row['total_files'] or 0
+            total_size = row['total_size'] or 0
+            
+            # Get extension counts
+            cursor.execute("""
+                SELECT 
+                    LOWER(extension) as ext,
+                    COUNT(*) as count
+                FROM files
+                WHERE system = %s AND extension IS NOT NULL AND is_directory = false
+                GROUP BY LOWER(extension)
+                ORDER BY count DESC
+            """, (system,))
+            
+            ext_counts = {}
+            extensions = []
+            for row in cursor.fetchall():
+                ext = row['ext']
+                extensions.append(ext)
+                ext_counts[ext] = row['count']
+            
+            return {
+                'total_files': total_files,
+                'total_size': total_size,
+                'extension_counts': ext_counts,
+                'extensions': extensions
+            }
     
     except Exception as e:
         logger.error(f"Error getting system statistics: {e}", exc_info=True)
@@ -465,81 +488,64 @@ def query_files_by_client_system_and_map(
         List of file records with source_path, filename, extension, size, mtime, etc.
     """
     try:
-        # Direct SQLite connection instead of using get_connection() to avoid init issues
-        import sqlite3
-        db_path = "/mnt/filestorefs/.transfs_metadata.db"
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ?"
-        params = [client, system, map_name]
-        
-        # Build extension filter with optional size constraints
-        # Strategy: For each extension, if it has size filters apply them, otherwise match as-is
-        if extensions:
-            conditions = []
+        with get_cursor(commit=False) as cursor:
+            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = %s AND system = %s AND map_name = %s"
+            params = [client, system, map_name]
             
-            for ext in extensions:
-                ext_lower = ext.lower()
+            # Build extension filter with optional size constraints
+            # Strategy: For each extension, if it has size filters apply them, otherwise match as-is
+            if extensions:
+                conditions = []
                 
-                # Check if this extension has size constraints
-                if extension_filters and ext in extension_filters:
-                    filters = extension_filters[ext]
-                    size_parts = []
+                for ext in extensions:
+                    ext_lower = ext.lower()
                     
-                    if 'max_size' in filters:
-                        max_size = filters['max_size']
-                        size_parts.append(f"size <= {max_size}")
-                        logger.info(f"Query: {ext} <= {max_size} bytes")
-                    
-                    if 'min_size' in filters:
-                        min_size = filters['min_size']
-                        size_parts.append(f"size >= {min_size}")
-                        logger.info(f"Query: {ext} >= {min_size} bytes")
-                    
-                    # Combine with extension match
-                    if size_parts:
-                        size_clause = " AND ".join(size_parts)
-                        conditions.append(f"(LOWER(extension) = '{ext_lower}' AND {size_clause})")
+                    # Check if this extension has size constraints
+                    if extension_filters and ext in extension_filters:
+                        filters = extension_filters[ext]
+                        size_parts = []
+                        
+                        if 'max_size' in filters:
+                            max_size = filters['max_size']
+                            size_parts.append(f"size <= {max_size}")
+                            logger.info(f"Query: {ext} <= {max_size} bytes")
+                        
+                        if 'min_size' in filters:
+                            min_size = filters['min_size']
+                            size_parts.append(f"size >= {min_size}")
+                            logger.info(f"Query: {ext} >= {min_size} bytes")
+                        
+                        # Combine with extension match
+                        if size_parts:
+                            size_clause = " AND ".join(size_parts)
+                            conditions.append(f"(LOWER(extension) = '{ext_lower}' AND {size_clause})")
+                        else:
+                            conditions.append(f"LOWER(extension) = '{ext_lower}'")
                     else:
+                        # No size filter for this extension, match it directly
                         conditions.append(f"LOWER(extension) = '{ext_lower}'")
-                else:
-                    # No size filter for this extension, match it directly
-                    conditions.append(f"LOWER(extension) = '{ext_lower}'")
+                
+                # Combine all conditions with OR
+                if conditions:
+                    query += f" AND ({' OR '.join(conditions)})"
+                    logger.info(f"Final SQL condition: {' OR '.join(conditions)}")
             
-            # Combine all conditions with OR
-            if conditions:
-                query += f" AND ({' OR '.join(conditions)})"
-                logger.info(f"Final SQL condition: {' OR '.join(conditions)}")
-        
-        query += " ORDER BY filename"
-        if limit:
-            query += f" LIMIT {limit}"
-        
-        logger.info(f"Final SQL query: {query}")
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        
-        if not rows:
-            logger.info(f"No files found for client={client}, system={system}, map={map_name}")
-            conn.close()
-            return []
-        
-        result = []
-        for row in rows:
-            result.append({
-                'file_id': row[0],
-                'source_path': row[1],
-                'virtual_path': row[2],
-                'filename': row[3],
-                'extension': row[4],
-                'size': row[5],
-                'mtime': row[6],
-            })
-        
-        logger.info(f"query_files_by_client_system_and_map: found {len(result)} files for {client}/{system}/{map_name}")
-        conn.close()
-        return result
+            query += " ORDER BY filename"
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            logger.info(f"Final SQL query: {query}")
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            if not rows:
+                logger.info(f"No files found for client={client}, system={system}, map={map_name}")
+                return []
+            
+            result = [dict(row) for row in rows]
+            
+            logger.info(f"query_files_by_client_system_and_map: found {len(result)} files for {client}/{system}/{map_name}")
+            return result
         
     except Exception as e:
         logger.error(f"Error querying files for {client}/{system}/{map_name}: {e}", exc_info=True)
@@ -567,35 +573,20 @@ def query_file_by_client_system_map_and_name(
         File record with source_path, virtual_path, extension, size, mtime, or None
     """
     try:
-        # Direct SQLite connection instead of using get_connection() to avoid init issues
-        import sqlite3
-        db_path = "/mnt/filestorefs/.transfs_metadata.db"
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = ? AND system = ? AND map_name = ? AND filename = ?"
-        params = [client, system, map_name, filename]
-        
-        cursor.execute(query, params)
-        row = cursor.fetchone()
-        conn.close()
-        
-        if not row:
-            logger.debug(f"No file found for {client}/{system}/{map_name}/{filename}")
-            return None
-        
-        result = {
-            'file_id': row[0],
-            'source_path': row[1],
-            'virtual_path': row[2],
-            'filename': row[3],
-            'extension': row[4],
-            'size': row[5],
-            'mtime': row[6],
-        }
-        
-        logger.debug(f"query_file_by_client_system_map_and_name: found {filename} in {client}/{system}/{map_name}")
-        return result
+        with get_cursor(commit=False) as cursor:
+            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = %s AND system = %s AND map_name = %s AND filename = %s"
+            params = [client, system, map_name, filename]
+            
+            logger.info(f"Querying single file: client={client}, system={system}, map={map_name}, filename={filename}")
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            
+            if row:
+                logger.info(f"Found file: {dict(row)}")
+                return dict(row)
+            else:
+                logger.info(f"File not found: {filename}")
+                return None
         
     except Exception as e:
         logger.error(f"Error querying file {client}/{system}/{map_name}/{filename}: {e}", exc_info=True)

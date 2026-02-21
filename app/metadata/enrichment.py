@@ -8,11 +8,26 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
+import sys
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, Iterable
 
 from .parser import parse_filename
+
+# Import from db module - handle different Python module contexts
+if __name__ == '__main__':
+    # Running as script
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from db.connection import get_cursor
+else:
+    # Running as module
+    try:
+        from db.connection import get_cursor
+    except ImportError:
+        # Fallback for nested package imports
+        import importlib
+        db_connection = importlib.import_module('db.connection')
+        get_cursor = db_connection.get_cursor
 
 
 @dataclass
@@ -23,6 +38,7 @@ class PackContext:
     ruleset_overrides: Optional[dict] = None
     defaults: Optional[dict] = None
     tags: Optional[list[str]] = None
+    default_extension: Optional[str] = None
 
 
 MEDIA_TYPE_MAP = {
@@ -40,16 +56,29 @@ def _normalize_value(value: Optional[str]) -> Optional[str]:
     return cleaned if cleaned else None
 
 
-def _ensure_lookup(conn: sqlite3.Connection, table: str, name: Optional[str]) -> Optional[int]:
+def _ensure_lookup(table: str, name: Optional[str]) -> Optional[int]:
+    """
+    Ensure a lookup value exists in a controlled vocabulary table.
+    Handles race conditions with INSERT ... ON CONFLICT.
+    """
     if not name:
         return None
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT id FROM {table} WHERE name = ?", (name,))
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-    cursor.execute(f"INSERT INTO {table} (name) VALUES (?)", (name,))
-    return cursor.lastrowid
+    with get_cursor(commit=True) as cursor:
+        # Try to insert, ignore if already exists due to UNIQUE constraint
+        cursor.execute(
+            f"INSERT INTO {table} (name) VALUES (%s) ON CONFLICT (name) DO NOTHING RETURNING id",
+            (name,)
+        )
+        result = cursor.fetchone()
+        
+        if result:
+            # Successfully inserted, return new ID
+            return result['id'] if isinstance(result, dict) else result[0]
+        
+        # Already existed (conflict), query for existing ID
+        cursor.execute(f"SELECT id FROM {table} WHERE name = %s", (name,))
+        row = cursor.fetchone()
+        return row['id'] if isinstance(row, dict) else row[0] if row else None
 
 
 def _extract_release_date(filename: str) -> tuple[Optional[str], Optional[int], Optional[str]]:
@@ -86,20 +115,19 @@ def _collect_languages(parsed_language: Optional[str]) -> list[str]:
 
 
 def _upsert_file_tags(
-    conn: sqlite3.Connection,
     file_id: int,
     tags: Iterable[tuple[str, str]],
 ) -> None:
-    cursor = conn.cursor()
-    for tag_type, tag_value in tags:
-        cursor.execute(
-            "INSERT OR IGNORE INTO file_tags (file_id, tag_type, tag_value) VALUES (?, ?, ?)",
-            (file_id, tag_type, tag_value),
-        )
+    with get_cursor(commit=False) as cursor:
+        for tag_type, tag_value in tags:
+            cursor.execute(
+                "INSERT INTO file_tags (file_id, tag_type, tag_value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                (file_id, tag_type, tag_value),
+            )
 
 
 def enrich_file_metadata(
-    conn: sqlite3.Connection,
+    conn,  # kept for backward compatibility but not used
     file_info: Dict[str, Any],
     pack_context: Optional[PackContext] = None,
 ) -> None:
@@ -107,7 +135,7 @@ def enrich_file_metadata(
     Upsert normalized metadata for a file.
 
     Args:
-        conn: Active SQLite connection
+        conn: Unused (kept for backward compatibility)
         file_info: Dict with file fields (file_id, filename, extension, map_name, virtual_path, size)
         pack_context: Optional pack-level defaults and ruleset info
     """
@@ -148,61 +176,61 @@ def enrich_file_metadata(
 
     publisher = _normalize_value(parsed.publisher) or default_publisher
 
-    media_type_id = _ensure_lookup(conn, "media_types", media_type)
-    region_id = _ensure_lookup(conn, "regions", region)
-    language_id = _ensure_lookup(conn, "languages", language)
-    genre_id = _ensure_lookup(conn, "genres", default_genre)
-    app_type_id = _ensure_lookup(conn, "app_types", default_app_type)
-    publisher_id = _ensure_lookup(conn, "publishers", publisher)
+    media_type_id = _ensure_lookup("media_types", media_type)
+    region_id = _ensure_lookup("regions", region)
+    language_id = _ensure_lookup("languages", language)
+    genre_id = _ensure_lookup("genres", default_genre)
+    app_type_id = _ensure_lookup("app_types", default_app_type)
+    publisher_id = _ensure_lookup("publishers", publisher)
 
     is_revision = bool(parsed.version)
 
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO file_metadata (
-            file_id, transfs_path, extension, title, media_type_id, region_id, language_id,
-            genre_id, app_type_id, publisher_id, release_date, release_year,
-            release_precision, rom_size, is_revision, is_prototype, is_homebrew
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(file_id) DO UPDATE SET
-            transfs_path = excluded.transfs_path,
-            extension = excluded.extension,
-            title = excluded.title,
-            media_type_id = excluded.media_type_id,
-            region_id = excluded.region_id,
-            language_id = excluded.language_id,
-            genre_id = excluded.genre_id,
-            app_type_id = excluded.app_type_id,
-            publisher_id = excluded.publisher_id,
-            release_date = excluded.release_date,
-            release_year = excluded.release_year,
-            release_precision = excluded.release_precision,
-            rom_size = excluded.rom_size,
-            is_revision = excluded.is_revision,
-            is_prototype = excluded.is_prototype,
-            is_homebrew = excluded.is_homebrew
-        """,
-        (
-            file_id,
-            virtual_path,
-            extension,
-            title,
-            media_type_id,
-            region_id,
-            language_id,
-            genre_id,
-            app_type_id,
-            publisher_id,
-            release_date,
-            release_year,
-            release_precision,
-            size,
-            1 if is_revision else 0,
-            1 if parsed.is_prototype else 0,
-            1 if parsed.is_homebrew else 0,
-        ),
-    )
+    with get_cursor(commit=False) as cursor:
+        cursor.execute(
+            """
+            INSERT INTO file_metadata (
+                file_id, transfs_path, extension, title, media_type_id, region_id, language_id,
+                genre_id, app_type_id, publisher_id, release_date, release_year,
+                release_precision, rom_size, is_revision, is_prototype, is_homebrew
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(file_id) DO UPDATE SET
+                transfs_path = excluded.transfs_path,
+                extension = excluded.extension,
+                title = excluded.title,
+                media_type_id = excluded.media_type_id,
+                region_id = excluded.region_id,
+                language_id = excluded.language_id,
+                genre_id = excluded.genre_id,
+                app_type_id = excluded.app_type_id,
+                publisher_id = excluded.publisher_id,
+                release_date = excluded.release_date,
+                release_year = excluded.release_year,
+                release_precision = excluded.release_precision,
+                rom_size = excluded.rom_size,
+                is_revision = excluded.is_revision,
+                is_prototype = excluded.is_prototype,
+                is_homebrew = excluded.is_homebrew
+            """,
+            (
+                file_id,
+                virtual_path,
+                extension,
+                title,
+                media_type_id,
+                region_id,
+                language_id,
+                genre_id,
+                app_type_id,
+                publisher_id,
+                release_date,
+                release_year,
+                release_precision,
+                size,
+                is_revision,
+                parsed.is_prototype,
+                parsed.is_homebrew,
+            ),
+        )
 
     tag_entries = []
     for tag in parsed.tags:
@@ -215,22 +243,23 @@ def enrich_file_metadata(
             tag_entries.append(("pack_tag", tag))
 
     if tag_entries:
-        _upsert_file_tags(conn, file_id, tag_entries)
+        _upsert_file_tags(file_id, tag_entries)
 
     if pack_context and pack_context.pack_name:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT OR IGNORE INTO packs (name, ruleset, ruleset_overrides) VALUES (?, ?, ?)",
-            (
-                pack_context.pack_name,
-                pack_context.ruleset,
-                str(pack_context.ruleset_overrides) if pack_context.ruleset_overrides else None,
-            ),
-        )
-        cursor.execute("SELECT pack_id FROM packs WHERE name = ?", (pack_context.pack_name,))
-        pack_row = cursor.fetchone()
-        if pack_row:
+        with get_cursor(commit=False) as cursor:
             cursor.execute(
-                "INSERT OR IGNORE INTO file_packs (file_id, pack_id) VALUES (?, ?)",
-                (file_id, pack_row[0]),
+                "INSERT INTO packs (name, ruleset, ruleset_overrides) VALUES (%s, %s, %s) ON CONFLICT (name) DO NOTHING",
+                (
+                    pack_context.pack_name,
+                    pack_context.ruleset,
+                    str(pack_context.ruleset_overrides) if pack_context.ruleset_overrides else None,
+                ),
             )
+            cursor.execute("SELECT pack_id FROM packs WHERE name = %s", (pack_context.pack_name,))
+            pack_row = cursor.fetchone()
+            if pack_row:
+                pack_id = pack_row['pack_id'] if isinstance(pack_row, dict) else pack_row[0]
+                cursor.execute(
+                    "INSERT INTO file_packs (file_id, pack_id) VALUES (%s, %s) ON CONFLICT (file_id, pack_id) DO NOTHING",
+                    (file_id, pack_id),
+                )

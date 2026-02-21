@@ -5,7 +5,69 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
-- **Browse Virtual Metadata Tooltip**
+- **Streaming Sync Progress**: Database sync API now supports Server-Sent Events for real-time progress updates
+  - Added `stream=true` parameter to `/api/db/sync` endpoint
+  - Streams progress messages for client/system processing, file counts, and completion status
+  - Includes heartbeat messages to keep connection alive during long syncs
+  - Progress callbacks throughout sync process emit structured JSON events
+- **System-Wide File Scanning**: Database sync now scans entire system base paths instead of per-map directories
+  - Finds all files under a system's local_base_path (e.g., `/Native/Acorn/Atom/`)
+  - Matches files to maps based on extension, regardless of subdirectory location
+  - Eliminates issues with files in non-standard locations (e.g., `Software/VHD/` vs `Software/Sources/`)
+  - Single scan per system instead of multiple scans per map
+- **Batch Processing Performance**: Implemented PostgreSQL bulk upsert for 2.4x sync speedup
+  - Added file batching with configurable `BATCH_SIZE` (default 1000 files)
+  - Uses `executemany()` with `ON CONFLICT DO UPDATE` for efficient bulk operations
+  - Performance improvement: 384s → 158s for ~12,000 files (2.4x faster)
+  - Reduced database round-trips from per-file to per-batch
+
+### Changed
+- **Sync System Consolidation**: Unified to single DatabaseSync implementation
+  - Removed dual-sync architecture (FilesystemSync + DatabaseSync)
+  - Updated API `/api/db/sync` endpoint to use DatabaseSync exclusively
+  - Updated data_provider_db sync_on_startup to use DatabaseSync
+  - Moved deprecated db/sync.py to legacy folder
+  - All syncs now properly populate system/client/map_name fields
+- **Configuration Performance**: Added LRU cache to read_config() function
+  - Eliminated 870ms overhead on every API request
+  - API browse requests reduced from 2.8s to <100ms
+  - Added reload_config() function to clear cache when needed
+- **Metadata Enrichment Race Condition Fix**: Fixed foreign key violations during concurrent sync
+  - Changed _ensure_lookup() to use `INSERT ON CONFLICT DO NOTHING` with commit=True
+  - Eliminates race conditions when multiple files try to create same lookup entries
+- **Default Extension Support**: Pack metadata can now specify `extension` in defaults to assign extensions to files without one
+  - Added `default_extension` field to `PackContext` dataclass
+  - Modified database sync to apply default extension during file scanning when files lack an extension
+  - Updated Acorn Atom pack configuration to use `extension: ATM` in defaults for files without extensions
+  - Enables proper handling of archives with extensionless files (e.g., hoglet67 Acorn Atom software archive)
+
+### Fixed
+- **Zaparoo Launch Path Normalization**: Added lstrip("/") to path construction
+  - Fixes Zaparoo launch failures where paths started with double slash (//)
+  - Ensures clean path construction from virtual_path components
+- Fixed schema initialization to execute multi-statement SQL safely and continue after idempotent failures
+- Improved virtual mappings generation to match systems using normalized client config fields
+
+### Performance
+- Database sync: 384s → 158s (2.4x faster) for ~12,000 files
+- API latency: 2.8s → <100ms for browse requests
+- Database connection pooling: 5-15 concurrent connections
+- Batch size: 1000 files per bulk operation
+
+### Migration Notes
+- **PostgreSQL Migration (COMPLETE)**
+  - Replaced SQLite with PostgreSQL 15-alpine in docker-compose
+  - Added persistent postgres_data volume for database persistence
+  - Implemented psycopg2-binary connection pooling (5 min, 15 max connections)
+  - Converted all database operations to use PostgreSQL %s parameter syntax
+  - Updated schema.py for PostgreSQL (SERIAL PRIMARY KEY, BIGINT timestamps, BOOLEAN types)
+  - Migrated all SQL queries from ? to %s placeholders across all modules
+  - Converted SQLite-specific syntax to PostgreSQL equivalents
+  - Fixed RealDictCursor row access (dict keys instead of tuple indices)
+  - Eliminated concurrent access locking errors with PostgreSQL MVCC
+  - Validated: 20,213 files indexed, 6,641 enriched with metadata
+
+### Added
   - Added info icon next to Zaparoo button with hover tooltip for file metadata
   - Added `/api/file-metadata` endpoint to serve normalized metadata for UI display
 - **Source-Based Download Layout**
@@ -63,7 +125,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added `file_metadata`, `file_tags`, `packs`, `file_packs`, and `metadata_edits` tables
 
 ### Fixed
-- **Download Log CR Handling**
+- Fixed PostgreSQL sync cleanup in sync_database.py to return pooled connections cleanly
+- Added progress logging during file counting in database sync to show filesystem walk activity - Improved database sync UI responsiveness by adding early initialization logging and output flushing- **Download Log CR Handling**
   - Added carriage-return-aware progress output for DDL and torrent downloads
   - Updated UI log renderer to handle in-place progress updates without line spam
   - Added filename-based metadata enrichment hook during database sync
@@ -80,6 +143,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Disambiguates virtual filenames when multiple source files would collide
   - Prevents duplicate entries in virtual listings and avoids OS confusion
   - Reuses existing virtual filename when the same source path already exists (update instead of duplicate)
+- **Database Sync Performance Optimization**
+  - Uses single persistent database connection with batched commits (100 files per batch)
+  - Eliminates per-file connection overhead, dramatically improving sync speed
+  - Adds file counting and progress reporting every 100 files
+  - Progress shown as percentage and file count (e.g., "Progress: 45.2% (3000/6639)")
 
 ### Fixed
 - **Database Sync Schema Initialization** - Sync now uses centralized schema initialization

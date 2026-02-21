@@ -133,14 +133,12 @@ class DataProviderFactory:
         elif mode == 'enabled':
             logger.info("Using database-based provider")
             from data_provider_db import DatabaseDataProvider
-            db_path = db_config.get('path', '/mnt/filestorefs/.transfs_metadata.db')
-            return DatabaseDataProvider(db_path, config)
+            return DatabaseDataProvider(config)
         
         elif mode == 'hybrid':
             logger.info("Using hybrid provider (database with cache fallback)")
             from data_provider_hybrid import HybridDataProvider
-            db_path = db_config.get('path', '/mnt/filestorefs/.transfs_metadata.db')
-            return HybridDataProvider(db_path, existing_provider, config)
+            return HybridDataProvider(existing_provider, config)
         
         else:
             logger.warning(f"Unknown database mode: {mode}, using cache")

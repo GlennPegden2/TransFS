@@ -20,11 +20,11 @@ import os
 import sys
 import time
 import re
-import sqlite3
 import argparse
 import hashlib
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
+from io import StringIO
 import logging
 
 # Add app directory to path
@@ -34,25 +34,29 @@ from config import read_config
 from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map, get_query_config
 from transforms import build_transform_pipeline
 from metadata import enrich_file_metadata, PackContext
+from db.connection import get_connection, return_connection
 
 logger = logging.getLogger(__name__)
+
+# Batch processing configuration for performance optimization
+BATCH_SIZE = 1000  # Number of files to batch before flushing to database
 
 
 class DatabaseSync:
     """Synchronizes filesystem to database based on clients.yaml configuration."""
     
-    def __init__(self, config: dict, db_path: str = "/mnt/filestorefs/.transfs_metadata.db"):
+    def __init__(self, config: dict, progress_callback=None):
         """
         Initialize database sync.
         
         Args:
             config: Configuration from read_config()
-            db_path: Path to SQLite database
+            progress_callback: Optional callable to receive progress updates
         """
         self.config = config
-        self.db_path = db_path
         self.filestore = config.get("filestore", "/mnt/filestorefs")
         self.mount_path = "/mnt/transfs"
+        self.progress_callback = progress_callback
         
         # Statistics
         self.stats = {
@@ -66,6 +70,19 @@ class DatabaseSync:
         # Track seen source paths for deletion detection
         self.seen_source_paths: Set[str] = set()
         self._pack_context_by_folder = self._build_pack_context_index()
+        
+        # Shared database connection and batch processing
+        self.conn = None
+        self.cursor = None
+        self.batch_size = BATCH_SIZE
+        self.file_batch = []  # For batching file operations
+        self.pending_operations = []
+    
+    def _emit_progress(self, status: str, **kwargs):
+        """Emit progress update to callback if configured."""
+        if self.progress_callback:
+            msg = {'status': status, **kwargs}
+            self.progress_callback(msg)
 
     def _build_pack_context_index(self) -> Dict[str, Dict[str, dict]]:
         """
@@ -83,12 +100,14 @@ class DatabaseSync:
                 source_by_name = {src.get("name"): src for src in sources}
                 for pack in source_config.get("packs", []) or []:
                     metadata = pack.get("metadata") or {}
+                    defaults = metadata.get("defaults") or {}
                     pack_context = PackContext(
                         pack_name=pack.get("name") or pack.get("id"),
                         ruleset=metadata.get("ruleset"),
                         ruleset_overrides=metadata.get("overrides"),
-                        defaults=metadata.get("defaults"),
+                        defaults=defaults,
                         tags=metadata.get("tags") or [],
+                        default_extension=defaults.get("extension"),
                     )
                     for source_name in pack.get("sources", []) or []:
                         source = source_by_name.get(source_name)
@@ -142,12 +161,29 @@ class DatabaseSync:
                 return context
         return None
     
+    def _get_pack_context_for_system(self, client_name: str, system_name: str, dir_path: str) -> Optional[PackContext]:
+        """Get pack context for a given client/system based on directory path."""
+        # Get manufacturer and canonical name from config
+        for client in self.config.get("clients", []):
+            if client.get("name") == client_name:
+                for system in client.get("systems", []):
+                    if system.get("name") == system_name:
+                        manufacturer = system.get("manufacturer")
+                        canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                        if manufacturer and canonical_name:
+                            # Use existing method but need to convert dir_path to source_path format
+                            # dir_path is typically like /mnt/filestorefs/Native/Acorn/Atom/Software/...
+                            source_path = dir_path
+                            return self._get_pack_context_for_file(manufacturer, canonical_name, source_path)
+        return None
+    
     def init_database(self):
         """Initialize database schema using centralized schema."""
         from db.connection import init_database as db_init_database
         
-        logger.info(f"Initializing database: {self.db_path}")
-        db_init_database(self.db_path)
+        logger.info("Initializing database connection")
+        # init_database reads from environment variables set in docker-compose
+        db_init_database()
         logger.info("Database schema initialized")
     
     def full_sync(self, client_filter: Optional[str] = None, system_filter: Optional[str] = None):
@@ -158,39 +194,79 @@ class DatabaseSync:
             client_filter: Only sync this client (e.g., "MiSTer")
             system_filter: Only sync this system (e.g., "Apple-II")
         """
-        logger.info("Starting full database sync")
+        # Log sync scope at the start
+        if client_filter and system_filter:
+            logger.info(f"Starting database sync: {client_filter}/{system_filter}")
+        elif client_filter:
+            logger.info(f"Starting database sync: client '{client_filter}' (all systems)")
+            self._emit_progress('syncing', message=f"Syncing client '{client_filter}'")
+        elif system_filter:
+            logger.info(f"Starting database sync: system '{system_filter}' (all clients)")
+            self._emit_progress('syncing', message=f"Syncing system '{system_filter}'")
+        else:
+            logger.info("Starting database sync: FULL FILESYSTEM (all clients and systems)")
+            self._emit_progress('syncing', message="Starting full filesystem sync")
+        
+        logger.info("Initializing database connection")
         start_time = time.time()
         
         # Initialize database
         self.init_database()
         
-        # Scan all configured clients and systems
-        clients_config = self.config.get("clients", [])
+        # Get connection from pool
+        self.conn = get_connection()
+        self.cursor = self.conn.cursor()
         
-        for client_config in clients_config:
-            client_name = client_config.get("name")
+        logger.info("Database schema initialized")
+        self._emit_progress('initialized', message="Database initialized")
+        
+        try:
+            # Scan all configured clients and systems
+            clients_config = self.config.get("clients", [])
+            total_clients = len([c for c in clients_config if not client_filter or c.get("name") == client_filter])
+            current_client = 0
             
-            # Apply client filter
-            if client_filter and client_name != client_filter:
-                logger.debug(f"Skipping client {client_name} (filter: {client_filter})")
-                continue
-            
-            logger.info(f"Syncing client: {client_name}")
-            
-            systems = client_config.get("systems", [])
-            for system_config in systems:
-                system_name = system_config.get("name")
+            for client_config in clients_config:
+                client_name = client_config.get("name")
                 
-                # Apply system filter
-                if system_filter and system_name != system_filter:
-                    logger.debug(f"Skipping system {system_name} (filter: {system_filter})")
+                # Apply client filter
+                if client_filter and client_name != client_filter:
+                    logger.debug(f"Skipping client {client_name} (filter: {client_filter})")
                     continue
                 
-                logger.info(f"  Syncing system: {client_name}/{system_name}")
-                self._sync_system(client_config, system_config)
-        
-        # Clean up deleted files
-        self._clean_deleted_files()
+                current_client += 1
+                logger.info(f"Syncing client: {client_name}")
+                self._emit_progress('client', client=client_name, progress=current_client, total=total_clients)
+                
+                systems = client_config.get("systems", [])
+                for system_config in systems:
+                    system_name = system_config.get("name")
+                    
+                    # Apply system filter
+                    if system_filter and system_name != system_filter:
+                        logger.debug(f"Skipping system {system_name} (filter: {system_filter})")
+                        continue
+                    
+                    logger.info(f"  Syncing system: {client_name}/{system_name}")
+                    self._emit_progress('system', client=client_name, system=system_name)
+                    self._sync_system(client_config, system_config)
+            
+            # Flush any remaining batched operations
+            self._flush_batch()
+            
+            # Clean up deleted files
+            logger.info("Cleaning up deleted files from database")
+            self._emit_progress('cleanup', message="Cleaning up deleted files")
+            self._clean_deleted_files()
+            
+            # Final commit
+            self.conn.commit()
+            
+        finally:
+            if self.conn:
+                return_connection(self.conn)
+                self.conn = None
+            self.cursor = None
         
         duration = time.time() - start_time
         logger.info(
@@ -199,16 +275,33 @@ class DatabaseSync:
             f"{self.stats['errors']} errors in {duration:.2f}s"
         )
         
+        self._emit_progress('complete', 
+                          stats=self.stats,
+                          duration=duration,
+                          message=f"Sync complete: {self.stats['files_added']} added, {self.stats['files_updated']} updated")
+        
         return self.stats
     
     def _sync_system(self, client_config: dict, system_config: dict):
-        """Sync a single system's files to database."""
+        """Sync a single system's files to database by scanning entire base path."""
         client_name = client_config["name"]
         system_name = system_config["name"]
         local_base_path = system_config.get("local_base_path", "")
         
-        # Process each map
+        # Build system base path
+        system_base_path = os.path.join(
+            self.filestore,
+            "Native",
+            local_base_path
+        )
+        
+        if not os.path.exists(system_base_path):
+            logger.warning(f"    System base path not found: {system_base_path}")
+            return
+        
+        # Build map configurations for file matching
         maps = system_config.get("maps", [])
+        map_configs = []
         for map_entry in maps:
             map_name = list(map_entry.keys())[0]
             map_config = map_entry[map_name]
@@ -218,8 +311,28 @@ class DatabaseSync:
                 logger.debug(f"    Skipping non-query map: {map_name}")
                 continue
             
-            logger.info(f"    Syncing map: {map_name}")
-            self._sync_query_map(client_name, system_name, map_name, system_config, map_config)
+            query_cfg = get_query_config(map_config)
+            if query_cfg:
+                map_configs.append({
+                    'name': map_name,
+                    'config': map_config,
+                    'query': query_cfg,
+                    'extensions': [e.upper() for e in query_cfg.get("extensions", [])],
+                    'source_dir': query_cfg.get("source_dir", "Software"),
+                    'extension_map': query_cfg.get("extension_map", {}),
+                    'transforms': map_config.get("transforms", {})
+                })
+        
+        if not map_configs:
+            logger.debug(f"    No query maps found for {system_name}")
+            return
+        
+        logger.info(f"    Scanning entire system base: {system_base_path}")
+        
+        # Scan entire system directory and match files to maps
+        self._scan_system_directory(
+            system_base_path, client_name, system_name, map_configs
+        )
     
     def _sync_query_map(self, client_name: str, system_name: str, map_name: str, 
                        system_config: dict, map_config: dict):
@@ -249,12 +362,17 @@ class DatabaseSync:
             logger.warning(f"      Source directory not found: {source_path}")
             return
         
+        # Count total files first for progress reporting
+        logger.info(f"      Counting files in {map_name}...")
+        total_files = self._count_files(source_path, extensions, system_config.get("download_layout"))
+        logger.info(f"      Processing {total_files} files in {map_name}...")
+        
         # Scan for files with matching extensions
         file_count = 0
         if system_config.get("download_layout") == "source_based":
             file_count += self._scan_directory_recursive(
                 source_path, client_name, system_name, map_name,
-                extensions, extension_map, transforms
+                extensions, extension_map, transforms, total_files
             )
         else:
             for ext in extensions:
@@ -265,7 +383,7 @@ class DatabaseSync:
                 if os.path.isdir(ext_dir):
                     file_count += self._scan_directory(
                         ext_dir, client_name, system_name, map_name,
-                        [ext_upper], extension_map, transforms
+                        [ext_upper], extension_map, transforms, total_files
                     )
                 
                 # Also check lowercase
@@ -273,20 +391,128 @@ class DatabaseSync:
                 if os.path.isdir(ext_dir_lower) and ext_dir_lower != ext_dir:
                     file_count += self._scan_directory(
                         ext_dir_lower, client_name, system_name, map_name,
-                        [ext_upper], extension_map, transforms
+                        [ext_upper], extension_map, transforms, total_files
                     )
             
             # Also scan source_dir directly for files (flat layout)
             file_count += self._scan_directory(
                 source_path, client_name, system_name, map_name,
-                extensions, extension_map, transforms
+                extensions, extension_map, transforms, total_files
             )
         
-        logger.info(f"      Found {file_count} files in {map_name}")
+        logger.info(f"      ✓ Processed {file_count}/{total_files} files in {map_name}")
+    
+    def _scan_system_directory(self, base_path: str, client_name: str, system_name: str, 
+                               map_configs: List[dict]):
+        """
+        Scan entire system directory and match files to appropriate maps.
+        
+        This scans all files under the system's base path and determines which map(s)
+        each file belongs to based on extension and location.
+        """
+        file_count = 0
+        unmatched_count = 0
+        
+        try:
+            for root, _, files in os.walk(base_path):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    relative_path = os.path.relpath(file_path, base_path)
+                    
+                    # Get file extension
+                    _, ext = os.path.splitext(filename)
+                    ext = ext[1:].upper() if ext else ""
+                    
+                    # Try to match file to a map
+                    matched = False
+                    for map_info in map_configs:
+                        if ext in map_info['extensions']:
+                            # File extension matches this map
+                            self._add_file_to_database(
+                                file_path, client_name, system_name, map_info['name'],
+                                ext, map_info['extension_map'], map_info['transforms']
+                            )
+                            file_count += 1
+                            matched = True
+                            break  # File matched to first applicable map
+                    
+                    if not matched and ext:
+                        # File has extension but didn't match any map
+                        unmatched_count += 1
+                        logger.debug(f"      Unmatched file: {relative_path} (ext: {ext})")
+                    
+                    # Progress reporting
+                    if file_count > 0 and file_count % 500 == 0:
+                        logger.info(f"      Progress: {file_count} files processed...")
+                        self._emit_progress('files', 
+                                          processed=file_count,
+                                          added=self.stats['files_added'],
+                                          updated=self.stats['files_updated'])
+        
+        except Exception as e:
+            logger.error(f"Error scanning system directory {base_path}: {e}")
+            self.stats['errors'] += 1
+        
+        logger.info(f"    ✓ Processed {file_count} files for {system_name} ({unmatched_count} unmatched)")
+        self._emit_progress('system_complete', 
+                          system=system_name,
+                          files=file_count,
+                          unmatched=unmatched_count)
+
+    
+    def _count_files(self, dir_path: str, extensions: List[str], layout: Optional[str] = None) -> int:
+        """Count total files matching extensions for progress tracking."""
+        if not os.path.isdir(dir_path):
+            return 0
+        
+        count = 0
+        scanned = 0
+        last_log_time = time.monotonic()
+        extensions_upper = {e.upper() for e in extensions}
+        
+        try:
+            if layout == "source_based":
+                # Recursive count
+                logger.info(f"      Counting files in {dir_path} (recursive)...")
+                for root, _, files in os.walk(dir_path):
+                    for filename in files:
+                        scanned += 1
+                        _, ext = os.path.splitext(filename)
+                        ext = ext[1:].upper() if ext else ""
+                        if ext in extensions_upper:
+                            count += 1
+                        if time.monotonic() - last_log_time >= 5:
+                            logger.info(f"      Counting files... {scanned} scanned, {count} matching")
+                            last_log_time = time.monotonic()
+            else:
+                # Flat count
+                logger.info(f"      Counting files in {dir_path} (flat)...")
+                for entry in os.scandir(dir_path):
+                    if entry.is_file():
+                        scanned += 1
+                        _, ext = os.path.splitext(entry.name)
+                        ext = ext[1:].upper() if ext else ""
+                        if ext in extensions_upper:
+                            count += 1
+                        if time.monotonic() - last_log_time >= 5:
+                            logger.info(f"      Counting files... {scanned} scanned, {count} matching")
+                            last_log_time = time.monotonic()
+        except Exception:
+            pass
+        
+        return count
+    
+    def _flush_batch(self):
+        """Commit pending operations to database."""
+        # Flush any pending file batch first
+        self._flush_file_batch()
+        
+        if self.conn:
+            self.conn.commit()
     
     def _scan_directory(self, dir_path: str, client_name: str, system_name: str,
                        map_name: str, extensions: List[str], extension_map: dict,
-                       transforms: dict) -> int:
+                       transforms: dict, total_files: int = 0) -> int:
         """
         Scan a directory for files and add them to database.
         
@@ -311,6 +537,11 @@ class DatabaseSync:
                             ext, extension_map, transforms
                         )
                         file_count += 1
+                        
+                        # Progress reporting every 100 files
+                        if total_files > 0 and file_count % 100 == 0:
+                            progress = (self.stats['files_added'] + self.stats['files_updated']) / total_files * 100
+                            logger.info(f"         Progress: {progress:.1f}% ({self.stats['files_added'] + self.stats['files_updated']}/{total_files})")
         except Exception as e:
             logger.error(f"Error scanning directory {dir_path}: {e}")
             self.stats['errors'] += 1
@@ -319,24 +550,42 @@ class DatabaseSync:
 
     def _scan_directory_recursive(self, dir_path: str, client_name: str, system_name: str,
                                  map_name: str, extensions: List[str], extension_map: dict,
-                                 transforms: dict) -> int:
+                                 transforms: dict, total_files: int = 0) -> int:
         """Recursively scan a directory for files and add them to database."""
         if not os.path.isdir(dir_path):
             return 0
 
         file_count = 0
         extensions_upper = {e.upper() for e in extensions}
+        
+        # Get pack context to check for default_extension
+        pack_context = self._get_pack_context_for_system(client_name, system_name, dir_path)
+        default_ext = None
+        if pack_context and pack_context.default_extension:
+            default_ext = pack_context.default_extension.upper()
+        
         try:
             for root, _, files in os.walk(dir_path):
                 for filename in files:
                     _, ext = os.path.splitext(filename)
                     ext = ext[1:].upper() if ext else ""
+                    
+                    # If no extension and we have a default, use it
+                    if not ext and default_ext:
+                        ext = default_ext
+                        logger.debug(f"File {filename} has no extension, applying default: {default_ext}")
+                    
                     if ext in extensions_upper:
                         self._add_file_to_database(
                             os.path.join(root, filename), client_name, system_name, map_name,
                             ext, extension_map, transforms
                         )
                         file_count += 1
+                        
+                        # Progress reporting every 100 files
+                        if total_files > 0 and file_count % 100 == 0:
+                            progress = (self.stats['files_added'] + self.stats['files_updated']) / total_files * 100
+                            logger.info(f"         Progress: {progress:.1f}% ({self.stats['files_added'] + self.stats['files_updated']}/{total_files})")
         except Exception as e:
             logger.error(f"Error scanning directory {dir_path}: {e}")
             self.stats['errors'] += 1
@@ -357,7 +606,7 @@ class DatabaseSync:
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
                              transforms: dict):
-        """Add or update a single file in the database."""
+        """Add file to batch for processing."""
         try:
             # Track that we've seen this file
             self.seen_source_paths.add(source_path)
@@ -372,16 +621,12 @@ class DatabaseSync:
             # Check if there's a transform for this extension
             has_transform = extension in transforms
             if has_transform:
-                # Build transform pipeline to get output extension
                 try:
                     transform_specs = transforms[extension]
                     pipeline = build_transform_pipeline(source_path, transform_specs)
-                    
-                    # Get detected output extension if available
                     detected_ext = pipeline.get_effective_output_extension()
                     if detected_ext:
                         virtual_ext = detected_ext
-                        logger.debug(f"Transform detected extension: {extension} -> {virtual_ext}")
                 except Exception as e:
                     logger.warning(f"Failed to build transform pipeline for {filename}: {e}")
             
@@ -398,192 +643,124 @@ class DatabaseSync:
                 virtual_filename
             )
             
-            # Insert or update in database
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
-            # If this source_path already exists, keep its current virtual_path
-            cursor.execute(
-                "SELECT file_id, virtual_path, filename, extension FROM files WHERE source_path = ?",
-                (source_path,)
-            )
-            existing = cursor.fetchone()
-            if existing:
-                existing_virtual_path = existing[1]
-                existing_filename = existing[2]
-                existing_extension = existing[3]
-                if existing_virtual_path:
-                    virtual_path = existing_virtual_path
-                if existing_filename:
-                    virtual_filename = existing_filename
-                if existing_extension:
-                    virtual_ext = existing_extension
-
-            # Ensure virtual path is unique within the database
-            cursor.execute(
-                "SELECT source_path FROM files WHERE virtual_path = ? AND source_path != ?",
-                (virtual_path, source_path)
-            )
-            if cursor.fetchone():
-                hash_suffix = hashlib.sha1(source_path.encode("utf-8")).hexdigest()[:8]
-                unique_filename = f"{base_name} [{hash_suffix}].{virtual_ext.lower()}"
-                unique_path = os.path.join(
-                    self.mount_path,
-                    client_name,
-                    system_name,
-                    map_name,
-                    unique_filename
-                )
-
-                counter = 1
-                while True:
-                    cursor.execute(
-                        "SELECT source_path FROM files WHERE virtual_path = ? AND source_path != ?",
-                        (unique_path, source_path)
-                    )
-                    if not cursor.fetchone():
-                        virtual_filename = unique_filename
-                        virtual_path = unique_path
-                        break
-                    counter += 1
-                    unique_filename = f"{base_name} [{hash_suffix}-{counter}].{virtual_ext.lower()}"
-                    unique_path = os.path.join(
-                        self.mount_path,
-                        client_name,
-                        system_name,
-                        map_name,
-                        unique_filename
-                    )
-            
             now = int(time.time())
             
-            # Check if exists
-            if not existing:
-                cursor.execute("SELECT file_id FROM files WHERE source_path = ?", (source_path,))
-                existing = cursor.fetchone()
+            # Add to batch
+            self.file_batch.append({
+                'source_path': source_path,
+                'virtual_path': virtual_path,
+                'filename': virtual_filename,
+                'extension': virtual_ext,
+                'size': stat.st_size,
+                'mtime': int(stat.st_mtime),
+                'ctime': int(stat.st_ctime),
+                'atime': int(stat.st_atime),
+                'ino': stat.st_ino,
+                'mode': stat.st_mode,
+                'system': system_name,
+                'client': client_name,
+                'map_name': map_name,
+                'now': now,
+            })
             
-            if existing:
-                # Update
-                cursor.execute("""
-                    UPDATE files SET
-                        virtual_path = ?,
-                        filename = ?,
-                        extension = ?,
-                        size = ?,
-                        mtime = ?,
-                        ctime = ?,
-                        atime = ?,
-                        ino = ?,
-                        mode = ?,
-                        system = ?,
-                        client = ?,
-                        map_name = ?,
-                        updated_at = ?
-                    WHERE source_path = ?
-                """, (
-                    virtual_path,
-                    virtual_filename,
-                    virtual_ext,
-                    stat.st_size,
-                    int(stat.st_mtime),
-                    int(stat.st_ctime),
-                    int(stat.st_atime),
-                    stat.st_ino,
-                    stat.st_mode,
-                    system_name,
-                    client_name,
-                    map_name,
-                    now,
-                    source_path
-                ))
-                self.stats['files_updated'] += 1
-                file_id = existing[0]
-            else:
-                # Insert
-                cursor.execute("""
-                    INSERT INTO files (
-                        source_path, virtual_path, filename, extension,
-                        size, mtime, ctime, atime, ino, mode,
-                        is_directory, system, client, map_name,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    source_path,
-                    virtual_path,
-                    virtual_filename,
-                    virtual_ext,
-                    stat.st_size,
-                    int(stat.st_mtime),
-                    int(stat.st_ctime),
-                    int(stat.st_atime),
-                    stat.st_ino,
-                    stat.st_mode,
-                    False,
-                    system_name,
-                    client_name,
-                    map_name,
-                    now,
-                    now
-                ))
-                self.stats['files_added'] += 1
-                file_id = cursor.lastrowid
-
-            pack_context = None
-            if system_name and client_name:
-                # Resolve manufacturer/canonical from config
-                manufacturer = None
-                canonical_name = None
-                for client in self.config.get("clients", []):
-                    if client.get("name") == client_name:
-                        for system in client.get("systems", []):
-                            if system.get("name") == system_name:
-                                manufacturer = system.get("manufacturer")
-                                canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
-                                break
-                        break
-                if manufacturer and canonical_name:
-                    pack_context = self._get_pack_context_for_file(manufacturer, canonical_name, source_path)
-
-            enrich_file_metadata(
-                conn,
-                {
-                    "file_id": file_id,
-                    "filename": virtual_filename,
-                    "extension": virtual_ext,
-                    "map_name": map_name,
-                    "virtual_path": virtual_path,
-                    "size": stat.st_size,
-                },
-                pack_context=pack_context
-            )
-            
-            conn.commit()
-            conn.close()
-            
+            # Flush batch if it reaches batch size
+            if len(self.file_batch) >= self.batch_size:
+                self._flush_file_batch()
+                
         except Exception as e:
             logger.error(f"Failed to add file {source_path}: {e}")
             self.stats['errors'] += 1
     
+    def _flush_file_batch(self):
+        """Process accumulated file batch with bulk operations."""
+        if not self.file_batch:
+            return
+        
+        try:
+            cursor = self.cursor
+            
+            # Use PostgreSQL's INSERT ... ON CONFLICT for upsert
+            upsert_query = """
+                INSERT INTO files (
+                    source_path, virtual_path, filename, extension,
+                    size, mtime, ctime, atime, ino, mode,
+                    is_directory, system, client, map_name,
+                    created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_path) DO UPDATE SET
+                    virtual_path = EXCLUDED.virtual_path,
+                    filename = EXCLUDED.filename,
+                    extension = EXCLUDED.extension,
+                    size = EXCLUDED.size,
+                    mtime = EXCLUDED.mtime,
+                    ctime = EXCLUDED.ctime,
+                    atime = EXCLUDED.atime,
+                    ino = EXCLUDED.ino,
+                    mode = EXCLUDED.mode,
+                    system = EXCLUDED.system,
+                    client = EXCLUDED.client,
+                    map_name = EXCLUDED.map_name,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING file_id, (xmax = 0) AS inserted
+            """
+            
+            # Prepare batch data
+            batch_data = []
+            for file_info in self.file_batch:
+                batch_data.append((
+                    file_info['source_path'],
+                    file_info['virtual_path'],
+                    file_info['filename'],
+                    file_info['extension'],
+                    file_info['size'],
+                    file_info['mtime'],
+                    file_info['ctime'],
+                    file_info['atime'],
+                    file_info['ino'],
+                    file_info['mode'],
+                    False,  # is_directory
+                    file_info['system'],
+                    file_info['client'],
+                    file_info['map_name'],
+                    file_info['now'],
+                    file_info['now']
+                ))
+            
+            # Execute batch upsert
+            cursor.executemany(upsert_query, batch_data)
+            
+            # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
+            self.stats['files_updated'] += len(self.file_batch)
+            
+            # Commit batch
+            self.conn.commit()
+            
+            # Clear batch
+            self.file_batch.clear()
+            
+        except Exception as e:
+            logger.error(f"Batch flush failed: {e}")
+            self.stats['errors'] += len(self.file_batch)
+            self.file_batch.clear()
+            # Rollback to clean state
+            self.conn.rollback()
+    
     def _clean_deleted_files(self):
         """Remove files from database that no longer exist on filesystem."""
         logger.info("Cleaning up deleted files from database")
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+
         # Get all source paths from database
-        cursor.execute("SELECT file_id, source_path FROM files WHERE is_directory = 0")
-        rows = cursor.fetchall()
-        
+        self.cursor.execute("SELECT file_id, source_path FROM files WHERE is_directory = false")
+        rows = self.cursor.fetchall()
+
         for file_id, source_path in rows:
             # If we didn't see this file during scan and it doesn't exist, delete it
             if source_path not in self.seen_source_paths and not os.path.exists(source_path):
-                cursor.execute("DELETE FROM files WHERE file_id = ?", (file_id,))
+                self.cursor.execute("DELETE FROM files WHERE file_id = %s", (file_id,))
                 self.stats['files_deleted'] += 1
                 logger.debug(f"Deleted missing file: {source_path}")
-        
-        conn.commit()
-        conn.close()
+
+        self.conn.commit()
 
 
 def main():

@@ -43,8 +43,14 @@
             </div>
         </div>
         <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:300px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
-        <button type="button" id="installPacksBtn" onclick="submitInstallPacks()" style="background:#2c7;" title="Download and install selected packs (downloads + builds automatically)">Install Packs</button>
-        <button type="button" onclick="document.getElementById('log').textContent = ''" style="background:#888;">Clear Log</button>
+        <div class="split-button" id="install-split-button">
+            <button type="button" id="installPacksBtn" class="split-button-main" onclick="submitInstallAndUpdateDb()" disabled title="Select packs to enable this button">Install &amp; Update DB</button>
+            <button type="button" id="installToggleBtn" class="split-button-toggle" onclick="toggleInstallDropdown(event)" aria-haspopup="true" aria-expanded="false" disabled title="Select packs to enable this button">▾</button>
+            <div id="install-dropdown" class="split-button-menu" role="menu">
+                <button type="button" role="menuitem" onclick="submitInstallOnly()">Install Only</button>
+                <button type="button" role="menuitem" onclick="submitUpdateDbOnly()">Update DB Only</button>
+            </div>
+        </div>
     </form>
     </div>
     
@@ -481,86 +487,18 @@
             fileList.textContent = 'Loading...';
             breadcrumb.textContent = path;
             
-            // Fetch tooltip setting for virtual browse
-            let showRealPathTooltips = false;
-            if (type === 'virtual') {
-                try {
-                    const configResponse = await fetch('/api/config?fields=ui');
-                    const configData = await configResponse.json();
-                    showRealPathTooltips = configData.ui?.show_real_path_tooltips || false;
-                } catch (e) {
-                    console.error('Failed to load tooltip setting:', e);
-                }
-            }
+            // (Native folder mapping removed)
             
             // Hide timing bar during load for virtual
+            let zaparooPromise = null;
             if (type === 'virtual') {
                 const timingBar = document.getElementById('virtual-timing');
                 if (timingBar) timingBar.style.display = 'none';
                 
                 // Show cache status while loading
                 fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...<br><span style="font-size: 0.9em;">Checking dir cache...</span></div>';
-                
-                // Check cache status first to give user feedback
-                const cacheCheckPromise = fetch(`/api/cache/status-all?path=${encodeURIComponent(path)}`)
-                    .then(r => r.json())
-                    .then(cacheData => {
-                        const dirCached = cacheData.dir_cache?.path_cached ? '✓' : '✗';
-                        const attrCount = cacheData.getattr_cache?.total_entries || 0;
-                        fileList.textContent = `Loading... Dir cache: ${dirCached} | Attr cache: ${attrCount} files`;
-                    })
-                    .catch(() => {
-                        fileList.textContent = 'Loading... Cache status unavailable';
-                    });
-                
-                // Ensure Zaparoo status is loaded before rendering
-                await checkZaparooStatus();
-                
-                // Wait for cache check to complete
-                await cacheCheckPromise;
-                    // Show source paths loading for virtual paths
-                    // Show source paths loading for virtual paths
-                    fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...<br><span style="font-size: 0.9em;">Finding source folders...</span></div>';
-                
-                    // Get source paths for virtual path (show native folder mappings)
-                    const escapeHtml = (s) => (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-                    const sourcePathsPromise = fetch(`/api/source-paths?path=${encodeURIComponent(path)}`)
-                        .then(r => {
-                            if (!r.ok) {
-                                // If endpoint doesn't exist, just continue
-                                window.currentSourcePaths = [];
-                                return null;
-                            }
-                            return r.json();
-                        })
-                        .then(data => {
-                            if (!data) return; // Endpoint doesn't exist
-                            window.currentSourcePaths = data.source_paths || [];
-                            if (data.source_paths && data.source_paths.length > 0) {
-                                const container = document.createElement('div');
-                                container.style.color = '#666';
-                                container.style.padding = '10px';
-                                container.innerHTML = 'Loading folder contents...<br>';
-                                const span = document.createElement('span');
-                                span.style.fontSize = '0.9em';
-                                span.textContent = `Source: ${data.source_paths.join(', ')}`;
-                                container.appendChild(span);
-                                fileList.innerHTML = '';
-                                fileList.appendChild(container);
-                            } else {
-                                fileList.textContent = 'Loading...';
-                            }
-                        })
-                        .catch(() => {
-                            window.currentSourcePaths = [];
-                            fileList.textContent = 'Loading...';
-                        });
-                
-                    // Ensure Zaparoo status is loaded before rendering
-                    await checkZaparooStatus();
-                
-                    // Wait for source paths to load
-                    await sourcePathsPromise;
+                // Ensure Zaparoo status is loaded before rendering (but in parallel with other checks)
+                zaparooPromise = checkZaparooStatus();
             }
             
             if (type === 'native') {
@@ -604,6 +542,10 @@
                     return;
                 }
 
+                if (type === 'virtual' && zaparooPromise) {
+                    await zaparooPromise;
+                }
+
                 const fragment = document.createDocumentFragment();
                 const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
                 const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
@@ -619,35 +561,7 @@
                     nameSpan.className = 'name';
                     nameSpan.textContent = name;
                     
-                    // Add tooltip for virtual browse showing real filestore path
-                    if (type === 'virtual' && showRealPathTooltips) {
-                        nameSpan.title = 'Loading source path...';
-                        nameSpan.dataset.tooltipLoaded = 'false';
-                        nameSpan.addEventListener('mouseenter', async () => {
-                            if (nameSpan.dataset.tooltipLoaded === 'true') return;
-                            nameSpan.dataset.tooltipLoaded = 'true';
-                            try {
-                                const resp = await fetch(`/api/source-paths?path=${encodeURIComponent(fullPath)}`);
-                                if (!resp.ok) {
-                                    nameSpan.title = 'Source path unavailable';
-                                    return;
-                                }
-                                const data = await resp.json();
-                                const paths = data.source_paths || [];
-                                const transform = data.transform || {};
-                                const isTransformed = !!transform.is_transformed;
-                                const label = isTransformed ? 'Transformed' : 'Mapped';
-                                const icon = isTransformed ? '🔄' : '📁';
-                                if (paths.length > 0) {
-                                    nameSpan.title = `${icon} ${label}: ${paths.join(', ')}`;
-                                } else {
-                                    nameSpan.title = `${icon} ${label}: (unresolved)`;
-                                }
-                            } catch (e) {
-                                nameSpan.title = 'Source path unavailable';
-                            }
-                        });
-                    }
+                    // (Native folder mapping tooltip removed)
                     
                     const sizeSpan = document.createElement('span');
                     sizeSpan.className = 'size';
@@ -737,17 +651,17 @@
                     
                     // Add info button for files in virtual tab (always show, regardless of zaparoo)
                     let infoBtn = null;
+                    let metadataPanel = null;
                     if (type === 'virtual' && entryType !== 'directory') {
                         infoBtn = document.createElement('button');
                         infoBtn.className = 'info-btn';
                         infoBtn.textContent = 'ℹ️';
-                        infoBtn.title = 'Show file metadata';
-                        infoBtn.style.position = 'relative';
+                        infoBtn.title = 'Toggle file metadata';
                         infoBtn.style.padding = '0';
                         infoBtn.style.marginLeft = '0';
                         infoBtn.style.background = 'transparent';
                         infoBtn.style.border = 'none';
-                        infoBtn.style.cursor = 'help';
+                        infoBtn.style.cursor = 'pointer';
                         infoBtn.style.display = 'flex';
                         infoBtn.style.alignItems = 'center';
                         infoBtn.style.justifyContent = 'center';
@@ -755,39 +669,108 @@
                         infoBtn.style.height = '35px';
                         infoBtn.style.fontSize = '1.4em';
                         infoBtn.style.lineHeight = '1';
+                        infoBtn.style.transition = 'opacity 0.2s';
+                        infoBtn.style.opacity = '0.7';
                         
-                        // Prevent click from triggering file selection
-                        infoBtn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                        });
+                        // Create metadata panel (collapsible container below the file item)
+                        metadataPanel = document.createElement('div');
+                        metadataPanel.className = 'metadata-panel';
+                        metadataPanel.style.display = 'none';
+                        metadataPanel.style.gridColumn = '1 / -1';
+                        metadataPanel.style.borderTop = '1px solid #e0e0e0';
+                        metadataPanel.style.backgroundColor = '#f9f9f9';
+                        metadataPanel.style.padding = '0';
+                        metadataPanel.style.overflow = 'hidden';
+                        metadataPanel.style.transition = 'max-height 0.3s ease-out, padding 0.3s ease-out';
+                        metadataPanel.style.maxHeight = '0';
                         
-                        // Create tooltip container (initially empty)
-                        const tooltip = document.createElement('div');
-                        tooltip.className = 'metadata-tooltip';
-                        tooltip.innerHTML = '';
-                        infoBtn.appendChild(tooltip);
-                        
-                        // Load metadata on hover
                         let metadataLoaded = false;
                         let metadataLoading = false;
-                        infoBtn.addEventListener('mouseenter', async () => {
-                            // Position tooltip (fixed positioning)
-                            const rect = infoBtn.getBoundingClientRect();
-                            tooltip.style.left = (rect.left + rect.width / 2 - 160) + 'px'; // Center horizontally (160px is half of max-width 320px)
-                            tooltip.style.top = (rect.top - 10) + 'px'; // Position above icon with small gap
+                        let panelOpen = false;
+                        
+                        // Handle click to toggle metadata panel
+                        infoBtn.addEventListener('click', async (e) => {
+                            e.stopPropagation();
                             
+                            if (panelOpen) {
+                                // Close panel
+                                metadataPanel.style.maxHeight = '0';
+                                metadataPanel.style.padding = '0';
+                                infoBtn.style.opacity = '0.7';
+                                panelOpen = false;
+                                return;
+                            }
+                            
+                            // Open panel
                             if (!metadataLoaded && !metadataLoading) {
                                 metadataLoading = true;
-                                tooltip.innerHTML = '<div class="metadata-tooltip-loading">Loading metadata...</div>';
+                                metadataPanel.innerHTML = '<div style="padding: 1em; text-align: center; color: #666;">Loading metadata...</div>';
+                                metadataPanel.style.maxHeight = '100px';
+                                metadataPanel.style.padding = '0';
+                                
                                 try {
                                     const response = await fetch(`/api/file-metadata?path=${encodeURIComponent(fullPath)}`);
                                     const data = await response.json();
                                     
+                                    let html = '';
+                                    
                                     if (data.error) {
-                                        tooltip.innerHTML = `<div class="metadata-tooltip-error">Error: ${data.error}</div>`;
+                                        html = `<div style="padding: 1em; color: #d32f2f;">Error: ${escapeHtml(data.error)}</div>`;
                                     } else if (data.metadata && Object.keys(data.metadata).length > 0) {
                                         // Format metadata for display
-                                        let html = '';
+                                        html = '<div style="padding: 1em;">';
+                                        
+                                        // Add file information section first
+                                        html += '<div style="margin-bottom: 1em; padding-bottom: 1em; border-bottom: 2px solid #1976d2;">';
+                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">File Information</div>';
+                                        
+                                        // File size (format bytes to human readable)
+                                        if (data.size !== null && data.size !== undefined) {
+                                            const formatBytes = (bytes) => {
+                                                if (bytes === 0) return '0 Bytes';
+                                                const k = 1024;
+                                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                                return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+                                            };
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">File Size:</span>
+                                                <span style="color: #333;">${escapeHtml(formatBytes(data.size))}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        // Virtual file type (extension)
+                                        if (data.extension) {
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Virtual File Type:</span>
+                                                <span style="color: #333;">${escapeHtml(data.extension)}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        // Filestore path
+                                        if (data.source_path) {
+                                            // Extract just the filename from source path
+                                            const sourceFilename = data.source_path.split('/').pop();
+                                            // Get extension from source path
+                                            const sourceExt = sourceFilename.includes('.') ? sourceFilename.split('.').pop() : '';
+                                            
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore Path:</span>
+                                                <span style="color: #333; font-family: monospace; font-size: 0.9em; word-break: break-all;">${escapeHtml(data.source_path)}</span>
+                                            </div>`;
+                                            
+                                            if (sourceExt && sourceExt !== data.extension) {
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore File Type:</span>
+                                                    <span style="color: #333;">${escapeHtml(sourceExt)}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        html += '</div>';
+                                        
+                                        // Game metadata section
+                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">Game Metadata</div>';
                                         const metadataFields = [
                                             { key: 'media_type', label: 'Media Type' },
                                             { key: 'region', label: 'Region' },
@@ -805,9 +788,9 @@
                                         for (const field of metadataFields) {
                                             const value = data.metadata[field.key];
                                             if (value !== null && value !== undefined && value !== '') {
-                                                html += `<div class="metadata-tooltip-entry">
-                                                    <span class="metadata-tooltip-label">${field.label}:</span>
-                                                    <span class="metadata-tooltip-value">${escapeHtml(String(value))}</span>
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #1976d2; min-width: 120px;">${escapeHtml(field.label)}:</span>
+                                                    <span style="color: #333;">${escapeHtml(String(value))}</span>
                                                 </div>`;
                                             }
                                         }
@@ -821,29 +804,45 @@
                                         if (data.metadata.is_revision) flags.push('Revision');
                                         
                                         if (flags.length > 0) {
-                                            html += `<div class="metadata-tooltip-entry">
-                                                <span class="metadata-tooltip-label">Flags:</span>
-                                                <span class="metadata-tooltip-value">${flags.join(', ')}</span>
+                                            html += `<div style="margin-top: 0.8em; padding-top: 0.8em; border-top: 1px solid #e0e0e0;">
+                                                <span style="font-weight: 600; color: #1976d2;">Flags:</span>
+                                                <span style="color: #333; margin-left: 0.8em;">${escapeHtml(flags.join(', '))}</span>
                                             </div>`;
                                         }
                                         
-                                        tooltip.innerHTML = html || '<div style="color: #ccc;">No metadata available</div>';
+                                        html += '</div>';
                                     } else {
-                                        tooltip.innerHTML = '<div style="color: #ccc;">No metadata available</div>';
+                                        html = '<div style="padding: 1em; color: #888;">No metadata available</div>';
                                     }
                                     
+                                    metadataPanel.innerHTML = html;
                                     metadataLoaded = true;
                                 } catch (e) {
                                     console.error('Failed to load metadata:', e);
-                                    tooltip.innerHTML = '<div class="metadata-tooltip-error">Failed to load metadata</div>';
+                                    metadataPanel.innerHTML = `<div style="padding: 1em; color: #d32f2f;">Failed to load metadata</div>`;
                                     metadataLoaded = true;
                                 }
                                 metadataLoading = false;
                             }
+                            
+                            // Expand panel
+                            metadataPanel.style.display = 'grid';
+                            metadataPanel.style.maxHeight = '500px';
+                            metadataPanel.style.padding = '0';
+                            infoBtn.style.opacity = '1';
+                            panelOpen = true;
+                        });
+                        
+                        // Hover effect
+                        infoBtn.addEventListener('mouseover', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '1';
+                        });
+                        infoBtn.addEventListener('mouseout', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '0.7';
                         });
                     }
                     
-                    rightMeta.appendChild(sizeSpan);
+                    // Don't append sizeSpan (file size is removed from display)
                     
                     // Create button container for side-by-side layout
                     const buttonContainer = document.createElement('div');
@@ -857,6 +856,11 @@
                     if (launchBtn || infoBtn) rightMeta.appendChild(buttonContainer);
                     div.append(iconSpan, nameSpan, rightMeta);
                     fragment.appendChild(div);
+                    
+                    // Append metadata panel below the file item if it exists
+                    if (metadataPanel) {
+                        fragment.appendChild(metadataPanel);
+                    }
                 };
 
                 if (!roots.includes(path)) {
@@ -870,7 +874,8 @@
                 });
 
                 for (const entry of data.entries) {
-                    const fullPath = path + '/' + entry.name;
+                    // Build path and normalize to remove any duplicate slashes
+                    const fullPath = (path.replace(/\/+$/, '') + '/' + entry.name).replace(/\/+/g, '/');
                     const sizeStr = entry.size !== undefined ? formatSize(entry.size) : '';
                     const supportsZaparoo = entry.supports_zaparoo !== undefined ? entry.supports_zaparoo : false;
                     addEntry(entry.name, entry.type, fullPath, sizeStr, supportsZaparoo);
@@ -1607,17 +1612,20 @@
         function updateButtonStates() {
             const hasCheckedPacks = document.querySelector('input[name="packs"]:checked') !== null;
             const installPacksBtn = document.getElementById('installPacksBtn');
+            const installToggleBtn = document.getElementById('installToggleBtn');
             
             if (hasCheckedPacks) {
-                // Packs selected - enable Install Packs button
+                // Packs selected - enable Install buttons
                 installPacksBtn.disabled = false;
-                installPacksBtn.style.opacity = '1';
-                installPacksBtn.title = 'Download and install selected packs (downloads + builds automatically)';
+                installToggleBtn.disabled = false;
+                installPacksBtn.title = 'Download and install selected packs, then update the database';
+                installToggleBtn.title = 'More install options';
             } else {
-                // No packs selected - disable Install Packs button
+                // No packs selected - disable Install buttons
                 installPacksBtn.disabled = true;
-                installPacksBtn.style.opacity = '0.5';
+                installToggleBtn.disabled = true;
                 installPacksBtn.title = 'Select packs to enable this button';
+                installToggleBtn.title = 'Select packs to enable this button';
             }
         }
 
@@ -1682,6 +1690,65 @@
         }
         
         // Pack installation handler
+        function toggleInstallDropdown(event) {
+            event.stopPropagation();
+            const menu = document.getElementById('install-dropdown');
+            const toggle = document.querySelector('#install-split-button .split-button-toggle');
+            if (!menu || !toggle) return;
+            const isOpen = menu.classList.contains('open');
+            if (isOpen) {
+                menu.classList.remove('open');
+                toggle.setAttribute('aria-expanded', 'false');
+            } else {
+                menu.classList.add('open');
+                toggle.setAttribute('aria-expanded', 'true');
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('install-dropdown');
+            const container = document.getElementById('install-split-button');
+            if (!menu || !container) return;
+            if (!container.contains(e.target)) {
+                menu.classList.remove('open');
+                const toggle = document.querySelector('#install-split-button .split-button-toggle');
+                if (toggle) toggle.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        async function runDbSync() {
+            appendLog("\nStarting database sync...\n");
+            try {
+                const resp = await fetch('/api/db/sync', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                    const stats = data.stats ? JSON.stringify(data.stats) : '';
+                    appendLog(`Database sync complete. ${stats}\n`);
+                } else {
+                    appendLog(`Database sync failed: ${data.message}\n`);
+                }
+            } catch (e) {
+                appendLog(`Database sync failed: ${e.message}\n`);
+            }
+        }
+
+        async function submitInstallAndUpdateDb() {
+            await submitInstallPacks();
+            await runDbSync();
+        }
+
+        async function submitInstallOnly() {
+            const menu = document.getElementById('install-dropdown');
+            if (menu) menu.classList.remove('open');
+            await submitInstallPacks();
+        }
+
+        async function submitUpdateDbOnly() {
+            const menu = document.getElementById('install-dropdown');
+            if (menu) menu.classList.remove('open');
+            await runDbSync();
+        }
+
         async function submitInstallPacks() {
             const checkedPacks = Array.from(document.querySelectorAll('input[name="packs"]:checked'));
             
@@ -2523,7 +2590,7 @@
             const path = window.location.pathname;
             if (path.startsWith('/browse/native')) {
                 const dirPath = path.replace('/browse/native', '') || '';
-                const fullPath = '/mnt/filestorefs/Native' + dirPath;
+                const fullPath = '/mnt/filestorefs/Native' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
                 currentNativePath = fullPath;
                 
                 // Hide all tabs and deactivate all buttons
@@ -2539,7 +2606,7 @@
                 history.replaceState({ tab: 'browse-native', path: fullPath }, '', path);
             } else if (path.startsWith('/browse/virtual')) {
                 const dirPath = path.replace('/browse/virtual', '') || '';
-                const fullPath = '/mnt/transfs' + dirPath;
+                const fullPath = '/mnt/transfs' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
                 currentVirtualPath = fullPath;
                 
                 // Hide all tabs and deactivate all buttons

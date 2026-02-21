@@ -1,45 +1,42 @@
 """
 Database-based data provider (new system).
 
-This provider uses the SQLite metadata database for file access.
+This provider uses the PostgreSQL metadata database for file access.
 Used when database mode is enabled.
 """
 import logging
 import threading
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import sqlite3
 
 from data_provider import DataProvider, FileInfo, DirectoryListing
-from db.connection import init_database, get_connection
+from db.connection import init_database, get_cursor
 from query.translator import QueryBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseDataProvider(DataProvider):
-    """File system access using SQLite metadata database."""
+    """File system access using PostgreSQL metadata database."""
     
-    def __init__(self, db_path: str = "/mnt/filestorefs/.transfs_metadata.db", config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize database provider.
         
         Args:
-            db_path: Path to SQLite database file
             config: Configuration dict from app.yaml
         """
-        self.db_path = db_path
         self.config = config or {}
         self.query_builder = QueryBuilder()
         self._initialized = False
     
     def initialize(self) -> None:
         """Initialize the provider and database."""
-        logger.info(f"Initializing database-based data provider: {self.db_path}")
+        logger.info("Initializing database-based data provider")
         
         try:
             # Initialize database schema if needed
-            init_database(self.db_path)
+            init_database()
             
             # Check if we should sync on startup
             db_config = self.config.get('database', {})
@@ -50,9 +47,10 @@ class DatabaseDataProvider(DataProvider):
                 sync_thread.start()
             
             # Verify connection works
-            conn = get_connection()
-            cursor = conn.execute("SELECT COUNT(*) FROM files")
-            count = cursor.fetchone()[0]
+            from db.connection import get_cursor
+            with get_cursor(commit=False) as cursor:
+                cursor.execute("SELECT COUNT(*) FROM files")
+                count = cursor.fetchone()['count']
             logger.info(f"Database ready with {count} files indexed")
             
             self._initialized = True
@@ -64,19 +62,19 @@ class DatabaseDataProvider(DataProvider):
     def _perform_sync(self) -> None:
         """Perform filesystem to database synchronization (runs in background thread)."""
         try:
-            from db.sync import FilesystemSync
+            from sync_database import DatabaseSync
+            from config import read_config
             
             logger.info("Starting background filesystem sync")
-            sync = FilesystemSync(
-                root_path="/mnt/filestorefs",
-                mount_path="/mnt/transfs"
-            )
+            config = read_config()
+            db_sync = DatabaseSync(config)
+            db_sync.full_sync()
             
-            stats = sync.initial_scan()
+            stats = db_sync.stats
             logger.info(
                 f"Filesystem sync complete: {stats.get('files_added', 0)} added, "
                 f"{stats.get('files_updated', 0)} updated, "
-                f"{stats.get('errors', 0)} errors in {stats.get('duration', 0):.2f}s"
+                f"{stats.get('errors', 0)} errors"
             )
         except Exception as e:
             logger.error(f"Failed to perform filesystem sync: {e}", exc_info=True)
@@ -102,10 +100,9 @@ class DatabaseDataProvider(DataProvider):
             sql, params = self.query_builder.build_readdir_query(path)
             
             # Execute query
-            conn = get_connection()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(sql, params)
-            rows = cursor.fetchall()
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
             
             # Convert rows to FileInfo objects
             entries = []
@@ -162,10 +159,9 @@ class DatabaseDataProvider(DataProvider):
             sql, params = self.query_builder.build_getattr_query(path)
             
             # Execute query
-            conn = get_connection()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(sql, params)
-            row = cursor.fetchone()
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
             
             if row is None:
                 logger.debug(f"File not found in database: {path}")

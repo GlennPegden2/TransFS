@@ -17,16 +17,15 @@ logger = logging.getLogger(__name__)
 class HybridDataProvider(DataProvider):
     """Hybrid provider using database with cache fallback."""
     
-    def __init__(self, db_path: str, cache_provider=None, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, cache_provider=None, config: Optional[Dict[str, Any]] = None):
         """
         Initialize hybrid provider.
         
         Args:
-            db_path: Path to SQLite database
             cache_provider: Fallback cache provider
             config: Configuration dict from app.yaml
         """
-        self.db_provider = DatabaseDataProvider(db_path, config)
+        self.db_provider = DatabaseDataProvider(config)
         self.cache_provider = cache_provider or CacheDataProvider()
         self._initialized = False
         self._db_failures = 0

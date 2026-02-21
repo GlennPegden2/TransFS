@@ -1,5 +1,24 @@
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: transfs-postgres
+    hostname: postgres
+    environment:
+      POSTGRES_DB: transfs
+      POSTGRES_USER: transfs
+      POSTGRES_PASSWORD: transfs_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transfs"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   transfs:
     build: .
     container_name: transfs
@@ -27,10 +46,18 @@ services:
       - ./tests:/app/tests                  # Make tests visible under /app for pytest
       # - ./transfs:/mnt/transfs # COMMENTED OUT: This prevents FUSE from mounting. Only uncomment for specific unit testing needs
 
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - AVAHI_HOSTNAME=transfs.local  
       - PYTHONUNBUFFERED=1
       - TRANSFS_PERSIST_ZIP_INDEX=1  # Enable ZIP index caching for better performance
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=transfs
+      - DB_USER=transfs
+      - DB_PASSWORD=transfs_pass
       # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
     entrypoint: >
       bash -c "
@@ -51,3 +78,6 @@ services:
         uvicorn main:app --host \"$${WEB_HOST}\" --port \"$${WEB_PORT}\" --reload 2>&1 | tee -a /mnt/filestorefs/.transfs_logs/web.log &&
         tail -f /dev/null
       "
+
+volumes:
+  postgres_data:

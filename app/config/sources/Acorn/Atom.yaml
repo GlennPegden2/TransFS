@@ -1,21 +1,26 @@
 # Acorn Atom Software Sources
 
-base_path: Acorn/Atom/Software
+# Base path must match clients.yaml local_base_path (no Software/ suffix)
+base_path: Acorn/Atom/
 
 sources:
   - name: hoglet67
     type: ddl
-    url: https://github.com/hoglet67/AtomSoftwareArchive/releases/download/V13_00/AtomSoftwareArchive_20240505_1129_V13.00.zip
+    urls:
+      - https://github.com/hoglet67/AtomSoftwareArchive/releases/download/V13_00/AtomSoftwareArchive_20240505_1129_V13.00.zip
     folder: Software/Collections/hoglet67/main
+    extract: true
   
   - name: blankvhd
     type: ddl
-    url: https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
+    urls:
+      - https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
     folder: Software/Utils
+    extract: true
 
 packs:
   - id: hoglet67
-    name: hoglet67 
+    name: hoglet67 Atom Software Collection
     description: hoglet67s Atom Software Collection (both as files and built into a VHD)
     estimated_size: 15.3MB
     sources: [hoglet67, blankvhd]
@@ -23,3 +28,10 @@ packs:
     info_links:
       - label: Hoglet67s Atom Software Archive
         url: https://github.com/hoglet67/AtomSoftwareArchive
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: Disk
+        region: World
+        language: English
+        extension: ATM

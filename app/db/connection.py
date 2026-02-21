@@ -1,126 +1,193 @@
 """
-Database connection management.
+PostgreSQL database connection management.
 
-Provides thread-safe connection pooling and initialization.
+Provides thread-safe connection pooling and schema initialization.
 """
-import sqlite3
-import threading
+
+import os
 import time
-from pathlib import Path
+import logging
 from typing import Optional
+from contextlib import contextmanager
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
 
-from .schema import CREATE_TABLES, PRAGMA_SETTINGS, get_schema_version
+from .schema import CREATE_TABLES, get_schema_version
 
-# Thread-local storage for connections
-_thread_local = threading.local()
+logger = logging.getLogger(__name__)
 
-# Global database path
-_db_path: Optional[Path] = None
+# Global connection pool
+_connection_pool: Optional[pool.ThreadedConnectionPool] = None
+_db_config = None
 
 
-def init_database(db_path: str = "/mnt/filestorefs/.transfs_metadata.db") -> None:
+def init_database(
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    dbname: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
+    pool_size: int = 5,
+    max_overflow: int = 10
+):
     """
-    Initialize database with schema.
+    Initialize PostgreSQL connection pool and schema.
     
     Args:
-        db_path: Path to SQLite database file
+        host: Database host (defaults to DB_HOST env var or 'postgres')
+        port: Database port (defaults to DB_PORT env var or 5432)
+        dbname: Database name (defaults to DB_NAME env var or 'transfs')
+        user: Database user (defaults to DB_USER env var or 'transfs')
+        password: Database password (defaults to DB_PASSWORD env var)
+        pool_size: Minimum number of connections in pool
+        max_overflow: Maximum overflow connections beyond pool_size
     """
-    global _db_path
-    _db_path = Path(db_path)
+    global _connection_pool, _db_config
     
-    # Ensure parent directory exists
-    _db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Get config from environment or parameters
+    _db_config = {
+        'host': host or os.getenv('DB_HOST', 'postgres'),
+        'port': int(port or os.getenv('DB_PORT', 5432)),
+        'dbname': dbname or os.getenv('DB_NAME', 'transfs'),
+        'user': user or os.getenv('DB_USER', 'transfs'),
+        'password': password or os.getenv('DB_PASSWORD', 'transfs_pass'),
+    }
     
-    # Create connection and initialize schema
-    conn = sqlite3.connect(str(_db_path))
-    conn.row_factory = sqlite3.Row
+    logger.info(f"Initializing database connection pool: {_db_config['user']}@{_db_config['host']}:{_db_config['port']}/{_db_config['dbname']}")
     
-    try:
-        # Apply PRAGMA settings
-        conn.executescript(PRAGMA_SETTINGS)
-        
-        # Create tables
-        conn.executescript(CREATE_TABLES)
+    # Create connection pool
+    _connection_pool = pool.ThreadedConnectionPool(
+        pool_size,
+        pool_size + max_overflow,
+        **_db_config
+    )
+    
+    # Initialize schema
+    _init_schema()
+    
+    logger.info("Database connection pool initialized")
 
-        # Ensure newer columns exist for existing databases
-        cursor = conn.execute("PRAGMA table_info(file_metadata)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "title" not in columns:
-            conn.execute("ALTER TABLE file_metadata ADD COLUMN title TEXT")
+
+def _init_schema():
+    """Initialize database schema if needed."""
+    conn = None
+    try:
+        conn = _connection_pool.getconn()
+        cursor = conn.cursor()
+        
+        # Execute schema creation - split by semicolons and execute each statement
+        # This is necessary because psycopg2.cursor.execute() only executes one statement at a time
+        statements = CREATE_TABLES.split(';')
+        for statement in statements:
+            statement = statement.strip()
+            if statement:  # Skip empty statements
+                logger.debug(f"Executing schema statement: {statement[:80]}...")
+                try:
+                    cursor.execute(statement)
+                except Exception as e:
+                    logger.warning(f"Schema statement failed (may be idempotent): {e}")
+                    conn.rollback()
+        
+        conn.commit()
         
         # Check/update schema version
-        cursor = conn.execute("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1")
+        cursor.execute("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1")
         row = cursor.fetchone()
         
         current_version = get_schema_version()
         if row is None:
             # First initialization
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            cursor.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (%s, %s)",
                 (current_version, int(time.time()))
             )
             conn.commit()
         elif row[0] < current_version:
             # Minimal migration tracking: record new schema version
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            cursor.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (%s, %s)",
                 (current_version, int(time.time()))
             )
             conn.commit()
             
     finally:
-        conn.close()
+        if conn:
+            _connection_pool.putconn(conn)
 
 
-def get_connection() -> sqlite3.Connection:
+def get_connection():
     """
-    Get thread-local database connection.
+    Get a connection from the pool.
     
     Returns:
-        SQLite connection with row_factory set
+        PostgreSQL connection with RealDictCursor
+        
+    Note: Caller is responsible for returning connection via return_connection()
     """
-    if _db_path is None:
+    if _connection_pool is None:
         raise RuntimeError("Database not initialized. Call init_database() first.")
     
-    if not hasattr(_thread_local, 'connection') or _thread_local.connection is None:
-        _thread_local.connection = sqlite3.connect(str(_db_path))
-        _thread_local.connection.row_factory = sqlite3.Row
-        
-        # Apply PRAGMA settings to this connection
-        _thread_local.connection.executescript(PRAGMA_SETTINGS)
-    
-    return _thread_local.connection
+    return _connection_pool.getconn()
 
 
-def close_connection() -> None:
-    """Close thread-local connection."""
-    if hasattr(_thread_local, 'connection') and _thread_local.connection is not None:
-        _thread_local.connection.close()
-        _thread_local.connection = None
+def return_connection(conn):
+    """Return a connection to the pool."""
+    if _connection_pool and conn:
+        _connection_pool.putconn(conn)
 
 
-def transaction(conn: Optional[sqlite3.Connection] = None):
+def close_connection():
+    """Compatibility function - does nothing for connection pool."""
+    pass
+
+
+@contextmanager
+def get_cursor(commit=True):
     """
-    Context manager for database transactions.
+    Context manager for database operations.
     
     Usage:
-        with transaction() as conn:
-            conn.execute("INSERT ...")
-            conn.execute("UPDATE ...")
+        with get_cursor() as cursor:
+            cursor.execute("SELECT * FROM files")
+            rows = cursor.fetchall()
+    
+    Args:
+        commit: Whether to commit on successful exit (default True)
     """
-    if conn is None:
+    conn = None
+    try:
         conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        yield cursor
+        if commit:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            return_connection(conn)
+
+
+def transaction():
+    """
+    Context manager for explicit transactions.
     
-    class TransactionContext:
-        def __enter__(self):
-            conn.execute("BEGIN")
-            return conn
-        
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            if exc_type is None:
-                conn.commit()
-            else:
-                conn.rollback()
-            return False
-    
-    return TransactionContext()
+    Usage:
+        with transaction() as cursor:
+            cursor.execute("INSERT ...")
+            cursor.execute("UPDATE ...")
+    """
+    return get_cursor(commit=True)
+
+
+def close_pool():
+    """Close all connections in the pool."""
+    global _connection_pool
+    if _connection_pool:
+        _connection_pool.closeall()
+        _connection_pool = None
+        logger.info("Database connection pool closed")
+

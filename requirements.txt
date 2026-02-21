@@ -13,6 +13,7 @@ rarfile
 mega.py
 py7zr
 psutil
+psycopg2-binary>=2.9.9
 
 # Development and Testing Dependencies
 # Install with: pip install -r requirements-dev.txt

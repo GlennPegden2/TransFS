@@ -247,30 +247,42 @@ button:hover, button:focus {
 }
 
 /* Tooltip for metadata */
+.metadata-panel {
+    background: #f9f9f9;
+    border-top: 1px solid #e0e0e0;
+    grid-column: 1 / -1;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    animation: slideDown 0.3s ease-out forwards;
+}
+
+.info-btn {
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.info-btn:hover {
+    opacity: 1 !important;
+}
+
+@keyframes slideDown {
+    from {
+        max-height: 0;
+        opacity: 0;
+    }
+    to {
+        max-height: 500px;
+        opacity: 1;
+    }
+}
+
+/* Deprecated tooltip styles - keeping for reference only */
 .metadata-tooltip {
-    position: fixed;
-    background: #2d3e50;
-    color: #fff;
-    padding: 0.8em 1em;
-    border-radius: 6px;
-    font-size: 0.9em;
-    z-index: 99999;
-    max-width: 320px;
-    box-shadow: 0 4px 12px #0003;
-    pointer-events: none;
-    opacity: 0 !important;
-    visibility: hidden !important;
-    display: block !important;
-    transition: opacity 0.2s, visibility 0.2s;
-    white-space: normal;
-    word-break: break-word;
-    min-width: 200px;
-    line-height: 1.5;
+    display: none;
 }
 
 .info-btn:hover .metadata-tooltip {
-    opacity: 1 !important;
-    visibility: visible !important;
+    display: none;
 }
 
 /* Alternative: tooltip below (comment out above and uncomment below if preferred) */
@@ -382,6 +394,87 @@ button:hover, button:focus {
     display: block;
 }
 
+/* Split button (Install & Update DB) */
+.split-button {
+    display: inline-flex;
+    align-items: stretch;
+    position: relative;
+    border-radius: 6px;
+    overflow: visible;
+}
+
+.split-button-main {
+    background: #28b76f;
+    color: #fff;
+    border: none;
+    padding: 0.6em 1em;
+    border-radius: 6px 0 0 6px;
+    cursor: pointer;
+    font-weight: 600;
+    margin: 0;
+}
+
+.split-button-main:hover:not(:disabled) {
+    background: #22a663;
+}
+
+.split-button-toggle {
+    background: #28b76f;
+    color: #fff;
+    border: none;
+    padding: 0 0.7em;
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+    font-weight: 700;
+    margin: 0;
+}
+
+.split-button-toggle:hover:not(:disabled) {
+    background: #22a663;
+}
+
+.split-button-main:disabled,
+.split-button-toggle:disabled {
+    background: #ccc;
+    color: #999;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.split-button-menu {
+    position: absolute;
+    top: calc(100% - 1px);
+    right: 0;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: 0;
+    box-shadow: 0 6px 18px #0002;
+    border-radius: 0 0 6px 6px;
+    padding: 0.4em;
+    display: none;
+    min-width: 200px;
+    z-index: 1000;
+}
+
+.split-button-menu.open {
+    display: block;
+}
+
+.split-button-menu button {
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    color: #333;
+    border: none;
+    padding: 0.6em 0.8em;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.split-button-menu button:hover {
+    background: #f3f6fb;
+}
+
 /* File Browser */
 .file-browser {
     max-width: 1400px;
@@ -412,7 +505,7 @@ button:hover, button:focus {
 
 .file-item {
     display: grid;
-    grid-template-columns: 40px 1fr 120px;
+    grid-template-columns: 40px 1fr auto;
     align-items: center;
     padding: 0.8em 1em;
     border-bottom: 1px solid #f0f0f0;
@@ -448,10 +541,7 @@ button:hover, button:focus {
 }
 
 .file-item .size {
-    text-align: right;
-    color: #888;
-    font-size: 0.9em;
-    font-family: 'Fira Mono', 'Consolas', monospace;
+    display: none;
 }
 
 .file-item .right-meta {
