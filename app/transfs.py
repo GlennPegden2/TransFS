@@ -19,7 +19,11 @@ import pyfuse3
 from pyfuse3 import FUSEError, InodeT, FileHandleT
 
 from passthroughfs import Passthrough
-from dirlisting import parse_trans_path, get_cached_getattr, cache_getattr
+from dirlisting import parse_trans_path, get_cached_stat, cache_stat
+
+# Backwards-compatible aliases for older getattr naming in this module
+get_cached_getattr = get_cached_stat
+cache_getattr = cache_stat
 from pathutils import full_path, is_virtual_path, map_virtual_to_real
 from sourcepath import get_source_path, get_source_path_for_write
 from zippath import open_file as zippath_open_file
@@ -2529,10 +2533,8 @@ async def main_async(mount_path: str, root_path: str):
     logger.info(f"Mounting TransFS at {mount_path} with root {root_path}")
     pyfuse3.init(fs, mount_path, fuse_options)
 
-    # Start cache warmer (only if caching is enabled)
+    # Start cache warmer
     warmer_config = app_config.get("cache_warmer", {})
-    if not cache_config.get('dir_cache_enabled', True):
-        warmer_config = {'enabled': False}
 
     warmer = CacheWarmer(
         mount_point=mount_path,

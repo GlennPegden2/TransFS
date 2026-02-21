@@ -385,6 +385,12 @@ class PackInstallRequest(BaseModel):
     skip_existing: bool = True  # Deduplicate - skip files that already exist
 
 
+class PackInstallRequestNoClient(BaseModel):
+    """Request model for client-agnostic pack installation."""
+    pack_ids: list[str]  # List of pack IDs to install
+    skip_existing: bool = True  # Deduplicate - skip files that already exist
+
+
 @app.get("/logs", response_class=PlainTextResponse, tags=["System"])
 def get_logs():
     try:
@@ -642,19 +648,19 @@ def cache_status(path: str):
 
 @app.post("/cache/clear", tags=["Cache"])
 def cache_clear(path: str = None):
-    """Clear cache for a specific path or all caches."""
+    """Clear stat cache for a specific path or all stat cache entries."""
     try:
-        from dirlisting import clear_cache
+        from dirlisting import clear_stat_cache_path
         # Translate /mnt/transfs to /mnt/filestorefs for cache lookup
         cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs') if path else None
-        return clear_cache(cache_path)
+        return clear_stat_cache_path(cache_path)
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
 
 
 @app.get("/cache/status-all", tags=["Cache"])
 def cache_status_all(path: str | None = None):
-    """Get comprehensive status for both directory and getattr caches."""
+    """Get comprehensive status for the stat cache."""
     try:
         from dirlisting import get_all_cache_status
         cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs') if path else None
@@ -665,17 +671,17 @@ def cache_status_all(path: str | None = None):
 
 @app.post("/cache/clear-getattr", tags=["Cache"])
 def cache_clear_getattr():
-    """Clear the getattr cache."""
+    """Clear the stat cache (legacy getattr endpoint)."""
     try:
-        from dirlisting import clear_getattr_cache
-        return clear_getattr_cache()
+        from dirlisting import clear_stat_cache
+        return clear_stat_cache()
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
 
 
 @app.post("/cache/clear-all", tags=["Cache"])
 def cache_clear_all():
-    """Clear both directory and getattr caches."""
+    """Clear all caches (stat cache only)."""
     try:
         from dirlisting import clear_all_caches
         return clear_all_caches()
@@ -912,9 +918,8 @@ def cache_config_get():
 
 @app.post("/cache/config")
 def cache_config_set(
-    dir_cache_enabled: bool | None = None,
-    getattr_cache_enabled: bool | None = None,
-    getattr_cache_save_interval: float | None = None,
+    stat_cache_enabled: bool | None = None,
+    stat_cache_save_interval: float | None = None,
     transform_pipeline_cache_enabled: bool | None = None,
     transform_output_size_cache_enabled: bool | None = None,
     readdir_direntry_cache_enabled: bool | None = None,
@@ -924,12 +929,10 @@ def cache_config_set(
     try:
         from dirlisting import set_cache_config, get_cache_config
         current = get_cache_config()
-        if dir_cache_enabled is not None:
-            current['dir_cache_enabled'] = dir_cache_enabled
-        if getattr_cache_enabled is not None:
-            current['getattr_cache_enabled'] = getattr_cache_enabled
-        if getattr_cache_save_interval is not None:
-            current['getattr_cache_save_interval'] = getattr_cache_save_interval
+        if stat_cache_enabled is not None:
+            current['stat_cache_enabled'] = stat_cache_enabled
+        if stat_cache_save_interval is not None:
+            current['stat_cache_save_interval'] = stat_cache_save_interval
         if transform_pipeline_cache_enabled is not None:
             current['transform_pipeline_cache_enabled'] = transform_pipeline_cache_enabled
         if transform_output_size_cache_enabled is not None:
@@ -1905,9 +1908,42 @@ def file_metadata(path: str):
                     LIMIT 1
                 """, (db_path_lookup, path))
                 file_row = cursor.fetchone()
-            
+
             if not file_row:
-                return {"error": "File not found in metadata database"}
+                # Final fallback: resolve virtual path to real source path(s) and try again
+                try:
+                    import logging
+                    from sourcepath import get_source_path
+
+                    logger = logging.getLogger("api")
+                    source_path = get_source_path(logger, config, "/mnt/transfs", path)
+                    resolved_paths = []
+
+                    if isinstance(source_path, str):
+                        resolved_paths = [source_path]
+                    elif isinstance(source_path, tuple):
+                        zip_path, internal_path = source_path
+                        resolved_paths = [f"{zip_path}/{internal_path}"]
+                    elif isinstance(source_path, dict) and "path" in source_path:
+                        resolved_paths = [source_path["path"]]
+
+                    if resolved_paths:
+                        cursor.execute("""
+                            SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path
+                            FROM files
+                            WHERE source_path = ANY(%s)
+                            LIMIT 1
+                        """, (resolved_paths,))
+                        file_row = cursor.fetchone()
+                except Exception:  # pylint: disable=broad-except
+                    file_row = None
+
+            if not file_row:
+                return {
+                    "error": "File not found in metadata database",
+                    "hint": "Run Update DB to sync metadata for this file",
+                    "path": path,
+                }
             
             file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path = file_row
             
@@ -2142,10 +2178,11 @@ def api_get_packs_no_client(manufacturer: str, system_name: str):
     
     for client in clients_config.get("clients", []):
         for system in client.get("systems", []):
+            system_mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
             if (system.get("manufacturer") == manufacturer and 
-                system.get("name") == system_name):
+                system_mapping_name == system_name):
                 # Found a client with this system, use it to get packs
-                system_config = get_system_config(client["name"], system_name)
+                system_config = get_system_config(client["name"], system.get("name"))
                 if system_config:
                     return {
                         "system": system_config.name,
@@ -2958,6 +2995,47 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
             yield f"\n✗ Database synchronization failed: {str(e)}\n"
     
     return StreamingResponse(run_and_stream(), media_type="text/plain")
+
+
+@app.post("/systems/{manufacturer}/{system_name}/install-packs", tags=["Downloads"])
+async def api_install_packs_no_client(manufacturer: str, system_name: str, req: PackInstallRequestNoClient):
+    """
+    Install selected software packs for a system (client-agnostic).
+    
+    Downloads sources referenced by each pack and runs build scripts.
+    Returns a streaming response with real-time progress updates.
+    
+    Downloads are shared across all clients - files go to the same location
+    regardless of which client context is used. This endpoint doesn't require
+    a client selection; it uses any client that supports this system.
+    """
+    # Use any client that supports this system and delegate to full install logic
+    clients_config = read_clients_config()
+    client_name = None
+    system_actual_name = None
+
+    for client in clients_config.get("clients", []):
+        for system in client.get("systems", []):
+            system_mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+            if (system.get("manufacturer") == manufacturer and 
+                system_mapping_name == system_name):
+                client_name = client.get("name")
+                system_actual_name = system.get("name") or system_name
+                break
+        if client_name:
+            break
+
+    if not client_name or not system_actual_name:
+        return {"error": "System not found"}
+
+    full_request = PackInstallRequest(
+        client=client_name,
+        system=system_actual_name,
+        pack_ids=req.pack_ids,
+        skip_existing=req.skip_existing,
+    )
+
+    return await api_install_packs(client_name, system_actual_name, full_request)
 
 
 def estimate_download_time(url, speed_mbps=10):

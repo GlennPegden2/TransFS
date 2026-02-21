@@ -12,17 +12,17 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def web_index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index_complete.html", {"request": request})
 
 @app.get("/browse/native/{path:path}", response_class=HTMLResponse)
 async def browse_native(request: Request, path: str):
     """Serve the main page for native filesystem browsing with URL routing."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index_complete.html", {"request": request})
 
 @app.get("/browse/virtual/{path:path}", response_class=HTMLResponse)
 async def browse_virtual(request: Request, path: str):
     """Serve the main page for virtual filesystem browsing with URL routing."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index_complete.html", {"request": request})
 
 # For running directly with: python -m uvicorn main:app
 if __name__ == "__main__":

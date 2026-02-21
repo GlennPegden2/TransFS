@@ -352,8 +352,11 @@ button:hover, button:focus {
 /* Tabs */
 .tab-container {
     max-width: 1400px;
-    margin: 0 auto 0 auto;
-    padding: 0 2em;
+    margin: 2em auto;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px #0001;
+    padding: 2em;
 }
 
 .tab-buttons {
@@ -372,6 +375,7 @@ button:hover, button:focus {
     font-weight: 500;
     transition: all 0.3s;
     margin-bottom: -2px;
+    margin-right: 0;
 }
 
 .tab-button:hover {

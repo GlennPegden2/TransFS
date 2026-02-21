@@ -1,11 +1,96 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TransFS Web UI</title>
+                    <button onclick="runTests('foundation')" style="padding: 0.6em 1.2em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Foundation</button>
+                    <button onclick="runTests('systems')" style="padding: 0.6em 1.2em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Systems</button>
+                    <button onclick="runTests('performance')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚡ Performance</button>
+                    <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
+                </div>
+                <div style="display: flex; gap: 0.5em;">
+                    <button onclick="loadLastTestResults()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Results</button>
+                    <button onclick="clearTestResults()" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Clear</button>
+                </div>
+            </div>
+            <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
+                <div><strong id="test-status-text">Status</strong></div>
+                <div id="test-progress-bar" style="margin-top: 0.5em; display: none; height: 20px; background: #ddd; border-radius: 4px; overflow: hidden;">
+                    <div id="test-progress-fill" style="height: 100%; background: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+            <div id="test-results-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
+                <div style="color: #999; text-align: center; padding: 2em;">No test results yet. Click "Run Tests" to start.</div>
+            </div>
+        </div>
+    </div>
 
-                    <!-- Config Set Management -->
-                    <div style="border: 1px solid #9C27B0; background: #f3e5f5; padding: 1.5em; border-radius: 8px;">
-                        <h3 style="margin-top: 0; color: #6a1b9a;">📦 Configuration Sets</h3>
-                        <p style="margin: 0.5em 0 1em 0; color: #666; font-size: 0.9em;">
-                            Switch between different configuration sets or import new ones from ZIP files.
+    <!-- Debug Tab -->
+    <div id="debug-tab" class="tab-content">
+        <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>FUSE Log</h2>
+            <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
+            <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
+            <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
+        </div>
+    </div>
+
+    <script>
+        let manufacturerSystemMap = {};
+        let currentNativePath = '/mnt/filestorefs/Native';
+        let currentVirtualPath = '/mnt/transfs';
+        let zaparooStatus = { clients: [], has_enabled: false };
+        
+        // Check Zaparoo status on page load
+        async function checkZaparooStatus() {
+            try {
+                const response = await fetch('/api/zaparoo/status');
+                zaparooStatus = await response.json();
+                // Ensure clients array exists
+                if (!zaparooStatus.clients) {
+                    zaparooStatus.clients = [];
+                }
+                return zaparooStatus;
+            } catch (e) {
+                zaparooStatus = { clients: [], has_enabled: false, message: 'Failed to check status' };
+                return zaparooStatus;
+            }
+        }
+        
+        // Tab switching
+        async function switchTab(tabName, skipHistory = false) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            // Update URL without adding to history if initial load
+            if (!skipHistory) {
+                if (tabName === 'browse-native') {
+                    history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${currentNativePath.replace('/mnt/filestorefs/Native', '')}`);
+                } else if (tabName === 'browse-virtual') {
+                    // Check Zaparoo status when switching to virtual tab
+                    await checkZaparooStatus();
+                    history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
+                } else {
+                    history.pushState({ tab: tabName }, '', '/');
+                }
+            }
+            
+            // Load content if needed
+            if (tabName === 'browse-native') {
+                loadDirectory(currentNativePath, 'native', true);
+            } else if (tabName === 'browse-virtual') {
+                await loadDirectory(currentVirtualPath, 'virtual', true);
+            } else if (tabName === 'config') {
+                await loadConfigSettings();
+            } else if (tabName === 'test-results') {
+                await loadLastTestResults();
+            }
+        }
         
         // Load directory contents
         async function loadDirectory(path, type, skipHistory = false) {
@@ -15,6 +100,200 @@
             fileList.textContent = 'Loading...';
             breadcrumb.textContent = path;
             
+            // (Native folder mapping removed)
+            
+            // Hide timing bar during load for virtual
+            let zaparooPromise = null;
+            if (type === 'virtual') {
+                const timingBar = document.getElementById('virtual-timing');
+                if (timingBar) timingBar.style.display = 'none';
+                
+                // Show cache status while loading
+                fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...<br><span style="font-size: 0.9em;">Checking dir cache...</span></div>';
+                // Ensure Zaparoo status is loaded before rendering (but in parallel with other checks)
+                zaparooPromise = checkZaparooStatus();
+            }
+            
+            if (type === 'native') {
+                currentNativePath = path;
+            } else {
+                currentVirtualPath = path;
+            }
+            
+            // Update URL with current path
+            if (!skipHistory) {
+                const urlPath = type === 'native' 
+                    ? `/browse/native${path.replace('/mnt/filestorefs/Native', '')}`
+                    : `/browse/virtual${path.replace('/mnt/transfs', '')}`;
+                history.pushState({ tab: 'browse-' + type, path: path }, '', urlPath || '/browse/' + type);
+            }
+            
+            try {
+                // Start timing for virtual requests
+                const startTime = type === 'virtual' ? performance.now() : null;
+                
+                const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                // Calculate elapsed time for virtual requests
+                if (type === 'virtual' && startTime !== null) {
+                    const elapsedMs = Math.round(performance.now() - startTime);
+                    const elapsedSec = (elapsedMs / 1000).toFixed(1);
+                    const timingBar = document.getElementById('virtual-timing');
+                    const timingValue = document.getElementById('virtual-timing-value');
+                    if (timingBar && timingValue) {
+                        timingValue.textContent = elapsedSec + 's';
+                        timingBar.style.display = 'block';
+                    }
+                    
+                    // Check cache status (stat cache indicator)
+                    updateCacheStatus(path);
+                }
+                
+                if (data.error) {
+                    fileList.textContent = `Error: ${data.error}`;
+                    return;
+                }
+
+                if (type === 'virtual' && zaparooPromise) {
+                    await zaparooPromise;
+                }
+
+                const fragment = document.createDocumentFragment();
+                const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
+                const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
+                    const div = document.createElement('div');
+                    div.className = `file-item ${entryType === 'directory' ? 'folder' : 'file'}`;
+                    if (entryType === 'directory') {
+                        div.addEventListener('click', () => loadDirectory(fullPath, type));
+                    }
+                    const iconSpan = document.createElement('span');
+                    iconSpan.className = 'icon';
+                    iconSpan.textContent = entryType === 'directory' ? '📁' : '📄';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'name';
+                    nameSpan.textContent = name;
+                    
+                    // (Native folder mapping tooltip removed)
+                    
+                    const sizeSpan = document.createElement('span');
+                    sizeSpan.className = 'size';
+                    sizeSpan.textContent = size || '';
+
+                    const rightMeta = document.createElement('div');
+                    rightMeta.className = 'right-meta';
+                    
+                    // Add launch button for files in virtual tab if Zaparoo is configured AND system supports it
+                    let launchBtn = null;
+                    if (type === 'virtual' && supportsZaparoo && entryType !== 'directory') {
+                        // Get enabled and reachable clients
+                        const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
+                        const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
+                        
+                        launchBtn = document.createElement('button');
+                        launchBtn.className = 'launch-btn';
+                        
+                        // Use Zaparoo logo instead of text
+                        const zaparooImg = document.createElement('img');
+                        zaparooImg.src = '/static/logos/other/zaparoo.png';
+                        zaparooImg.alt = 'Launch';
+                        zaparooImg.style.width = '35px';
+                        zaparooImg.style.height = '35px';
+                        zaparooImg.style.display = 'block';
+                        launchBtn.appendChild(zaparooImg);
+                        
+                        launchBtn.style.padding = '0';
+                        launchBtn.style.marginLeft = '0';
+                        launchBtn.style.background = 'transparent';
+                        launchBtn.style.border = 'none';
+                        launchBtn.style.cursor = 'pointer';
+                        launchBtn.style.display = 'flex';
+                        launchBtn.style.alignItems = 'center';
+                        launchBtn.style.justifyContent = 'center';
+                        
+                        // Set button state based on Zaparoo status
+                        if (!hasEnabled) {
+                            launchBtn.disabled = true;
+                            zaparooImg.style.opacity = '0.3';
+                            launchBtn.style.cursor = 'not-allowed';
+                            launchBtn.title = 'Zaparoo is disabled - enable it in app.yaml configuration';
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showToast('Zaparoo is disabled in configuration', 'warning', 3000);
+                            });
+                        } else if (availableClients.length === 0) {
+                            launchBtn.disabled = true;
+                            zaparooImg.style.opacity = '0.5';
+                            launchBtn.style.cursor = 'not-allowed';
+                            const unreachableNames = zaparooStatus.clients.filter(c => c.enabled && !c.reachable).map(c => c.name).join(', ');
+                            launchBtn.title = `Zaparoo servers unreachable: ${unreachableNames}`;
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showToast(`Zaparoo unreachable: ${unreachableNames}`, 'warning', 3000);
+                            });
+                        } else if (availableClients.length === 1) {
+                            // Single client - simple button
+                            zaparooImg.style.opacity = '0.8';
+                            launchBtn.title = `Launch with Zaparoo (${availableClients[0].name})`;
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                launchWithZaparoo(fullPath, availableClients[0].name, launchBtn);
+                            });
+                            launchBtn.addEventListener('mouseover', () => {
+                                zaparooImg.style.opacity = '1';
+                            });
+                            launchBtn.addEventListener('mouseout', () => {
+                                zaparooImg.style.opacity = '0.8';
+                            });
+                        } else {
+                            // Multiple clients - show dropdown
+                            zaparooImg.style.opacity = '0.8';
+                            launchBtn.title = 'Launch with Zaparoo (select client)';
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showClientSelector(fullPath, availableClients, launchBtn);
+                            });
+                            launchBtn.addEventListener('mouseover', () => {
+                                zaparooImg.style.opacity = '1';
+                            });
+                            launchBtn.addEventListener('mouseout', () => {
+                                zaparooImg.style.opacity = '0.8';
+                            });
+                        }
+                    }
+                    
+                    // Add info button for files in virtual tab (always show, regardless of zaparoo)
+                    let infoBtn = null;
+                    let metadataPanel = null;
+                    if (type === 'virtual' && entryType !== 'directory') {
+                        infoBtn = document.createElement('button');
+                        infoBtn.className = 'info-btn';
+                        infoBtn.textContent = 'ℹ️';
+                        infoBtn.title = 'Toggle file metadata';
+                        infoBtn.style.padding = '0';
+                        infoBtn.style.marginLeft = '0';
+                        infoBtn.style.background = 'transparent';
+                        infoBtn.style.border = 'none';
+                        infoBtn.style.cursor = 'pointer';
+                        infoBtn.style.display = 'flex';
+                        infoBtn.style.alignItems = 'center';
+                        infoBtn.style.justifyContent = 'center';
+                        infoBtn.style.width = '35px';
+                        infoBtn.style.height = '35px';
+                        infoBtn.style.fontSize = '1.4em';
+                        infoBtn.style.lineHeight = '1';
+                        infoBtn.style.transition = 'opacity 0.2s';
+                        infoBtn.style.opacity = '0.7';
+                        
+                        // Create metadata panel (collapsible container below the file item)
+                        metadataPanel = document.createElement('div');
+                        metadataPanel.className = 'metadata-panel';
+                        metadataPanel.style.display = 'none';
+                        metadataPanel.style.gridColumn = '1 / -1';
+                        metadataPanel.style.borderTop = '1px solid #e0e0e0';
+                        metadataPanel.style.backgroundColor = '#f9f9f9';
+                        metadataPanel.style.padding = '0';
+                        metadataPanel.style.overflow = 'hidden';
                         metadataPanel.style.transition = 'max-height 0.3s ease-out, padding 0.3s ease-out';
                         metadataPanel.style.maxHeight = '0';
                         
@@ -57,6 +336,200 @@
                                         // Add file information section first
                                         html += '<div style="margin-bottom: 1em; padding-bottom: 1em; border-bottom: 2px solid #1976d2;">';
                                         html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">File Information</div>';
+                                        
+                                        // File size (format bytes to human readable)
+                                        if (data.size !== null && data.size !== undefined) {
+                                            const formatBytes = (bytes) => {
+                                                if (bytes === 0) return '0 Bytes';
+                                                const k = 1024;
+                                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                                return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+                                            };
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">File Size:</span>
+                                                <span style="color: #333;">${escapeHtml(formatBytes(data.size))}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        // Virtual file type (extension)
+                                        if (data.extension) {
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Virtual File Type:</span>
+                                                <span style="color: #333;">${escapeHtml(data.extension)}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        // Filestore path
+                                        if (data.source_path) {
+                                            // Extract just the filename from source path
+                                            const sourceFilename = data.source_path.split('/').pop();
+                                            // Get extension from source path
+                                            const sourceExt = sourceFilename.includes('.') ? sourceFilename.split('.').pop() : '';
+                                            
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore Path:</span>
+                                                <span style="color: #333; font-family: monospace; font-size: 0.9em; word-break: break-all;">${escapeHtml(data.source_path)}</span>
+                                            </div>`;
+                                            
+                                            if (sourceExt && sourceExt !== data.extension) {
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore File Type:</span>
+                                                    <span style="color: #333;">${escapeHtml(sourceExt)}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        html += '</div>';
+                                        
+                                        // Game metadata section
+                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">Game Metadata</div>';
+                                        const metadataFields = [
+                                            { key: 'media_type', label: 'Media Type' },
+                                            { key: 'region', label: 'Region' },
+                                            { key: 'language', label: 'Language' },
+                                            { key: 'publisher', label: 'Publisher' },
+                                            { key: 'developer', label: 'Developer' },
+                                            { key: 'release_year', label: 'Release Year' },
+                                            { key: 'year', label: 'Year' },
+                                            { key: 'genre', label: 'Genre' },
+                                            { key: 'subgenre', label: 'Subgenre' },
+                                            { key: 'rating', label: 'Rating' },
+                                            { key: 'play_count', label: 'Play Count' }
+                                        ];
+                                        
+                                        for (const field of metadataFields) {
+                                            const value = data.metadata[field.key];
+                                            if (value !== null && value !== undefined && value !== '') {
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #1976d2; min-width: 120px;">${escapeHtml(field.label)}:</span>
+                                                    <span style="color: #333;">${escapeHtml(String(value))}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        // Add flags
+                                        const flags = [];
+                                        if (data.metadata.is_prototype) flags.push('Prototype');
+                                        if (data.metadata.is_homebrew) flags.push('Homebrew');
+                                        if (data.metadata.is_translation) flags.push('Translation');
+                                        if (data.metadata.is_hack) flags.push('Hack');
+                                        if (data.metadata.is_revision) flags.push('Revision');
+                                        
+                                        if (flags.length > 0) {
+                                            html += `<div style="margin-top: 0.8em; padding-top: 0.8em; border-top: 1px solid #e0e0e0;">
+                                                <span style="font-weight: 600; color: #1976d2;">Flags:</span>
+                                                <span style="color: #333; margin-left: 0.8em;">${escapeHtml(flags.join(', '))}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        html += '</div>';
+                                    } else {
+                                        html = '<div style="padding: 1em; color: #888;">No metadata available</div>';
+                                    }
+                                    
+                                    metadataPanel.innerHTML = html;
+                                    metadataLoaded = true;
+                                } catch (e) {
+                                    console.error('Failed to load metadata:', e);
+                                    metadataPanel.innerHTML = `<div style="padding: 1em; color: #d32f2f;">Failed to load metadata</div>`;
+                                    metadataLoaded = true;
+                                }
+                                metadataLoading = false;
+                            }
+                            
+                            // Expand panel
+                            metadataPanel.style.display = 'grid';
+                            metadataPanel.style.maxHeight = '500px';
+                            metadataPanel.style.padding = '0';
+                            infoBtn.style.opacity = '1';
+                            panelOpen = true;
+                        });
+                        
+                        // Hover effect
+                        infoBtn.addEventListener('mouseover', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '1';
+                        });
+                        infoBtn.addEventListener('mouseout', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '0.7';
+                        });
+                    }
+                    
+                    // Don't append sizeSpan (file size is removed from display)
+                    
+                    // Create button container for side-by-side layout
+                    const buttonContainer = document.createElement('div');
+                    buttonContainer.style.display = 'flex';
+                    buttonContainer.style.gap = '0.3em';
+                    buttonContainer.style.alignItems = 'center';
+                    
+                    if (launchBtn) buttonContainer.appendChild(launchBtn);
+                    if (infoBtn) buttonContainer.appendChild(infoBtn);
+                    
+                    if (launchBtn || infoBtn) rightMeta.appendChild(buttonContainer);
+                    div.append(iconSpan, nameSpan, rightMeta);
+                    fragment.appendChild(div);
+                    
+                    // Append metadata panel below the file item if it exists
+                    if (metadataPanel) {
+                        fragment.appendChild(metadataPanel);
+                    }
+                };
+
+                if (!roots.includes(path)) {
+                    const parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    addEntry('..', 'directory', parentPath, '', false);
+                }
+
+                data.entries.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+
+                for (const entry of data.entries) {
+                    // Build path and normalize to remove any duplicate slashes
+                    const fullPath = (path.replace(/\/+$/, '') + '/' + entry.name).replace(/\/+/, '/');
+                    const sizeStr = entry.size !== undefined ? formatSize(entry.size) : '';
+                    const supportsZaparoo = entry.supports_zaparoo !== undefined ? entry.supports_zaparoo : false;
+                    addEntry(entry.name, entry.type, fullPath, sizeStr, supportsZaparoo);
+                }
+
+                if (data.entries.length === 0 && roots.includes(path)) {
+                    const emptyDiv = document.createElement('div');
+                    emptyDiv.style.padding = '1em';
+                    emptyDiv.style.color = '#888';
+                    emptyDiv.textContent = 'Empty directory';
+                    fragment.appendChild(emptyDiv);
+                }
+
+                fileList.replaceChildren(fragment);
+                // After rendering entries, show native source folder cache controls for virtual paths
+                console.log(`DEBUG: type=${type}, currentSourcePaths=${JSON.stringify(window.currentSourcePaths)}, length=${window.currentSourcePaths?.length}`);
+                if (type === 'virtual' && window.currentSourcePaths && window.currentSourcePaths.length > 0) {
+                    console.log('DEBUG: Displaying source folder controls');
+                    displaySourceFolderControls(window.currentSourcePaths, fileList);
+                } else {
+                    console.log('DEBUG: Skipping source folder controls - condition not met');
+                }
+            } catch (e) {
+                fileList.textContent = `Error loading directory: ${e.message}`;
+            }
+        }
+        
+        // Format file size
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+        
+        // Sanitize HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function sanitizeUrl(url) {
@@ -262,7 +735,6 @@
             document.body.appendChild(overlay);
         }
 
-    <script>
         // Show toast notification
         function showToast(message, type = 'info', duration = 3000) {
             const toastContainer = document.getElementById('toast-container');
@@ -300,12 +772,9 @@
         }
 
 
-        let availableClientNames = [];
-
         async function loadData() {
             // Load clients
             const clients = await fetch('/api/clients').then(r => r.json());
-            availableClientNames = Array.isArray(clients) ? clients : [];
             const clientsContainer = document.getElementById('clients');
             clientsContainer.textContent = '';
             const clientsFragment = document.createDocumentFragment();
@@ -996,25 +1465,7 @@
             const systemEntry = Object.values(systemsMetaMap).find(s => 
                 s.name === system && s.supported_by && s.supported_by.length > 0
             );
-
-            const selectedClientCheckbox = document.querySelector('input[name="clients"]:checked');
-            const selectedClient = selectedClientCheckbox ? selectedClientCheckbox.value : null;
-            const supportedBy = systemEntry ? (systemEntry.supported_by || []) : [];
-            const validSupported = supportedBy.filter(c => availableClientNames.includes(c));
-
-            let client = null;
-            if (selectedClient && availableClientNames.includes(selectedClient)) {
-                client = selectedClient;
-            }
-            if (!client) {
-                if (validSupported.length > 0) {
-                    client = validSupported[0];
-                } else if (availableClientNames.includes('MiSTer')) {
-                    client = 'MiSTer';
-                } else {
-                    client = availableClientNames[0] || 'MiSTer';
-                }
-            }
+            const client = systemEntry ? systemEntry.supported_by[0] : 'MiSTer'; // Fallback to MiSTer
             
             appendLog(`Installing ${packIds.length} pack(s) for ${system}...\n`);
             appendLog(`(Downloads are shared across all clients)\n\n`);
@@ -1061,26 +1512,27 @@
             try {
                 const response = await fetch(`/api/cache/status-all?path=${encodeURIComponent(path)}`);
                 const data = await response.json();
-
+                
                 // Update stat cache indicator
                 const statIndicator = document.getElementById('stat-cache-indicator');
                 const statText = document.getElementById('stat-cache-text');
-
+                
                 if (data.stat_cache) {
-                    const count = data.stat_cache.path_entry_count || 0;
+                    const count = data.stat_cache.entry_count || 0;
                     const dirty = data.stat_cache.dirty;
-
+                    const pathCount = data.stat_cache.path_entry_count || 0;
+                    
                     if (count > 0) {
                         statIndicator.style.background = dirty ? '#FFC107' : '#4CAF50'; // Amber if dirty, Green if clean
                         statIndicator.title = dirty ? 'Stat cache (unsaved changes)' : 'Stat cache (saved)';
-                        statText.textContent = `${count} files${dirty ? ' *' : ''}`;
+                        statText.textContent = data.stat_cache.path_cached ? `${pathCount} entries` : `${count} files${dirty ? ' *' : ''}`;
                     } else {
                         statIndicator.style.background = '#999'; // Gray
-                        statIndicator.title = 'Stat cache empty for this path';
+                        statIndicator.title = 'Stat cache empty';
                         statText.textContent = 'Empty';
                     }
                 }
-
+                
                 // Show/hide Sync DB button based on database mode
                 const syncDbBtn = document.getElementById('sync-db-btn');
                 try {
@@ -1217,32 +1669,61 @@
                     console.log('ERROR: containerElement is null/undefined');
                 }
             }
-        async function clearStatCache() {
-            const btn = document.getElementById('clear-stat-btn');
-
-            if (!confirm('Clear the entire stat cache? This will affect all directories.')) {
-                return;
-            }
-
+        async function recacheCurrentDir() {
+            const path = currentVirtualPath;
+            const btn = document.getElementById('recache-dir-btn');
+            
             // Disable button and show loading state
             btn.disabled = true;
             const originalText = btn.textContent;
             btn.textContent = '│...';
-
+            
+            try {
+                // Clear cache for this path
+                await fetch(`/api/cache/clear?path=${encodeURIComponent(path)}`, { method: 'POST' });
+                
+                // Update indicators to show rebuilding
+                const statIndicator = document.getElementById('stat-cache-indicator');
+                const statText = document.getElementById('stat-cache-text');
+                statIndicator.style.background = '#2196F3'; // Blue
+                statText.textContent = 'Refreshing...';
+                
+                // Reload the directory (this will rebuild the cache)
+                await loadPath('virtual', path, true);
+                
+            } catch (e) {
+                console.error('Failed to recache:', e);
+                alert('Failed to recache directory');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+        
+        async function clearStatCache() {
+            const btn = document.getElementById('clear-stat-btn');
+            
+            if (!confirm('Clear the entire stat cache? This will affect all directories.')) {
+                return;
+            }
+            
+            // Disable button and show loading state
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
             try {
                 const response = await fetch('/api/cache/clear-getattr', { method: 'POST' });
                 const data = await response.json();
-
+                
                 if (data.cleared) {
                     // Update stat indicator
                     const statIndicator = document.getElementById('stat-cache-indicator');
                     const statText = document.getElementById('stat-cache-text');
                     statIndicator.style.background = '#999';
                     statText.textContent = 'Empty';
-
-                    // Show success message
-                    const msg = `Cleared ${data.count || 0} stat cache entries`;
-                    console.log(msg);
+                    
+                    console.log('Stat cache cleared');
                 }
             } catch (e) {
                 console.error('Failed to clear stat cache:', e);
@@ -1256,7 +1737,7 @@
         async function clearAllCaches() {
             const btn = document.getElementById('clear-all-btn');
             
-            if (!confirm('Clear ALL caches (stat cache)? This will affect all directories.')) {
+            if (!confirm('Clear ALL caches? This will affect all directories.')) {
                 return;
             }
             
@@ -1269,16 +1750,15 @@
                 const response = await fetch('/api/cache/clear-all', { method: 'POST' });
                 const data = await response.json();
                 
-                if (data.cleared) {
+                if (data.stat_cache?.cleared) {
                     // Update stat indicator
                     const statIndicator = document.getElementById('stat-cache-indicator');
                     const statText = document.getElementById('stat-cache-text');
                     statIndicator.style.background = '#999';
                     statText.textContent = 'Empty';
-
-                    // Show success message
-                    console.log('Cleared stat cache entries');
-
+                    
+                    console.log('Cleared stat cache');
+                    
                     // Reload current directory
                     await loadPath('virtual', currentVirtualPath, true);
                 }
@@ -1368,7 +1848,7 @@
                 
                 if (data.updated) {
                     const typeNames = {
-                        'stat_cache': 'Stat Cache',
+                        'stat_cache': 'Stat',
                         'interval': 'Save Interval',
                         'transform_pipeline_cache': 'Transform Pipeline',
                         'transform_output_size_cache': 'Transform Output Size',
@@ -1376,7 +1856,6 @@
                         'readdir_skip_cache_lookup': 'Readdir Skip Cache Lookup'
                     };
                     showConfigStatus(`${typeNames[type] || 'Cache'} configuration updated successfully`, 'success');
-                    
                 } else if (data.error) {
                     showConfigStatus(`Error updating cache config: ${data.error}`, 'error');
                 }
@@ -1385,8 +1864,6 @@
                 showConfigStatus('Failed to update cache configuration', 'error');
             }
         }
-        
-        
         
         // Handle browser back/forward buttons
         window.addEventListener('popstate', (event) => {
@@ -2473,4 +2950,3 @@
     </script>
 </body>
 </html>
-

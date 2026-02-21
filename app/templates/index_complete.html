@@ -1,0 +1,2520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TransFS Web UI</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>TransFS Dashboard</h1>
+    
+    <!-- Tab Navigation -->
+    <div class="tab-container">
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="switchTab('download')">Download</button>
+            <button class="tab-button" onclick="switchTab('browse-native')">Browse Native</button>
+            <button class="tab-button" onclick="switchTab('browse-virtual')">Browse Virtual</button>
+            <button class="tab-button" onclick="switchTab('config')">Config</button>
+            <button class="tab-button" onclick="switchTab('docs')">Docs</button>
+            <button class="tab-button" id="test-results-tab-btn" onclick="switchTab('test-results')" style="display:none;">Test Results</button>
+            <button class="tab-button" id="debug-tab-btn" onclick="switchTab('debug')" style="display:none;">Debug</button>
+        </div>
+    </div>
+    
+    <!-- Download Tab -->
+    <div id="download-tab" class="tab-content active">
+        <form id="selectionForm">
+            <div class="columns">
+                <div>
+                    <h2>Clients <span style="font-size: 0.7em; color: #888; font-weight: normal;">(optional filter)</span></h2>
+                    <div id="clients"></div>
+                </div>
+                <div>
+                    <h2>Systems</h2>
+                    <div id="systems"></div>
+                </div>
+                <div>
+                    <h2>Packs</h2>
+                    <div style="display: flex; gap: 0.5em; margin-bottom: 0.5em;">
+                        <span id="packs-info" style="color:#888; flex: 1;">Select a system to view available packs</span>
+                        <button type="button" id="toggleFilterBtn" onclick="toggleShowAllPacks()" style="background:#66a; padding:0.3em 0.7em; font-size:0.85em; cursor:pointer; border:none; color:white; border-radius:3px; white-space:nowrap; display:none;">Show All Packs</button>
+                    </div>
+                    <div id="packs"></div>
+                </div>
+            </div>
+            <div id="log" style="margin:2em 0 0 0; padding:1em; background:#222; color:#fff; height:300px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre;"></div>
+            <div class="split-button" id="install-split-button">
+                <button type="button" id="installPacksBtn" class="split-button-main" onclick="submitInstallAndUpdateDb()" disabled title="Select packs to enable this button">Install &amp; Update DB</button>
+                <button type="button" id="installToggleBtn" class="split-button-toggle" onclick="toggleInstallDropdown(event)" aria-haspopup="true" aria-expanded="false" disabled title="Select packs to enable this button">▾</button>
+                <div id="install-dropdown" class="split-button-menu" role="menu">
+                    <button type="button" role="menuitem" onclick="submitInstallOnly()">Install Only</button>
+                    <button type="button" role="menuitem" onclick="submitUpdateDbOnly()">Update DB Only</button>
+                </div>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Browse Native Tab -->
+    <div id="browse-native-tab" class="tab-content">
+        <div class="file-browser">
+            <h2>Native File System Browser</h2>
+            <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
+                <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">/mnt/filestorefs/Native</div>
+            </div>
+            <div class="file-list" id="native-files">Loading...</div>
+        </div>
+    </div>
+    
+    <!-- Browse Virtual Tab -->
+    <div id="browse-virtual-tab" class="tab-content">
+        <div class="file-browser">
+            <h2>Virtual File System Browser</h2>
+            <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
+                <div class="breadcrumb" id="virtual-breadcrumb" style="flex: 1; margin: 0;">/mnt/transfs</div>
+            </div>
+            <div class="file-list" id="virtual-files">Loading...</div>
+            <div id="virtual-timing" style="padding: 0.5em; margin-top: 1em; background: #f0f0f0; border-radius: 4px; font-size: 0.85em; color: #666; display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1em;">
+                    <div>
+                        API request took: <strong id="virtual-timing-value">0s</strong>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 1em; flex-wrap: wrap;">
+                        <!-- Stat Cache Status -->
+                        <div id="stat-cache-status" style="display: flex; align-items: center; gap: 0.5em; padding: 0.3em 0.6em; background: white; border-radius: 4px; border: 1px solid #ddd;">
+                            <span id="stat-cache-indicator" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #999;" title="Stat cache status"></span>
+                            <span style="font-size: 0.85em; color: #555;">Stat:</span>
+                            <span id="stat-cache-text" style="font-size: 0.85em; font-weight: 500;">-</span>
+                        </div>
+                        <!-- Cache Action Buttons -->
+                        <div style="display: flex; gap: 0.4em;">
+                            <button id="recache-dir-btn" onclick="recacheCurrentDir()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 3px;" title="Refresh current directory cache">✓ Refresh</button>
+                            <button id="clear-stat-btn" onclick="clearStatCache()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #2196F3; color: white; border: none; border-radius: 3px;" title="Clear stat cache">✓ Clear</button>
+                            <button id="clear-all-btn" onclick="clearAllCaches()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #FF5722; color: white; border: none; border-radius: 3px;" title="Clear all caches">✓ All</button>
+                            <button id="sync-db-btn" onclick="syncDatabase()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #9C27B0; color: white; border: none; border-radius: 3px; display: none;" title="Sync database for this folder">🔄 DB</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Config Tab -->
+    <div id="config-tab" class="tab-content">
+        <div style="max-width: 1000px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>Configuration</h2>
+            
+            <div id="config-status" style="display: none; border-left: 4px solid #2196F3; padding: 1em; margin-bottom: 1em; background: #e3f2fd; border-radius: 4px;">
+                <span id="config-status-text">Status message</span>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2em; margin-bottom: 2em;">
+                <!-- Basic Settings -->
+                <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px;">
+                    <h3 style="margin-top: 0; color: #333;">Basic Settings</h3>
+                    <div style="display: flex; flex-direction: column; gap: 1em;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Mount Point</label>
+                            <input id="config_mountpoint" type="text" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">File Store Path</label>
+                            <input id="config_filestore" type="text" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Web API Settings -->
+                <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px;">
+                    <h3 style="margin-top: 0; color: #333;">Web API</h3>
+                    <div style="display: flex; flex-direction: column; gap: 1em;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Host</label>
+                            <input id="config_web_host" type="text" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Port</label>
+                            <input id="config_web_port" type="number" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Database Settings -->
+            <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #333;">Database</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em;">
+                    <div>
+                        <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Mode</label>
+                        <select id="config_database_mode" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                            <option value="hybrid">Hybrid</option>
+                            <option value="memory">Memory</option>
+                            <option value="sqlite">SQLite</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Database Path</label>
+                        <input id="config_database_path" type="text" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                </div>
+                <div style="display: flex; gap: 2em; margin-top: 1em;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="config_database_auto_sync" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Auto Sync</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="config_database_sync_on_startup" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Sync on Startup</span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Cache Configuration -->
+            <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #333;">Cache Settings</h3>
+                <div style="display: flex; flex-direction: column; gap: 1em;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="stat-cache-toggle-config" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Enable Stat Cache</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="transform-pipeline-cache-toggle-config" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Enable Transform Pipeline Cache</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="transform-output-size-cache-toggle-config" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Enable Transform Output Size Cache</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="readdir-direntry-cache-toggle-config" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Enable Readdir DirEntry Cache</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="readdir-skip-cache-lookup-toggle-config" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Skip Cache Lookup with DirEntry</span>
+                    </label>
+                    <div>
+                        <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Stat Cache Save Interval (seconds)</label>
+                        <input id="stat-save-interval-config" type="number" min="1" max="3600" style="width: 200px; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- UI Settings -->
+            <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #333;">UI Settings</h3>
+                <div style="display: flex; flex-direction: column; gap: 1em;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="config_advanced_options" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Enable Advanced Options</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input id="config_show_real_path_tooltips" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
+                        <span>Show Real Path Tooltips</span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Config Sets Management -->
+            <div style="border: 1px solid #9C27B0; background: #f3e5f5; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #6a1b9a;">📦 Configuration Sets</h3>
+                <p style="margin: 0.5em 0 1em 0; color: #666; font-size: 0.9em;">Switch between different configuration sets or import new ones from ZIP files.</p>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; margin-bottom: 1.5em;">
+                    <!-- Client Config Sets -->
+                    <div>
+                        <label style="display: block; margin-bottom: 0.5em; font-weight: 500; color: #6a1b9a;">Client Config Set</label>
+                        <select id="client-config-set-select" onchange="switchClientConfigSet()" style="width: 100%; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                            <option>Loading...</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Source Config Sets -->
+                    <div>
+                        <label style="display: block; margin-bottom: 0.5em; font-weight: 500; color: #6a1b9a;">Source Config Set</label>
+                        <select id="source-config-set-select" onchange="switchSourceConfigSet()" style="width: 100%; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                            <option>Loading...</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Import Config Set -->
+                <div style="border-top: 1px solid #ce93d8; padding-top: 1em;">
+                    <h4 style="margin-top: 0; color: #6a1b9a;">Import New Config Set</h4>
+                    <div style="display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 0.5em; align-items: flex-end;">
+                        <select id="import-config-type" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="client">Client</option>
+                            <option value="source">Source</option>
+                        </select>
+                        <input id="import-config-name" type="text" placeholder="Config set name" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px;">
+                        <input id="import-config-file" type="file" accept=".zip" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px;">
+                        <button type="button" onclick="importConfigSet()" style="padding: 0.5em 1em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer;">Import</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div style="display: flex; gap: 0.5em;">
+                <button type="button" onclick="saveConfigSettings()" style="padding: 0.7em 1.5em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Save Settings</button>
+                <button type="button" onclick="restartApplication()" style="padding: 0.7em 1.5em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Restart App</button>
+                <button type="button" onclick="loadConfigSettings()" style="padding: 0.7em 1.5em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Settings</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Docs Tab -->
+    <div id="docs-tab" class="tab-content">
+        <div style="max-width: 800px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>📚 Documentation</h2>
+            
+            <div style="display: grid; gap: 1.5em; margin-top: 2em;">
+                <!-- API Documentation -->
+                <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);">
+                    <h3 style="margin-top: 0; color: #667eea;">
+                        <span style="font-size: 1.5em;">🔌</span> REST API Documentation
+                    </h3>
+                    <p style="color: #555; line-height: 1.6;">
+                        Interactive API documentation with request/response examples and the ability to test endpoints directly from your browser. All endpoints are accessible at <code style="background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px;">/api/</code>
+                    </p>
+                    <div style="display: flex; gap: 1em; margin-top: 1em; flex-wrap: wrap;">
+                        <a href="/api/docs" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #667eea40; transition: all 0.2s;">
+                            📖 API Swagger UI
+                        </a>
+                        <a href="/api/redoc" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #764ba2; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #764ba240; transition: all 0.2s;">
+                            📘 API ReDoc
+                        </a>
+                        <a href="/api/openapi.json" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #2196F3; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #2196F340; transition: all 0.2s;">
+                            📋 OpenAPI Spec
+                        </a>
+                    </div>
+                </div>
+
+                <!-- GitHub Repository -->
+                <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; background: linear-gradient(135deg, #24292e15 0%, #58a6ff15 100%);">
+                    <h3 style="margin-top: 0; color: #24292e;">
+                        <span style="font-size: 1.5em;">🐙</span> GitHub Repository
+                    </h3>
+                    <p style="color: #555; line-height: 1.6;">
+                        View source code, report issues, contribute features, and access documentation in the TransFS GitHub repository.
+                    </p>
+                    <div style="margin-top: 1em;">
+                        <a href="https://github.com/GlennPegden2/TransFS" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 0.7em 1.5em; background: #24292e; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #24292e40; transition: all 0.2s;">
+                            <svg style="width: 1.2em; height: 1.2em; vertical-align: middle; margin-right: 0.5em; fill: white;" viewBox="0 0 16 16">
+                                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                            </svg>
+                            View on GitHub
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Test Results Tab -->
+    <div id="test-results-tab" class="tab-content">
+        <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>Test Results</h2>
+            <div style="display: flex; gap: 1em; margin-bottom: 1.5em; flex-wrap: wrap;">
+                <div style="display: flex; gap: 0.5em;">
+                    <button onclick="runTests('foundation')" style="padding: 0.6em 1.2em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Foundation</button>
+                    <button onclick="runTests('systems')" style="padding: 0.6em 1.2em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Systems</button>
+                    <button onclick="runTests('performance')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚡ Performance</button>
+                    <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
+                </div>
+                <div style="display: flex; gap: 0.5em;">
+                    <button onclick="loadLastTestResults()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Results</button>
+                    <button onclick="clearTestResults()" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Clear</button>
+                </div>
+            </div>
+            <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
+                <div><strong id="test-status-text">Status</strong></div>
+                <div id="test-progress-bar" style="margin-top: 0.5em; display: none; height: 20px; background: #ddd; border-radius: 4px; overflow: hidden;">
+                    <div id="test-progress-fill" style="height: 100%; background: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+            <div id="test-results-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
+                <div style="color: #999; text-align: center; padding: 2em;">No test results yet. Click "Run Tests" to start.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Debug Tab -->
+    <div id="debug-tab" class="tab-content">
+        <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
+            <h2>FUSE Log</h2>
+            <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
+            <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
+            <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
+        </div>
+    </div>
+
+    <script>
+        // =============================================
+        // INITIALIZATION & CORE FUNCTIONS
+        // =============================================
+        let currentNativePath = '/mnt/filestorefs/Native';
+        let currentVirtualPath = '/mnt/transfs';
+        let zaparooStatus = { clients: [], has_enabled: false };
+        let manufacturerSystemMap = {};
+        let allSystemsMeta = {};
+        let currentPacksData = null;
+        let showAllPacks = false;
+        let systemsMetaMap = {};
+        
+        // Tab switching
+        async function switchTab(tabName, skipHistory = false) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            if (!skipHistory) {
+                if (tabName === 'browse-native') {
+                    history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${currentNativePath.replace('/mnt/filestorefs/Native', '')}`);
+                } else if (tabName === 'browse-virtual') {
+                    await checkZaparooStatus();
+                    history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
+                } else {
+                    history.pushState({ tab: tabName }, '', '/');
+                }
+            }
+            
+            if (tabName === 'browse-native') {
+                loadDirectory(currentNativePath, 'native', true);
+            } else if (tabName === 'browse-virtual') {
+                await loadDirectory(currentVirtualPath, 'virtual', true);
+            } else if (tabName === 'config') {
+                await loadConfigSettings();
+            } else if (tabName === 'test-results') {
+                await loadLastTestResults();
+            }
+        }
+        
+        // =============================================
+        // CLIENT/SYSTEM/PACKS LOADING
+        // =============================================
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        async function loadData() {
+            // Load clients
+            try {
+                const clients = await fetch('/api/clients').then(r => r.json());
+                const clientsContainer = document.getElementById('clients');
+                clientsContainer.textContent = '';
+                const clientsFragment = document.createDocumentFragment();
+                clients.forEach(c => {
+                    const safeClient = escapeHtml(c);
+                    const logoName = c.toLowerCase().replace(/\s+/g, '');
+                    const logoSrc = `/static/logos/clients/${logoName}.png`;
+
+                    const label = document.createElement('label');
+                    label.style.display = 'flex';
+                    label.style.alignItems = 'center';
+                    label.style.marginBottom = '0.5em';
+
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.name = 'clients';
+                    input.value = safeClient;
+                    input.style.marginRight = '0.5em';
+
+                    const img = document.createElement('img');
+                    img.className = 'client-logo';
+                    img.src = logoSrc;
+                    img.alt = `${safeClient} logo`;
+                    img.onerror = () => { img.style.display = 'none'; };
+
+                    const span = document.createElement('span');
+                    span.textContent = safeClient;
+
+                    label.appendChild(input);
+                    label.appendChild(img);
+                    label.appendChild(span);
+                    clientsFragment.appendChild(label);
+                });
+                clientsContainer.appendChild(clientsFragment);
+                
+                // Add listener to client checkboxes to reload systems
+                document.querySelectorAll('input[name="clients"]').forEach(cb => {
+                    cb.addEventListener('change', async () => {
+                        await loadSystemsForSelectedClient();
+                        loadPacksForSelection();
+                    });
+                });
+            } catch (e) {
+                console.error('Failed to load clients:', e);
+                document.getElementById('clients').textContent = 'Error loading clients';
+            }
+            
+            // Load systems meta (now grouped by manufacturer)
+            try {
+                const meta = await fetch('/api/systems/meta').then(r => r.json());
+                allSystemsMeta = meta; // Save for filtering
+                renderSystemsFromMetadata(meta); // Initial render shows all systems
+            } catch (e) {
+                console.error('Failed to load systems:', e);
+                document.getElementById('systems').textContent = 'Error loading systems';
+            }
+        }
+        
+        async function loadSystemsForSelectedClient() {
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const systemsContainer = document.getElementById('systems');
+            
+            // Clear packs when client changes
+            document.getElementById('packs-info').textContent = 'Select a system to view available packs';
+            document.getElementById('packs').innerHTML = '';
+            document.getElementById('toggleFilterBtn').style.display = 'none';
+            
+            if (!checkedClient) {
+                // No client selected - show all systems from metadata
+                renderSystemsFromMetadata(allSystemsMeta);
+                return;
+            }
+            
+            // Client selected - fetch client-specific systems
+            const clientName = checkedClient.value;
+            try {
+                const response = await fetch(`/api/clients/${clientName}/systems`);
+                if (!response.ok) {
+                    systemsContainer.innerHTML = '<p style="color: #888;">Failed to load systems for this client</p>';
+                    return;
+                }
+                
+                const systemDisplayNames = await response.json();
+                
+                // Filter allSystemsMeta to only show systems for this client
+                const filteredMeta = {};
+                for (const manufacturer in allSystemsMeta) {
+                    const filteredSystems = allSystemsMeta[manufacturer].filter(s => {
+                        const displayName = s.display_name || s.name || s.mapping_name;
+                        return systemDisplayNames.includes(displayName);
+                    });
+                    
+                    if (filteredSystems.length > 0) {
+                        filteredMeta[manufacturer] = filteredSystems;
+                    }
+                }
+                
+                renderSystemsFromMetadata(filteredMeta);
+            } catch (e) {
+                console.error('Error loading client systems:', e);
+                systemsContainer.innerHTML = `<p style="color: #888;">Error loading systems: ${escapeHtml(e.message)}</p>`;
+            }
+        }
+        
+        function renderSystemsFromMetadata(meta) {
+            const systemsContainer = document.getElementById('systems');
+            systemsContainer.textContent = '';
+            
+            // Clear system checkboxes to reset state
+            systemsMetaMap = {};
+            
+            const systemsFragment = document.createDocumentFragment();
+            for (const manufacturer in meta) {
+                const safeManufacturer = escapeHtml(manufacturer);
+                const sysDivId = `systems-for-${manufacturer.replace(/\s+/g, '').toLowerCase()}`;
+
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'manufacturer-group';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'manufacturer-header';
+                headerDiv.style.cursor = 'pointer';
+                headerDiv.onclick = () => toggleSystems(sysDivId);
+
+                const headerInner = document.createElement('div');
+                headerInner.style.display = 'flex';
+                headerInner.style.alignItems = 'center';
+                headerInner.style.gap = '0.5em';
+
+                const headerImg = document.createElement('img');
+                headerImg.className = 'manufacturer-logo';
+                headerImg.src = `/static/logos/manufacturers/${manufacturer.toLowerCase().replace(/\s+/g, '')}.png`;
+                headerImg.alt = `${safeManufacturer} logo`;
+                headerImg.onerror = () => { headerImg.style.display = 'none'; };
+
+                const headerSpan = document.createElement('span');
+                headerSpan.textContent = safeManufacturer;
+
+                headerInner.appendChild(headerImg);
+                headerInner.appendChild(headerSpan);
+
+                const toggleSpan = document.createElement('span');
+                toggleSpan.id = `${sysDivId}-toggle`;
+                toggleSpan.className = 'toggle-icon';
+                toggleSpan.textContent = '[+]';
+
+                headerDiv.appendChild(headerInner);
+                headerDiv.appendChild(toggleSpan);
+
+                const systemGrid = document.createElement('div');
+                systemGrid.className = 'system-grid';
+                systemGrid.id = sysDivId;
+                systemGrid.style.display = 'none';
+
+                meta[manufacturer].forEach(s => {
+                    const systemEntry = (typeof s === 'string') ? { mapping_name: s, display_name: s, name: s } : s;
+                    const mappingName = systemEntry.mapping_name || systemEntry.name || s;
+                    const displayName = systemEntry.display_name || systemEntry.name || mappingName;
+                    
+                    // Store in lookup map for pack loading
+                    systemsMetaMap[`${manufacturer}|||${mappingName}`] = systemEntry;
+                    
+                    const safeSystem = escapeHtml(displayName);
+                    const card = document.createElement('div');
+                    card.className = 'system-card';
+                    card.style.position = 'relative';
+
+                    const label = document.createElement('label');
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.name = 'systems';
+                    input.value = `${manufacturer}|||${mappingName}`;
+
+                    const img = document.createElement('img');
+                    img.className = 'system-logo';
+                    img.src = `/static/logos/systems/${mappingName}.png`;
+                    img.alt = `${safeSystem} logo`;
+                    img.onerror = () => { img.style.display = 'none'; };
+
+                    const span = document.createElement('span');
+                    span.textContent = safeSystem;
+
+                    label.appendChild(input);
+                    label.appendChild(img);
+                    label.appendChild(span);
+                    card.appendChild(label);
+                    
+                    systemGrid.appendChild(card);
+                });
+
+                groupDiv.appendChild(headerDiv);
+                groupDiv.appendChild(systemGrid);
+                systemsFragment.appendChild(groupDiv);
+            }
+            systemsContainer.appendChild(systemsFragment);
+            
+            // Re-add listener to system checkboxes for pack loading
+            document.querySelectorAll('input[name="systems"]').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    loadPacksForSelection();
+                    updateButtonStates();
+                });
+            });
+        }
+        
+        function toggleSystems(sysDivId) {
+            const div = document.getElementById(sysDivId);
+            const toggle = document.getElementById(`${sysDivId}-toggle`);
+            if (div.style.display === 'none') {
+                div.style.display = 'flex';
+                toggle.textContent = '[-]';
+            } else {
+                div.style.display = 'none';
+                toggle.textContent = '[+]';
+            }
+        }
+        
+        async function loadPacksForSelection() {
+            const checkedSystems = document.querySelectorAll('input[name="systems"]:checked');
+            const packsContainer = document.getElementById('packs');
+            
+            if (checkedSystems.length === 0) {
+                document.getElementById('packs-info').textContent = 'Select a system to view available packs';
+                packsContainer.innerHTML = '';
+                document.getElementById('toggleFilterBtn').style.display = 'none';
+                return;
+            }
+            
+            if (checkedSystems.length > 1) {
+                document.getElementById('packs-info').textContent = 'Select only one system to view packs';
+                packsContainer.innerHTML = '';
+                document.getElementById('toggleFilterBtn').style.display = 'none';
+                return;
+            }
+            
+            const systemValue = checkedSystems[0].value;
+            const [manufacturer, mappingName] = systemValue.split('|||');
+            const systemMeta = systemsMetaMap[systemValue];
+            const systemNameForApi = systemMeta ? systemMeta.mapping_name : mappingName;
+            
+            try {
+                const response = await fetch(`/api/systems/${manufacturer}/${systemNameForApi}/packs`);
+                if (!response.ok) {
+                    document.getElementById('packs-info').textContent = 'Failed to load packs for this system';
+                    packsContainer.innerHTML = '';
+                    return;
+                }
+                
+                const data = await response.json();
+                currentPacksData = { ...data, system: systemMeta?.display_name || mappingName, manufacturer };
+                renderPacksData(currentPacksData);
+            } catch (e) {
+                console.error('Error loading packs:', e);
+                document.getElementById('packs-info').textContent = 'Error loading packs';
+                packsContainer.innerHTML = '';
+            }
+        }
+        
+        function renderPacksData(data) {
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const clientName = checkedClient ? checkedClient.value : null;
+            
+            const safeSystemName = escapeHtml(data.system);
+            const packsInfo = document.getElementById('packs-info');
+            const packsContainer = document.getElementById('packs');
+            
+            // Filter packs if not showing all AND a client is selected
+            let packsToShow = data.packs;
+            if (!showAllPacks && clientName) {
+                packsToShow = data.packs.filter(pack => isPackSupportedByClient(pack, clientName));
+            }
+            
+            // Update info text
+            if (packsToShow.length === 0 && !showAllPacks && clientName) {
+                packsInfo.textContent = `No packs available for ${safeSystemName} on ${clientName}`;
+            } else if (showAllPacks) {
+                packsInfo.textContent = `Available packs for ${safeSystemName} (all clients):`;
+            } else if (clientName) {
+                packsInfo.textContent = `Available packs for ${safeSystemName} (filtered for ${clientName}):`;
+            } else {
+                packsInfo.textContent = `Available packs for ${safeSystemName}:`;
+            }
+            
+            // Show/hide toggle button
+            const toggleBtn = document.getElementById('toggleFilterBtn');
+            const hasFilteredOut = clientName && (data.packs.length > packsToShow.length);
+            toggleBtn.style.display = hasFilteredOut ? 'block' : 'none';
+            
+            // Render packs as cards
+            packsContainer.innerHTML = '';
+            const packsFragment = document.createDocumentFragment();
+            
+            console.log(`[renderPacksData] Rendering ${packsToShow.length} packs`);
+            
+            packsToShow.forEach(pack => {
+                const safePackName = escapeHtml(pack.name);
+                const safePackSize = escapeHtml(pack.estimated_size);
+                const safePackDesc = escapeHtml(pack.description);
+                
+                // Determine if pack is supported by current client
+                const isSupported = clientName ? isPackSupportedByClient(pack, clientName) : true;
+
+                const wrapper = document.createElement('div');
+                wrapper.style.margin = '0.5em 0';
+                wrapper.style.padding = '0.5em';
+                wrapper.style.border = '1px solid #333';
+                wrapper.style.borderRadius = '4px';
+                wrapper.style.background = isSupported ? '#f9f9f9' : '#f0f0f0';
+                wrapper.style.position = 'relative';
+                wrapper.style.opacity = isSupported ? '1' : '0.7';
+
+                const label = document.createElement('label');
+                label.style.display = 'flex';
+                label.style.alignItems = 'start';
+                label.style.gap = '0.5em';
+
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.name = 'packs';
+                input.value = pack.id;  // Use unescaped pack.id for API calls
+                input.disabled = !isSupported;
+                input.addEventListener('change', updateButtonStates);
+
+                const textContainer = document.createElement('div');
+                textContainer.style.flex = '1';
+                
+                const strong = document.createElement('strong');
+                strong.textContent = safePackName;
+
+                const sizeEm = document.createElement('em');
+                sizeEm.style.color = '#666';
+                sizeEm.textContent = ` (${safePackSize})`;
+
+                const descSpan = document.createElement('span');
+                descSpan.style.fontSize = '0.9em';
+                descSpan.style.color = '#555';
+                descSpan.style.display = 'block';
+                descSpan.style.marginTop = '0.3em';
+                descSpan.textContent = safePackDesc;
+
+                const infoLinksSpan = document.createElement('span');
+                infoLinksSpan.style.fontSize = '0.85em';
+                infoLinksSpan.style.display = 'block';
+                infoLinksSpan.style.marginTop = '0.3em';
+
+                if (Array.isArray(pack.info_links) && pack.info_links.length > 0) {
+                    pack.info_links.forEach(link => {
+                        const sanitized = sanitizeUrl(link.url);
+                        if (!sanitized) {
+                            return;
+                        }
+                        const safeLabel = escapeHtml(link.label);
+                        const anchor = document.createElement('a');
+                        anchor.href = sanitized;
+                        anchor.target = '_blank';
+                        anchor.rel = 'noopener noreferrer';
+                        anchor.style.color = '#2d8cf0';
+                        anchor.style.textDecoration = 'none';
+                        anchor.style.marginRight = '0.8em';
+                        anchor.textContent = `🔗 ${safeLabel}`;
+                        infoLinksSpan.appendChild(anchor);
+                    });
+                }
+                
+                // Add supported client icons in bottom right corner
+                const supportedDiv = document.createElement('div');
+                supportedDiv.style.display = 'flex';
+                supportedDiv.style.gap = '0.3em';
+                supportedDiv.style.alignItems = 'center';
+                supportedDiv.style.justifyContent = 'flex-end';
+                
+                const supportedClients = pack.supported_by || ['MiSTer'];
+                supportedClients.forEach(client => {
+                    const clientLogoName = client.toLowerCase().replace(/\s+/g, '');
+                    const img = document.createElement('img');
+                    img.src = `/static/logos/clients/${clientLogoName}.png`;
+                    img.alt = client;
+                    img.title = client;
+                    img.style.height = '1.2em';
+                    img.style.width = 'auto';
+                    img.style.opacity = isSupported && client === clientName ? '1' : '0.5';
+                    img.onerror = () => {
+                        // Fallback to text if no logo
+                        const span = document.createElement('span');
+                        span.textContent = client.substring(0, 2).toUpperCase();
+                        span.style.fontSize = '0.7em';
+                        span.style.padding = '0.2em 0.4em';
+                        span.style.background = '#ddd';
+                        span.style.borderRadius = '2px';
+                        supportedDiv.replaceChild(span, img);
+                    };
+                    supportedDiv.appendChild(img);
+                });
+
+                textContainer.appendChild(strong);
+                textContainer.appendChild(sizeEm);
+                textContainer.appendChild(descSpan);
+                if (infoLinksSpan.childNodes.length > 0) {
+                    textContainer.appendChild(infoLinksSpan);
+                }
+
+                label.appendChild(input);
+                label.appendChild(textContainer);
+                wrapper.appendChild(label);
+                
+                // Add supported client icons in a separate div (not overlapping)
+                supportedDiv.style.position = 'relative';
+                supportedDiv.style.marginTop = '0.3em';
+                wrapper.appendChild(supportedDiv);
+                packsFragment.appendChild(wrapper);
+            });
+            
+            packsContainer.appendChild(packsFragment);
+            updateButtonStates();
+        }
+        
+        function isPackSupportedByClient(pack, clientName) {
+            // If supported_by is not set, assume MiSTer
+            const supportedClients = pack.supported_by || ['MiSTer'];
+            return supportedClients.includes(clientName);
+        }
+        
+        function sanitizeUrl(url) {
+            try {
+                const parsed = new URL(url, window.location.origin);
+                const scheme = parsed.protocol.toLowerCase();
+                if (scheme === 'http:' || scheme === 'https:') {
+                    return parsed.href;
+                }
+            } catch (e) {
+                return '';
+            }
+            return '';
+        }
+        
+        function toggleShowAllPacks() {
+            showAllPacks = !showAllPacks;
+            const btn = document.getElementById('toggleFilterBtn');
+            btn.textContent = showAllPacks ? 'Show Filtered Packs' : 'Show All Packs';
+            
+            if (currentPacksData) {
+                renderPacksData(currentPacksData);
+            }
+        }
+        
+        function updateButtonStates() {
+            const checkedPacks = document.querySelectorAll('input[name="packs"]:checked').length;
+            const allPacks = document.querySelectorAll('input[name="packs"]').length;
+            console.log(`[updateButtonStates] Checked packs: ${checkedPacks} / Total packs: ${allPacks}`);
+            const installBtn = document.getElementById('installPacksBtn');
+            const installToggle = document.getElementById('installToggleBtn');
+            
+            if (checkedPacks > 0) {
+                installBtn.disabled = false;
+                installToggle.disabled = false;
+            } else {
+                installBtn.disabled = true;
+                installToggle.disabled = true;
+            }
+        }
+        
+        async function submitInstallAndUpdateDb() {
+            await submitInstallPacks(true);
+            await runDbSync();
+        }
+        
+        async function submitInstallOnly() {
+            await submitInstallPacks(false);
+        }
+
+        async function submitUpdateDbOnly() {
+            await runDbSync();
+        }
+        
+        async function runDbSync() {
+            const msg = document.getElementById('log');
+            msg.textContent += "\nStarting database sync...\n";
+            
+            // Get selected client and system for optimized sync
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const checkedSystems = Array.from(document.querySelectorAll('input[name="systems"]:checked'));
+            
+            // Build query parameters for filtered sync
+            let syncUrl = '/api/db/sync?stream=true';
+            if (checkedClient) {
+                syncUrl += `&client=${encodeURIComponent(checkedClient.value)}`;
+                msg.textContent += `Filtering sync to client: ${checkedClient.value}\n`;
+            }
+            if (checkedSystems.length === 1) {
+                const systemValue = checkedSystems[0].value;
+                const systemMeta = systemsMetaMap[systemValue];
+                if (systemMeta && systemMeta.name) {
+                    syncUrl += `&system=${encodeURIComponent(systemMeta.name)}`;
+                    msg.textContent += `Filtering sync to system: ${systemMeta.name}\n`;
+                }
+            }
+            
+            try {
+                msg.textContent += 'Connecting to sync stream...\n';
+                
+                const eventSource = new EventSource(syncUrl);
+                let receivedMessage = false;
+                
+                const fallbackTimer = setTimeout(() => {
+                    if (!receivedMessage) {
+                        msg.textContent += 'No stream data yet, switching to fetch fallback...\n';
+                        eventSource.close();
+                        runDbSyncFetch(syncUrl, msg);
+                    }
+                }, 2000);
+                
+                eventSource.onmessage = (event) => {
+                    try {
+                        receivedMessage = true;
+                        clearTimeout(fallbackTimer);
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.status === 'starting' || data.status === 'initialized') {
+                            msg.textContent += `${data.message || 'Initializing...'}\n`;
+                        } else if (data.status === 'syncing') {
+                            msg.textContent += `${data.message}\n`;
+                        } else if (data.status === 'client') {
+                            msg.textContent += `Processing client ${data.client} (${data.progress}/${data.total})...\n`;
+                        } else if (data.status === 'system') {
+                            msg.textContent += `  Syncing ${data.client}/${data.system}...\n`;
+                        } else if (data.status === 'files') {
+                            msg.textContent += `    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`;
+                        } else if (data.status === 'system_complete') {
+                            msg.textContent += `  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`;
+                        } else if (data.status === 'cleanup') {
+                            msg.textContent += `${data.message}\n`;
+                        } else if (data.status === 'complete' || data.status === 'done') {
+                            const stats = data.stats ? `${data.stats.files_added} added, ${data.stats.files_updated} updated, ${data.stats.files_deleted} deleted` : '';
+                            const duration = data.duration ? ` in ${data.duration.toFixed(1)}s` : '';
+                            msg.textContent += `Database sync complete: ${stats}${duration}\n`;
+                            eventSource.close();
+                        } else if (data.status === 'error') {
+                            msg.textContent += `ERROR: ${data.message}\n`;
+                            eventSource.close();
+                        }
+                        
+                        msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
+                    } catch (e) {
+                        console.error('Failed to parse SSE data:', e);
+                    }
+                };
+                
+                eventSource.onerror = () => {
+                    if (!receivedMessage) {
+                        clearTimeout(fallbackTimer);
+                        msg.textContent += 'Database sync connection error, switching to fetch fallback...\n';
+                        eventSource.close();
+                        runDbSyncFetch(syncUrl, msg);
+                    } else {
+                        msg.textContent += 'Database sync connection error\n';
+                        eventSource.close();
+                    }
+                };
+            } catch (e) {
+                msg.textContent += `Database sync error: ${e.message}\n`;
+            }
+        }
+
+        async function runDbSyncFetch(syncUrl, msg) {
+            try {
+                const response = await fetch(syncUrl);
+                if (!response.ok) {
+                    msg.textContent += `Database sync failed: HTTP ${response.status}\n`;
+                    return;
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines[lines.length - 1];
+                    
+                    for (let i = 0; i < lines.length - 1; i++) {
+                        const line = lines[i].trim();
+                        if (!line || line === ':' || line.startsWith(':')) {
+                            continue;
+                        }
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonStr = line.substring(6);
+                                const data = JSON.parse(jsonStr);
+                                
+                                if (data.status === 'starting' || data.status === 'initialized') {
+                                    msg.textContent += `${data.message || 'Initializing...'}\n`;
+                                } else if (data.status === 'syncing') {
+                                    msg.textContent += `${data.message}\n`;
+                                } else if (data.status === 'client') {
+                                    msg.textContent += `Processing client ${data.client} (${data.progress}/${data.total})...\n`;
+                                } else if (data.status === 'system') {
+                                    msg.textContent += `  Syncing ${data.client}/${data.system}...\n`;
+                                } else if (data.status === 'files') {
+                                    msg.textContent += `    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`;
+                                } else if (data.status === 'system_complete') {
+                                    msg.textContent += `  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`;
+                                } else if (data.status === 'cleanup') {
+                                    msg.textContent += `${data.message}\n`;
+                                } else if (data.status === 'complete' || data.status === 'done') {
+                                    const stats = data.stats ? `${data.stats.files_added} added, ${data.stats.files_updated} updated, ${data.stats.files_deleted} deleted` : '';
+                                    const duration = data.duration ? ` in ${data.duration.toFixed(1)}s` : '';
+                                    msg.textContent += `Database sync complete: ${stats}${duration}\n`;
+                                } else if (data.status === 'error') {
+                                    msg.textContent += `ERROR: ${data.message}\n`;
+                                }
+                                
+                                msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
+                            } catch (e) {
+                                console.error('Failed to parse SSE data:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                msg.textContent += `Database sync error: ${e.message}\n`;
+            }
+        }
+        
+        async function submitInstallPacks(updateDb) {
+            const checkedClient = document.querySelector('input[name="clients"]:checked');
+            const checkedSystem = document.querySelector('input[name="systems"]:checked');
+            const checkedPacks = document.querySelectorAll('input[name="packs"]:checked');
+            
+            console.log(`[submitInstallPacks] Client: ${checkedClient ? checkedClient.value : 'NONE'}, System: ${checkedSystem ? checkedSystem.value : 'NONE'}, Packs: ${checkedPacks.length}`);
+            Array.from(checkedPacks).forEach(p => console.log(`  - Pack: ${p.value}`));
+            
+            // Client is optional, but system and at least one pack are required
+            if (!checkedSystem || checkedPacks.length === 0) {
+                alert('Please select a system and at least one pack');
+                return;
+            }
+            
+            const clientName = checkedClient ? checkedClient.value : null;
+            const [manufacturer, mappingName] = checkedSystem.value.split('|||');
+            const packs = Array.from(checkedPacks).map(cb => cb.value);
+            
+            const msg = document.getElementById('log');
+            const clientDisplay = clientName ? `${clientName}/` : '(shared across all clients)/';
+            msg.textContent += `\nInstalling ${packs.length} pack(s) for ${clientDisplay}${mappingName}...\n`;
+            
+            try {
+                // Use client-agnostic endpoint if no client selected, otherwise use client-specific
+                let apiPath;
+                let requestBody;
+                
+                if (clientName) {
+                    apiPath = `/api/clients/${clientName}/systems/${mappingName}/install-packs`;
+                    requestBody = { client: clientName, system: mappingName, pack_ids: packs };
+                } else {
+                    apiPath = `/api/systems/${manufacturer}/${mappingName}/install-packs`;
+                    requestBody = { pack_ids: packs };
+                }
+                
+                const response = await fetch(apiPath, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                if (!response.ok) {
+                    msg.textContent += `Error: HTTP ${response.status}\n`;
+                    return;
+                }
+                
+                // Handle streaming response
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value, { stream: true });
+                    msg.textContent += text;
+                    msg.parentElement.scrollTop = msg.parentElement.scrollHeight;  // Auto-scroll
+                }
+                
+                const finalText = decoder.decode();  // Flush remaining bytes
+                if (finalText) {
+                    msg.textContent += finalText;
+                    msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
+                }
+            } catch (e) {
+                msg.textContent += `Error: ${e.message}\n`;
+            }
+        }
+        
+        // =============================================
+        // FUSE LOG
+        // =============================================
+        async function toggleInstallDropdown(event) {
+            const menu = document.getElementById('install-dropdown');
+            const isOpen = menu.style.display === 'block';
+            menu.style.display = isOpen ? 'none' : 'block';
+            event.stopPropagation();
+        }
+        
+        document.addEventListener('click', () => {
+            const menu = document.getElementById('install-dropdown');
+            menu.style.display = 'none';
+        });
+
+        async function loadConfigSettings() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                
+                document.getElementById('config_mountpoint').value = data.mountpoint || '';
+                document.getElementById('config_filestore').value = data.filestore || '';
+                document.getElementById('config_web_host').value = data.web_api?.host || '';
+                document.getElementById('config_web_port').value = data.web_api?.port || '';
+                document.getElementById('config_advanced_options').checked = data.ui?.advanced_options || false;
+                document.getElementById('config_show_real_path_tooltips').checked = data.ui?.show_real_path_tooltips || false;
+                
+                document.getElementById('config_database_mode').value = data.database?.mode || 'hybrid';
+                document.getElementById('config_database_path').value = data.database?.path || '/mnt/filestorefs/.transfs_metadata.db';
+                document.getElementById('config_database_auto_sync').checked = data.database?.auto_sync || false;
+                document.getElementById('config_database_sync_on_startup').checked = data.database?.sync_on_startup || false;
+                
+                await loadCacheConfigForConfigTab();
+                await loadAvailableConfigSets();
+                
+                showConfigStatus('Settings loaded successfully', 'success');
+            } catch (error) {
+                showConfigStatus('Failed to load settings: ' + error.message, 'error');
+            }
+        }
+
+        async function saveConfigSettings() {
+            try {
+                const configData = {
+                    mountpoint: document.getElementById('config_mountpoint').value,
+                    filestore: document.getElementById('config_filestore').value,
+                    web_api: {
+                        host: document.getElementById('config_web_host').value,
+                        port: parseInt(document.getElementById('config_web_port').value) || 8000
+                    },
+                    ui: {
+                        advanced_options: document.getElementById('config_advanced_options').checked,
+                        show_real_path_tooltips: document.getElementById('config_show_real_path_tooltips').checked
+                    },
+                    database: {
+                        mode: document.getElementById('config_database_mode').value,
+                        path: document.getElementById('config_database_path').value,
+                        auto_sync: document.getElementById('config_database_auto_sync').checked,
+                        sync_on_startup: document.getElementById('config_database_sync_on_startup').checked
+                    }
+                };
+
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(configData)
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                await updateAdvancedOptionsVisibility();
+                showConfigStatus('Settings saved successfully! Click "Restart App" to apply changes.', 'success');
+            } catch (error) {
+                showConfigStatus('Failed to save settings: ' + error.message, 'error');
+            }
+        }
+
+        async function restartApplication() {
+            if (!confirm('This will restart the application and reload config.yaml. Continue?')) return;
+            
+            try {
+                showConfigStatus('Restarting application...', 'info');
+                const response = await fetch('/api/restart', { method: 'POST' });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                showConfigStatus('Application restart initiated. Page will refresh in 3 seconds...', 'success');
+                setTimeout(() => location.reload(), 3000);
+            } catch (error) {
+                showConfigStatus('Failed to restart: ' + error.message, 'error');
+            }
+        }
+
+        function showConfigStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('config-status');
+            const statusText = document.getElementById('config-status-text');
+            
+            statusText.textContent = message;
+            statusDiv.style.display = 'block';
+            statusDiv.style.borderLeftColor = 
+                type === 'success' ? '#4CAF50' :
+                type === 'error' ? '#f44336' : '#2196F3';
+            
+            if (type !== 'info') {
+                setTimeout(() => { statusDiv.style.display = 'none'; }, 5000);
+            }
+        }
+
+        // =============================================
+        // CONFIG SET MANAGEMENT
+        // =============================================
+        async function loadAvailableConfigSets() {
+            try {
+                const response = await fetch('/api/config/sets');
+                const data = await response.json();
+                
+                const clientSelect = document.getElementById('client-config-set-select');
+                clientSelect.innerHTML = data.client_sets.map(set => 
+                    `<option value="${set}">${set}</option>`
+                ).join('');
+                
+                const sourceSelect = document.getElementById('source-config-set-select');
+                sourceSelect.innerHTML = data.source_sets.map(set => 
+                    `<option value="${set}">${set}</option>`
+                ).join('');
+                
+                await loadActiveConfigSets();
+            } catch (error) {
+                console.error('Failed to load config sets:', error);
+                showConfigStatus('Failed to load config sets: ' + error.message, 'error');
+            }
+        }
+
+        async function loadActiveConfigSets() {
+            try {
+                const response = await fetch('/api/config/sets/active');
+                const data = await response.json();
+                
+                const clientSelect = document.getElementById('client-config-set-select');
+                const sourceSelect = document.getElementById('source-config-set-select');
+                
+                if (clientSelect && data.active_client_config) {
+                    clientSelect.value = data.active_client_config;
+                }
+                if (sourceSelect && data.active_source_config) {
+                    sourceSelect.value = data.active_source_config;
+                }
+            } catch (error) {
+                console.error('Failed to load active config sets:', error);
+            }
+        }
+
+        async function switchClientConfigSet() {
+            const select = document.getElementById('client-config-set-select');
+            const newConfigSet = select.value;
+            
+            if (!confirm(`Switch to client config set "${newConfigSet}"? The page will reload.`)) {
+                await loadActiveConfigSets();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/config/sets/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_type: 'client',
+                        config_set: newConfigSet
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                showConfigStatus('Client config set switched. Reloading page...', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showConfigStatus('Failed to switch config set: ' + error.message, 'error');
+                await loadActiveConfigSets();
+            }
+        }
+
+        async function switchSourceConfigSet() {
+            const select = document.getElementById('source-config-set-select');
+            const newConfigSet = select.value;
+            
+            if (!confirm(`Switch to source config set "${newConfigSet}"? The page will reload.`)) {
+                await loadActiveConfigSets();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/config/sets/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_type: 'source',
+                        config_set: newConfigSet
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                showConfigStatus('Source config set switched. Reloading page...', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showConfigStatus('Failed to switch config set: ' + error.message, 'error');
+                await loadActiveConfigSets();
+            }
+        }
+
+        async function importConfigSet() {
+            const configType = document.getElementById('import-config-type').value;
+            const configName = document.getElementById('import-config-name').value.trim();
+            const fileInput = document.getElementById('import-config-file');
+            const file = fileInput.files[0];
+            
+            if (!configName) {
+                showConfigStatus('Please enter a config set name', 'error');
+                return;
+            }
+            if (!file) {
+                showConfigStatus('Please select a ZIP file', 'error');
+                return;
+            }
+            if (!file.name.endsWith('.zip')) {
+                showConfigStatus('File must be a ZIP archive', 'error');
+                return;
+            }
+            
+            try {
+                showConfigStatus('Importing config set...', 'info');
+                
+                const formData = new FormData();
+                formData.append('zip_file', file);
+                formData.append('config_type', configType);
+                formData.append('config_set', configName);
+                
+                const response = await fetch('/api/config/sets/import', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || `HTTP ${response.status}`);
+                }
+                
+                let overwriteMsg = '';
+                if (data.directory_existed) {
+                    overwriteMsg = ' (existing config was overwritten)';
+                }
+                
+                showConfigStatus(`Config set "${configName}" imported successfully${overwriteMsg}`, 'success');
+                
+                document.getElementById('import-config-name').value = '';
+                fileInput.value = '';
+                
+                await loadAvailableConfigSets();
+                
+                if (data.prompt_activation) {
+                    if (confirm(`Config set "${configName}" imported successfully. Activate it now?`)) {
+                        const select = configType === 'client' ? 
+                            document.getElementById('client-config-set-select') :
+                            document.getElementById('source-config-set-select');
+                        select.value = configName;
+                        
+                        if (configType === 'client') {
+                            await switchClientConfigSet();
+                        } else {
+                            await switchSourceConfigSet();
+                        }
+                    }
+                }
+            } catch (error) {
+                showConfigStatus('Failed to import config set: ' + error.message, 'error');
+            }
+        }
+
+        // =============================================
+        // CACHE CONFIGURATION
+        // =============================================
+        async function loadCacheConfigForConfigTab() {
+            try {
+                const response = await fetch('/api/cache/config');
+                const data = await response.json();
+                if (data.cache) {
+                    document.getElementById('stat-cache-toggle-config').checked = data.cache.stat_cache_enabled;
+                    document.getElementById('transform-pipeline-cache-toggle-config').checked = data.cache.transform_pipeline_cache_enabled ?? true;
+                    document.getElementById('transform-output-size-cache-toggle-config').checked = data.cache.transform_output_size_cache_enabled ?? true;
+                    document.getElementById('readdir-direntry-cache-toggle-config').checked = data.cache.readdir_direntry_cache_enabled ?? true;
+                    document.getElementById('readdir-skip-cache-lookup-toggle-config').checked = data.cache.readdir_skip_cache_lookup_with_direntry ?? true;
+                    document.getElementById('stat-save-interval-config').value = data.cache.stat_cache_save_interval;
+                }
+            } catch (e) {
+                console.error('Failed to load cache config for config tab:', e);
+            }
+        }
+
+        async function updateCacheConfigFromConfig(type) {
+            try {
+                const statCacheEnabled = document.getElementById('stat-cache-toggle-config').checked;
+                const transformPipelineCacheEnabled = document.getElementById('transform-pipeline-cache-toggle-config').checked;
+                const transformOutputSizeCacheEnabled = document.getElementById('transform-output-size-cache-toggle-config').checked;
+                const readdirDirentryCacheEnabled = document.getElementById('readdir-direntry-cache-toggle-config').checked;
+                const readdirSkipCacheLookupEnabled = document.getElementById('readdir-skip-cache-lookup-toggle-config').checked;
+                const saveInterval = parseFloat(document.getElementById('stat-save-interval-config').value) || 5.0;
+
+                const params = new URLSearchParams();
+                params.append('stat_cache_enabled', statCacheEnabled);
+                params.append('stat_cache_save_interval', saveInterval);
+                params.append('transform_pipeline_cache_enabled', transformPipelineCacheEnabled);
+                params.append('transform_output_size_cache_enabled', transformOutputSizeCacheEnabled);
+                params.append('readdir_direntry_cache_enabled', readdirDirentryCacheEnabled);
+                params.append('readdir_skip_cache_lookup_with_direntry', readdirSkipCacheLookupEnabled);
+
+                const response = await fetch('/api/cache/config?' + params.toString(), { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.updated) {
+                    showConfigStatus(`${type} configuration updated successfully`, 'success');
+                } else if (data.error) {
+                    showConfigStatus(`Error updating cache config: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error('Failed to update cache config from config tab:', e);
+                showConfigStatus('Failed to update cache configuration', 'error');
+            }
+        }
+
+        // =============================================
+        // ZAPAROO & DIRECTORY BROWSING
+        // =============================================
+        async function checkZaparooStatus() {
+            try {
+                const response = await fetch('/api/zaparoo/status');
+                zaparooStatus = await response.json();
+                if (!zaparooStatus.clients) {
+                    zaparooStatus.clients = [];
+                }
+                return zaparooStatus;
+            } catch (e) {
+                zaparooStatus = { clients: [], has_enabled: false, message: 'Failed to check status' };
+                return zaparooStatus;
+            }
+        }
+
+        async function loadDirectory(path, type, skipHistory = false) {
+            const fileList = document.getElementById(type + '-files');
+            const breadcrumb = document.getElementById(type + '-breadcrumb');
+            
+            fileList.textContent = 'Loading...';
+            breadcrumb.textContent = path;
+            
+            let zaparooPromise = null;
+            if (type === 'virtual') {
+                const timingBar = document.getElementById('virtual-timing');
+                if (timingBar) timingBar.style.display = 'none';
+                fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...<br><span style="font-size: 0.9em;">Checking stat cache...</span></div>';
+                zaparooPromise = checkZaparooStatus();
+            }
+            
+            if (type === 'native') {
+                currentNativePath = path;
+            } else {
+                currentVirtualPath = path;
+            }
+            
+            if (!skipHistory) {
+                const urlPath = type === 'native' 
+                    ? `/browse/native${path.replace('/mnt/filestorefs/Native', '')}`
+                    : `/browse/virtual${path.replace('/mnt/transfs', '')}`;
+                history.pushState({ tab: 'browse-' + type, path: path }, '', urlPath || '/browse/' + type);
+            }
+            
+            try {
+                const startTime = type === 'virtual' ? performance.now() : null;
+                
+                const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                if (type === 'virtual' && startTime !== null) {
+                    const elapsedMs = Math.round(performance.now() - startTime);
+                    const elapsedSec = (elapsedMs / 1000).toFixed(1);
+                    const timingBar = document.getElementById('virtual-timing');
+                    const timingValue = document.getElementById('virtual-timing-value');
+                    if (timingBar && timingValue) {
+                        timingValue.textContent = elapsedSec + 's';
+                        timingBar.style.display = 'block';
+                    }
+                    
+                    updateCacheStatus(path);
+                }
+                
+                if (data.error) {
+                    fileList.textContent = `Error: ${data.error}`;
+                    return;
+                }
+
+                if (type === 'virtual' && zaparooPromise) {
+                    await zaparooPromise;
+                }
+
+                const fragment = document.createDocumentFragment();
+                const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
+                const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
+                    const div = document.createElement('div');
+                    div.className = `file-item ${entryType === 'directory' ? 'folder' : 'file'}`;
+                    if (entryType === 'directory') {
+                        div.addEventListener('click', () => loadDirectory(fullPath, type));
+                    }
+                    const iconSpan = document.createElement('span');
+                    iconSpan.className = 'icon';
+                    iconSpan.textContent = entryType === 'directory' ? '📁' : '📄';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'name';
+                    nameSpan.textContent = name;
+                    
+                    const sizeSpan = document.createElement('span');
+                    sizeSpan.className = 'size';
+                    sizeSpan.textContent = size || '';
+
+                    const rightMeta = document.createElement('div');
+                    rightMeta.className = 'right-meta';
+                    
+                    // Add launch button for files in virtual tab if Zaparoo is configured AND system supports it
+                    let launchBtn = null;
+                    if (type === 'virtual' && supportsZaparoo && entryType !== 'directory') {
+                        const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
+                        const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
+                        
+                        launchBtn = document.createElement('button');
+                        launchBtn.className = 'launch-btn';
+                        
+                        const zaparooImg = document.createElement('img');
+                        zaparooImg.src = '/static/logos/other/zaparoo.png';
+                        zaparooImg.alt = 'Launch';
+                        zaparooImg.style.width = '35px';
+                        zaparooImg.style.height = '35px';
+                        zaparooImg.style.display = 'block';
+                        launchBtn.appendChild(zaparooImg);
+                        
+                        launchBtn.style.padding = '0';
+                        launchBtn.style.marginLeft = '0';
+                        launchBtn.style.background = 'transparent';
+                        launchBtn.style.border = 'none';
+                        launchBtn.style.cursor = 'pointer';
+                        launchBtn.style.display = 'flex';
+                        launchBtn.style.alignItems = 'center';
+                        launchBtn.style.justifyContent = 'center';
+                        
+                        if (!hasEnabled) {
+                            launchBtn.disabled = true;
+                            zaparooImg.style.opacity = '0.3';
+                            launchBtn.style.cursor = 'not-allowed';
+                            launchBtn.title = 'Zaparoo is disabled - enable it in app.yaml configuration';
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showToast('Zaparoo is disabled in configuration', 'warning', 3000);
+                            });
+                        } else if (availableClients.length === 0) {
+                            launchBtn.disabled = true;
+                            zaparooImg.style.opacity = '0.5';
+                            launchBtn.style.cursor = 'not-allowed';
+                            const unreachableNames = zaparooStatus.clients.filter(c => c.enabled && !c.reachable).map(c => c.name).join(', ');
+                            launchBtn.title = `Zaparoo servers unreachable: ${unreachableNames}`;
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showToast(`Zaparoo unreachable: ${unreachableNames}`, 'warning', 3000);
+                            });
+                        } else if (availableClients.length === 1) {
+                            zaparooImg.style.opacity = '0.8';
+                            launchBtn.title = `Launch with Zaparoo (${availableClients[0].name})`;
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                launchWithZaparoo(fullPath, availableClients[0].name, launchBtn);
+                            });
+                            launchBtn.addEventListener('mouseover', () => {
+                                zaparooImg.style.opacity = '1';
+                            });
+                            launchBtn.addEventListener('mouseout', () => {
+                                zaparooImg.style.opacity = '0.8';
+                            });
+                        } else {
+                            zaparooImg.style.opacity = '0.8';
+                            launchBtn.title = 'Launch with Zaparoo (select client)';
+                            launchBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                showClientSelector(fullPath, availableClients, launchBtn);
+                            });
+                            launchBtn.addEventListener('mouseover', () => {
+                                zaparooImg.style.opacity = '1';
+                            });
+                            launchBtn.addEventListener('mouseout', () => {
+                                zaparooImg.style.opacity = '0.8';
+                            });
+                        }
+                    }
+                    
+                    // Add info button for files in virtual tab
+                    let infoBtn = null;
+                    let metadataPanel = null;
+                    if (type === 'virtual' && entryType !== 'directory') {
+                        infoBtn = document.createElement('button');
+                        infoBtn.className = 'info-btn';
+                        infoBtn.textContent = 'ℹ️';
+                        infoBtn.title = 'Toggle file metadata';
+                        infoBtn.style.padding = '0';
+                        infoBtn.style.marginLeft = '0';
+                        infoBtn.style.background = 'transparent';
+                        infoBtn.style.border = 'none';
+                        infoBtn.style.cursor = 'pointer';
+                        infoBtn.style.display = 'flex';
+                        infoBtn.style.alignItems = 'center';
+                        infoBtn.style.justifyContent = 'center';
+                        infoBtn.style.width = '35px';
+                        infoBtn.style.height = '35px';
+                        infoBtn.style.fontSize = '1.4em';
+                        infoBtn.style.lineHeight = '1';
+                        infoBtn.style.transition = 'opacity 0.2s';
+                        infoBtn.style.opacity = '0.7';
+                        
+                        metadataPanel = document.createElement('div');
+                        metadataPanel.className = 'metadata-panel';
+                        metadataPanel.style.display = 'none';
+                        metadataPanel.style.gridColumn = '1 / -1';
+                        metadataPanel.style.borderTop = '1px solid #e0e0e0';
+                        metadataPanel.style.backgroundColor = '#f9f9f9';
+                        metadataPanel.style.padding = '0';
+                        metadataPanel.style.overflow = 'hidden';
+                        metadataPanel.style.transition = 'max-height 0.3s ease-out, padding 0.3s ease-out';
+                        metadataPanel.style.maxHeight = '0';
+                        
+                        let metadataLoaded = false;
+                        let metadataLoading = false;
+                        let panelOpen = false;
+                        
+                        infoBtn.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            
+                            if (panelOpen) {
+                                metadataPanel.style.maxHeight = '0';
+                                metadataPanel.style.padding = '0';
+                                infoBtn.style.opacity = '0.7';
+                                panelOpen = false;
+                                return;
+                            }
+                            
+                            if (!metadataLoaded && !metadataLoading) {
+                                metadataLoading = true;
+                                metadataPanel.innerHTML = '<div style="padding: 1em; text-align: center; color: #666;">Loading metadata...</div>';
+                                metadataPanel.style.maxHeight = '100px';
+                                metadataPanel.style.padding = '0';
+                                
+                                try {
+                                    const response = await fetch(`/api/file-metadata?path=${encodeURIComponent(fullPath)}`);
+                                    const data = await response.json();
+                                    
+                                    let html = '';
+                                    
+                                    if (data.error) {
+                                        html = `<div style="padding: 1em; color: #d32f2f;">Error: ${escapeHtml(data.error)}</div>`;
+                                    } else if (data.metadata && Object.keys(data.metadata).length > 0) {
+                                        html = '<div style="padding: 1em;">';
+                                        
+                                        html += '<div style="margin-bottom: 1em; padding-bottom: 1em; border-bottom: 2px solid #1976d2;">';
+                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">File Information</div>';
+                                        
+                                        if (data.size !== null && data.size !== undefined) {
+                                            const formatBytes = (bytes) => {
+                                                if (bytes === 0) return '0 Bytes';
+                                                const k = 1024;
+                                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                                return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+                                            };
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">File Size:</span>
+                                                <span style="color: #333;">${escapeHtml(formatBytes(data.size))}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        if (data.extension) {
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Virtual File Type:</span>
+                                                <span style="color: #333;">${escapeHtml(data.extension)}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        if (data.source_path) {
+                                            const sourceFilename = data.source_path.split('/').pop();
+                                            const sourceExt = sourceFilename.includes('.') ? sourceFilename.split('.').pop() : '';
+                                            
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore Path:</span>
+                                                <span style="color: #333; font-family: monospace; font-size: 0.9em; word-break: break-all;">${escapeHtml(data.source_path)}</span>
+                                            </div>`;
+                                            
+                                            if (sourceExt && sourceExt !== data.extension) {
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore File Type:</span>
+                                                    <span style="color: #333;">${escapeHtml(sourceExt)}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        html += '</div>';
+                                        
+                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">Game Metadata</div>';
+                                        const metadataFields = [
+                                            { key: 'media_type', label: 'Media Type' },
+                                            { key: 'region', label: 'Region' },
+                                            { key: 'language', label: 'Language' },
+                                            { key: 'publisher', label: 'Publisher' },
+                                            { key: 'developer', label: 'Developer' },
+                                            { key: 'release_year', label: 'Release Year' },
+                                            { key: 'year', label: 'Year' },
+                                            { key: 'genre', label: 'Genre' },
+                                            { key: 'subgenre', label: 'Subgenre' },
+                                            { key: 'rating', label: 'Rating' },
+                                            { key: 'play_count', label: 'Play Count' }
+                                        ];
+                                        
+                                        for (const field of metadataFields) {
+                                            const value = data.metadata[field.key];
+                                            if (value !== null && value !== undefined && value !== '') {
+                                                html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                    <span style="font-weight: 600; color: #1976d2; min-width: 120px;">${escapeHtml(field.label)}:</span>
+                                                    <span style="color: #333;">${escapeHtml(String(value))}</span>
+                                                </div>`;
+                                            }
+                                        }
+                                        
+                                        const flags = [];
+                                        if (data.metadata.is_prototype) flags.push('Prototype');
+                                        if (data.metadata.is_homebrew) flags.push('Homebrew');
+                                        if (data.metadata.is_translation) flags.push('Translation');
+                                        if (data.metadata.is_hack) flags.push('Hack');
+                                        if (data.metadata.is_revision) flags.push('Revision');
+                                        
+                                        if (flags.length > 0) {
+                                            html += `<div style="margin-top: 0.8em; padding-top: 0.8em; border-top: 1px solid #e0e0e0;">
+                                                <span style="font-weight: 600; color: #1976d2;">Flags:</span>
+                                                <span style="color: #333; margin-left: 0.8em;">${escapeHtml(flags.join(', '))}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        html += '</div>';
+                                    } else {
+                                        html = '<div style="padding: 1em; color: #888;">No metadata available</div>';
+                                    }
+                                    
+                                    metadataPanel.innerHTML = html;
+                                    metadataLoaded = true;
+                                } catch (e) {
+                                    console.error('Failed to load metadata:', e);
+                                    metadataPanel.innerHTML = '<div style="padding: 1em; color: #d32f2f;">Failed to load metadata</div>';
+                                    metadataLoaded = true;
+                                }
+                                metadataLoading = false;
+                            }
+                            
+                            metadataPanel.style.display = 'grid';
+                            metadataPanel.style.maxHeight = '500px';
+                            metadataPanel.style.padding = '0';
+                            infoBtn.style.opacity = '1';
+                            panelOpen = true;
+                        });
+                        
+                        infoBtn.addEventListener('mouseover', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '1';
+                        });
+                        infoBtn.addEventListener('mouseout', () => {
+                            if (!panelOpen) infoBtn.style.opacity = '0.7';
+                        });
+                    }
+                    
+                    const buttonContainer = document.createElement('div');
+                    buttonContainer.style.display = 'flex';
+                    buttonContainer.style.gap = '0.3em';
+                    buttonContainer.style.alignItems = 'center';
+                    
+                    if (launchBtn) buttonContainer.appendChild(launchBtn);
+                    if (infoBtn) buttonContainer.appendChild(infoBtn);
+                    
+                    if (launchBtn || infoBtn) rightMeta.appendChild(buttonContainer);
+                    div.append(iconSpan, nameSpan, rightMeta);
+                    fragment.appendChild(div);
+                    
+                    if (metadataPanel) {
+                        fragment.appendChild(metadataPanel);
+                    }
+                };
+
+                if (!roots.includes(path)) {
+                    const parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    addEntry('..', 'directory', parentPath, '', false);
+                }
+
+                data.entries.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+
+                for (const entry of data.entries) {
+                    const fullPath = (path.replace(/\/+$/, '') + '/' + entry.name).replace(/\/+/, '/');
+                    const sizeStr = entry.size !== undefined ? formatSize(entry.size) : '';
+                    const supportsZaparoo = entry.supports_zaparoo !== undefined ? entry.supports_zaparoo : false;
+                    addEntry(entry.name, entry.type, fullPath, sizeStr, supportsZaparoo);
+                }
+
+                if (data.entries.length === 0 && roots.includes(path)) {
+                    const emptyDiv = document.createElement('div');
+                    emptyDiv.style.padding = '1em';
+                    emptyDiv.style.color = '#888';
+                    emptyDiv.textContent = 'Empty directory';
+                    fragment.appendChild(emptyDiv);
+                }
+
+                fileList.replaceChildren(fragment);
+                if (type === 'virtual' && window.currentSourcePaths && window.currentSourcePaths.length > 0) {
+                    displaySourceFolderControls(window.currentSourcePaths, fileList);
+                }
+                
+            } catch (e) {
+                console.error('Error loading directory:', e);
+                fileList.textContent = `Error loading directory: ${e.message}`;
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        async function launchWithZaparoo(filePath, clientName, button) {
+            const img = button.querySelector('img');
+            const originalOpacity = img ? img.style.opacity : '0.8';
+            const originalBg = button.style.background;
+            const originalCursor = button.style.cursor;
+            
+            try {
+                button.disabled = true;
+                if (img) {
+                    img.style.opacity = '0.5';
+                }
+                button.style.cursor = 'wait';
+                button.title = 'Launching...';
+                
+                const response = await fetch('/api/zaparoo/launch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        file_path: filePath,
+                        client_name: clientName 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    if (img) {
+                        img.style.opacity = '1';
+                    }
+                    button.style.background = '#4CAF5033';
+                    button.title = 'Successfully launched!';
+                    
+                    showToast(`Launched on ${clientName}: ${filePath.split('/').pop()}`, 'success', 3000);
+                    
+                    setTimeout(() => {
+                        if (img) {
+                            img.style.opacity = originalOpacity;
+                        }
+                        button.style.background = originalBg;
+                        button.style.cursor = originalCursor;
+                        button.title = `Launch with Zaparoo (${clientName})`;
+                        button.disabled = false;
+                    }, 2000);
+                } else if (data.error) {
+                    if (img) {
+                        img.style.opacity = '0.3';
+                    }
+                    button.style.background = '#f4433633';
+                    button.title = data.error;
+                    
+                    showToast(`Launch failed: ${data.error}`, 'error', 5000);
+                    
+                    setTimeout(() => {
+                        if (img) {
+                            img.style.opacity = originalOpacity;
+                        }
+                        button.style.background = originalBg;
+                        button.style.cursor = originalCursor;
+                        button.title = `Launch with Zaparoo (${clientName})`;
+                        button.disabled = false;
+                    }, 3000);
+                }
+            } catch (e) {
+                if (img) {
+                    img.style.opacity = '0.3';
+                }
+                button.style.background = '#f4433633';
+                button.title = 'Network error: ' + e.message;
+                
+                showToast(`Network error: ${e.message}`, 'error', 5000);
+                
+                setTimeout(() => {
+                    if (img) {
+                        img.style.opacity = originalOpacity;
+                    }
+                    button.style.background = originalBg;
+                    button.style.cursor = originalCursor;
+                    button.title = `Launch with Zaparoo (${clientName})`;
+                    button.disabled = false;
+                }, 3000);
+            }
+        }
+
+        function showClientSelector(filePath, clients, button) {
+            const overlay = document.createElement('div');
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.background = 'rgba(0, 0, 0, 0.5)';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.style.zIndex = '10000';
+            
+            const modal = document.createElement('div');
+            modal.style.background = '#2a2a2a';
+            modal.style.padding = '2em';
+            modal.style.borderRadius = '8px';
+            modal.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)';
+            modal.style.maxWidth = '400px';
+            modal.style.width = '90%';
+            
+            const title = document.createElement('h3');
+            title.textContent = 'Select Zaparoo Client';
+            title.style.marginTop = '0';
+            title.style.color = '#fff';
+            modal.appendChild(title);
+            
+            const fileName = document.createElement('p');
+            fileName.textContent = filePath.split('/').pop();
+            fileName.style.color = '#aaa';
+            fileName.style.fontSize = '0.9em';
+            fileName.style.marginBottom = '1.5em';
+            modal.appendChild(fileName);
+            
+            clients.forEach(client => {
+                const btn = document.createElement('button');
+                btn.textContent = `☁️ ${client.name}`;
+                btn.style.display = 'block';
+                btn.style.width = '100%';
+                btn.style.padding = '1em';
+                btn.style.marginBottom = '0.5em';
+                btn.style.background = '#ff9800';
+                btn.style.color = 'white';
+                btn.style.border = 'none';
+                btn.style.borderRadius = '4px';
+                btn.style.cursor = 'pointer';
+                btn.style.fontSize = '1em';
+                
+                const info = document.createElement('div');
+                info.textContent = `${client.host}:${client.port}  ${client.mount_path}`;
+                info.style.fontSize = '0.8em';
+                info.style.color = '#ddd';
+                info.style.marginTop = '0.3em';
+                btn.appendChild(info);
+                
+                btn.addEventListener('mouseover', () => {
+                    btn.style.background = '#f57c00';
+                });
+                btn.addEventListener('mouseout', () => {
+                    btn.style.background = '#ff9800';
+                });
+                btn.addEventListener('click', () => {
+                    document.body.removeChild(overlay);
+                    launchWithZaparoo(filePath, client.name, button);
+                });
+                
+                modal.appendChild(btn);
+            });
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.style.display = 'block';
+            cancelBtn.style.width = '100%';
+            cancelBtn.style.padding = '0.8em';
+            cancelBtn.style.marginTop = '1em';
+            cancelBtn.style.background = '#666';
+            cancelBtn.style.color = 'white';
+            cancelBtn.style.border = 'none';
+            cancelBtn.style.borderRadius = '4px';
+            cancelBtn.style.cursor = 'pointer';
+            cancelBtn.addEventListener('click', () => {
+                document.body.removeChild(overlay);
+            });
+            modal.appendChild(cancelBtn);
+            
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    document.body.removeChild(overlay);
+                }
+            });
+            
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        }
+
+        function showToast(message, type = 'info', duration = 3000) {
+            const toastContainer = document.getElementById('toast-container');
+            if (!toastContainer) {
+                const container = document.createElement('div');
+                container.id = 'toast-container';
+                container.style.position = 'fixed';
+                container.style.top = '20px';
+                container.style.right = '20px';
+                container.style.zIndex = '10000';
+                container.style.display = 'flex';
+                container.style.flexDirection = 'column';
+                container.style.gap = '10px';
+                document.body.appendChild(container);
+            }
+            
+            const toast = document.createElement('div');
+            const bgColor = type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3';
+            toast.style.background = bgColor;
+            toast.style.color = 'white';
+            toast.style.padding = '12px 16px';
+            toast.style.borderRadius = '4px';
+            toast.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+            toast.style.maxWidth = '300px';
+            toast.style.wordWrap = 'break-word';
+            toast.style.animation = 'slideIn 0.3s ease-in-out';
+            toast.textContent = message;
+            
+            document.getElementById('toast-container').appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease-in-out';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        async function updateCacheStatus(path) {
+            try {
+                const response = await fetch(`/api/cache/status-all?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                const statIndicator = document.getElementById('stat-cache-indicator');
+                const statText = document.getElementById('stat-cache-text');
+                
+                if (data.stat_cache) {
+                    const count = data.stat_cache.entry_count || 0;
+                    const dirty = data.stat_cache.dirty;
+                    const pathCount = data.stat_cache.path_entry_count || 0;
+                    
+                    if (count > 0) {
+                        statIndicator.style.background = dirty ? '#FFC107' : '#4CAF50';
+                        statIndicator.title = dirty ? 'Stat cache (unsaved changes)' : 'Stat cache (saved)';
+                        statText.textContent = data.stat_cache.path_cached ? `${pathCount} entries` : `${count} files${dirty ? ' *' : ''}`;
+                    } else {
+                        statIndicator.style.background = '#999';
+                        statIndicator.title = 'Stat cache empty';
+                        statText.textContent = 'Empty';
+                    }
+                }
+                
+                const syncDbBtn = document.getElementById('sync-db-btn');
+                try {
+                    const configResponse = await fetch('/api/config');
+                    const configData = await configResponse.json();
+                    const databaseEnabled = configData.database?.enabled || false;
+                    syncDbBtn.style.display = databaseEnabled ? 'block' : 'none';
+                } catch (e) {
+                    syncDbBtn.style.display = 'none';
+                }
+            } catch (e) {
+                console.error('Failed to check cache status:', e);
+            }
+        }
+
+        function displaySourceFolderControls(sourcePaths, containerElement) {
+            const container = document.createElement('div');
+            container.style.marginTop = '1em';
+            container.style.padding = '0.8em';
+            container.style.backgroundColor = '#f5f5f5';
+            container.style.borderRadius = '4px';
+            container.style.borderLeft = '3px solid #2196F3';
+            container.style.display = 'block';
+            
+            const title = document.createElement('div');
+            title.style.fontWeight = 'bold';
+            title.style.marginBottom = '0.5em';
+            title.style.fontSize = '0.9em';
+            title.style.color = '#333';
+            title.textContent = '📁 Native Folders:';
+            container.appendChild(title);
+            
+            for (const sourcePath of sourcePaths) {
+                const pathDiv = document.createElement('div');
+                pathDiv.style.display = 'flex';
+                pathDiv.style.justifyContent = 'space-between';
+                pathDiv.style.alignItems = 'center';
+                pathDiv.style.marginBottom = '0.5em';
+                pathDiv.style.padding = '0.4em';
+                pathDiv.style.backgroundColor = 'white';
+                pathDiv.style.borderRadius = '3px';
+                
+                const pathText = document.createElement('span');
+                pathText.style.fontFamily = 'monospace';
+                pathText.style.fontSize = '0.85em';
+                pathText.style.color = '#555';
+                pathText.style.flex = '1';
+                pathText.title = sourcePath;
+                pathText.textContent = sourcePath.length > 60 ? '...' + sourcePath.slice(-60) : sourcePath;
+                pathDiv.appendChild(pathText);
+                
+                const buttonDiv = document.createElement('div');
+                buttonDiv.style.display = 'flex';
+                buttonDiv.style.gap = '0.3em';
+                
+                const clearBtn = document.createElement('button');
+                clearBtn.textContent = '❌';
+                clearBtn.title = 'Invalidate cache';
+                clearBtn.style.padding = '0.2em 0.4em';
+                clearBtn.style.border = 'none';
+                clearBtn.style.borderRadius = '3px';
+                clearBtn.style.backgroundColor = '#FF9800';
+                clearBtn.style.color = 'white';
+                clearBtn.style.cursor = 'pointer';
+                clearBtn.style.fontSize = '0.8em';
+                clearBtn.onclick = async () => {
+                    if (confirm('Invalidate cache for ' + sourcePath + '?')) {
+                        clearBtn.disabled = true;
+                        clearBtn.textContent = '...';
+                        try {
+                            await fetch(`/api/cache/clear?path=${encodeURIComponent(sourcePath)}`, { method: 'POST' });
+                            clearBtn.textContent = '';
+                            clearBtn.style.backgroundColor = '#4CAF50';
+                            setTimeout(() => { clearBtn.textContent = '❌'; clearBtn.style.backgroundColor = '#FF9800'; clearBtn.disabled = false; }, 1000);
+                        } catch (e) {
+                            clearBtn.textContent = '';
+                            clearBtn.style.backgroundColor = '#f44336';
+                            clearBtn.disabled = false;
+                        }
+                    }
+                };
+                buttonDiv.appendChild(clearBtn);
+                
+                const recacheBtn = document.createElement('button');
+                recacheBtn.textContent = '│';
+                recacheBtn.title = 'Recache';
+                recacheBtn.style.padding = '0.2em 0.4em';
+                recacheBtn.style.border = 'none';
+                recacheBtn.style.borderRadius = '3px';
+                recacheBtn.style.backgroundColor = '#4CAF50';
+                recacheBtn.style.color = 'white';
+                recacheBtn.style.cursor = 'pointer';
+                recacheBtn.style.fontSize = '0.8em';
+                recacheBtn.onclick = async () => {
+                    if (confirm('Recache ' + sourcePath + '?')) {
+                        recacheBtn.disabled = true;
+                        recacheBtn.textContent = '...';
+                        try {
+                            await fetch(`/api/cache/clear?path=${encodeURIComponent(sourcePath)}`, { method: 'POST' });
+                            const vpath = currentVirtualPath || '/mnt/transfs/MiSTer';
+                            await loadDirectory(vpath, 'virtual', true);
+                            recacheBtn.textContent = '';
+                            recacheBtn.style.backgroundColor = '#2196F3';
+                            setTimeout(() => { recacheBtn.textContent = '│'; recacheBtn.style.backgroundColor = '#4CAF50'; recacheBtn.disabled = false; }, 1000);
+                        } catch (e) {
+                            recacheBtn.textContent = '';
+                            recacheBtn.style.backgroundColor = '#f44336';
+                            recacheBtn.disabled = false;
+                        }
+                    }
+                };
+                buttonDiv.appendChild(recacheBtn);
+                
+                pathDiv.appendChild(buttonDiv);
+                container.appendChild(pathDiv);
+            }
+            
+            if (containerElement) {
+                containerElement.appendChild(container);
+            }
+        }
+
+        async function recacheCurrentDir() {
+            const path = currentVirtualPath;
+            const btn = document.getElementById('recache-dir-btn');
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
+            try {
+                await fetch(`/api/cache/clear?path=${encodeURIComponent(path)}`, { method: 'POST' });
+                const indicator = document.getElementById('stat-cache-indicator');
+                const text = document.getElementById('stat-cache-text');
+                if (indicator && text) {
+                    indicator.style.background = '#2196F3';
+                    text.textContent = 'Refreshing...';
+                }
+                await loadDirectory(path, 'virtual', true);
+            } catch (e) {
+                console.error('Failed to recache:', e);
+                alert('Failed to recache directory');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function clearStatCache() {
+            const btn = document.getElementById('clear-stat-btn');
+            if (!confirm('Clear the entire stat cache? This will affect all directories.')) {
+                return;
+            }
+            
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
+            try {
+                const response = await fetch('/api/cache/clear-getattr', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.cleared) {
+                    const indicator = document.getElementById('stat-cache-indicator');
+                    const text = document.getElementById('stat-cache-text');
+                    if (indicator && text) {
+                        indicator.style.background = '#999';
+                        text.textContent = 'Empty';
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to clear stat cache:', e);
+                alert('Failed to clear stat cache');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function clearAllCaches() {
+            const btn = document.getElementById('clear-all-btn');
+            if (!confirm('Clear ALL caches? This will affect all directories.')) {
+                return;
+            }
+            
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
+            try {
+                const response = await fetch('/api/cache/clear-all', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.stat_cache?.cleared) {
+                    const indicator = document.getElementById('stat-cache-indicator');
+                    const text = document.getElementById('stat-cache-text');
+                    if (indicator && text) {
+                        indicator.style.background = '#999';
+                        text.textContent = 'Empty';
+                    }
+                    await loadDirectory(currentVirtualPath, 'virtual', true);
+                }
+            } catch (e) {
+                console.error('Failed to clear all caches:', e);
+                alert('Failed to clear all caches');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function syncDatabase() {
+            const path = currentVirtualPath;
+            const btn = document.getElementById('sync-db-btn');
+            if (!confirm(`Rebuild database for this folder tree?\n\nPath: ${path}\n\nThis may take a while...`)) {
+                return;
+            }
+            
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = '│...';
+            
+            try {
+                const response = await fetch(`/api/db/sync?path=${encodeURIComponent(path)}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const msg = `Database synced: ${data.stats.files_added || 0} added, ${data.stats.files_updated || 0} updated in ${(data.stats.duration || 0).toFixed(2)}s`;
+                    alert(`Database sync complete!\n\n${msg}`);
+                    await loadDirectory(path, 'virtual', true);
+                } else {
+                    alert(`Database sync failed: ${data.message || 'Unknown error'}`);
+                }
+            } catch (e) {
+                console.error('Failed to sync database:', e);
+                alert('Failed to sync database');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // =============================================
+        // TEST RESULTS
+        // =============================================
+        const testRunHistory = [];
+        let activeRunId = null;
+        const activeTestTabs = {};
+        const activeTestCategories = {};
+        const expandedOutputs = {};
+
+        async function runTests(testType = 'snapshots') {
+            try {
+                showTestStatus(`Starting ${testType} tests...`, true);
+                
+                const response = await fetch(`/api/run-tests?test_type=${testType}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.task_id) {
+                    pollTestResults(data.task_id);
+                }
+            } catch (error) {
+                showTestStatus('Failed to start tests: ' + error.message, false);
+            }
+        }
+
+        async function pollTestResults(taskId) {
+            const poll = async () => {
+                try {
+                    const response = await fetch(`/api/test-results/${taskId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'running') {
+                        const summary = data.summary || {};
+                        showTestStatus(
+                            `Tests running... ${summary.total || 0} tests (${summary.passed || 0} passed, ${summary.failed || 0} failed)`,
+                            true,
+                            data.progress
+                        );
+                        setTimeout(poll, 3000);
+                    } else if (data.status === 'completed') {
+                        showTestStatus('Tests completed!', false);
+                    } else if (data.status === 'failed') {
+                        showTestStatus('Tests failed: ' + (data.error || 'Unknown error'), false);
+                    }
+                } catch (error) {
+                    showTestStatus('Error checking test status: ' + error.message, false);
+                }
+            };
+            poll();
+        }
+
+        async function loadLastTestResults() {
+            try {
+                const response = await fetch('/api/test-results/last');
+                const data = await response.json();
+                if (data.results) {
+                    showTestStatus('Last test results loaded', false);
+                } else {
+                    showTestStatus('No previous test results found', false);
+                }
+            } catch (error) {
+                showTestStatus('Failed to load results: ' + error.message, false);
+            }
+        }
+
+        function showTestStatus(message, isRunning = false, progress = 0) {
+            const statusDiv = document.getElementById('test-status');
+            const statusText = document.getElementById('test-status-text');
+            const progressBar = document.getElementById('test-progress-bar');
+            const progressFill = document.getElementById('test-progress-fill');
+
+            statusText.textContent = message;
+            statusDiv.style.display = 'block';
+
+            if (isRunning) {
+                progressBar.style.display = 'block';
+                if (progress > 0) {
+                    progressFill.style.width = progress + '%';
+                }
+            } else {
+                progressBar.style.display = 'none';
+            }
+        }
+
+        function clearTestResults() {
+            testRunHistory.length = 0;
+            activeRunId = null;
+            document.getElementById('test-results-container').innerHTML = 
+                '<div style="color: #999; text-align: center; padding: 2em;">No test results yet. Click "Run Tests" to start.</div>';
+            document.getElementById('test-status').style.display = 'none';
+        }
+
+        // =============================================
+        // FUSE LOG
+        // =============================================
+        async function refreshFuseLog() {
+            try {
+                const response = await fetch('/api/fuse-log');
+                const data = await response.json();
+                const fuseLogDiv = document.getElementById('fuse-log');
+                fuseLogDiv.textContent = data.log || 'No log data available';
+                fuseLogDiv.scrollTop = fuseLogDiv.scrollHeight;
+            } catch (e) {
+                console.error('Failed to refresh FUSE log:', e);
+            }
+        }
+
+        // Parse URL on page load to restore browse state
+        async function initializeFromURL() {
+            const path = window.location.pathname;
+            if (path.startsWith('/browse/native')) {
+                const dirPath = path.replace('/browse/native', '') || '';
+                const fullPath = '/mnt/filestorefs/Native' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
+                currentNativePath = fullPath;
+                
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                
+                document.getElementById('browse-native-tab').classList.add('active');
+                const nativeBtn = document.querySelector('[onclick*="browse-native"]');
+                if (nativeBtn) nativeBtn.classList.add('active');
+                
+                loadDirectory(fullPath, 'native', true);
+                history.replaceState({ tab: 'browse-native', path: fullPath }, '', path);
+            } else if (path.startsWith('/browse/virtual')) {
+                const dirPath = path.replace('/browse/virtual', '') || '';
+                const fullPath = '/mnt/transfs' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
+                currentVirtualPath = fullPath;
+                
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                
+                document.getElementById('browse-virtual-tab').classList.add('active');
+                const virtualBtn = document.querySelector('[onclick*="browse-virtual"]');
+                if (virtualBtn) virtualBtn.classList.add('active');
+                
+                await checkZaparooStatus();
+                loadDirectory(fullPath, 'virtual', true);
+                history.replaceState({ tab: 'browse-virtual', path: fullPath }, '', path);
+            }
+        }
+
+        // =============================================
+        // INITIALIZATION
+        // =============================================
+        window.addEventListener('DOMContentLoaded', async () => {
+            // Load the dashboard data (clients, systems, packs)
+            await loadData();
+            
+            // Load other data
+            await initializeFromURL();
+            await checkZaparooStatus();
+            await loadConfigSettings();
+            await loadLastTestResults();
+            await updateAdvancedOptionsVisibility();
+        });
+
+        async function updateAdvancedOptionsVisibility() {
+            try {
+                const response = await fetch('/api/config?fields=ui');
+                const data = await response.json();
+                const advancedEnabled = data.ui?.advanced_options || false;
+                
+                const testResultsBtn = document.getElementById('test-results-tab-btn');
+                const debugBtn = document.getElementById('debug-tab-btn');
+                
+                const displayStyle = advancedEnabled ? 'inline-block' : 'none';
+                
+                if (testResultsBtn) testResultsBtn.style.display = displayStyle;
+                if (debugBtn) debugBtn.style.display = displayStyle;
+            } catch (error) {
+                console.error('Failed to check advanced options:', error);
+            }
+        }
+
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', (event) => {
+            if (event.state) {
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                
+                if (event.state.tab === 'browse-native') {
+                    document.getElementById('browse-native-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[1].classList.add('active');
+                    loadDirectory(event.state.path || currentNativePath, 'native', true);
+                } else if (event.state.tab === 'browse-virtual') {
+                    document.getElementById('browse-virtual-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[2].classList.add('active');
+                    loadDirectory(event.state.path || currentVirtualPath, 'virtual', true);
+                } else {
+                    document.getElementById('download-tab').classList.add('active');
+                    document.querySelectorAll('.tab-button')[0].classList.add('active');
+                }
+            }
+        });
+    </script>
+</body>
+</html>

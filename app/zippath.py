@@ -249,6 +249,17 @@ def _get_index(zip_path: str) -> ZipIndex:
         tc[zp] = fresh
         return fresh
 
+def get_zip_cache_stats() -> dict:
+    """Get statistics about the ZIP index cache for monitoring."""
+    with _index_lock:
+        total_entries = len(_zip_index_cache)
+        total_files = sum(len(idx.files) for idx in _zip_index_cache.values())
+        return {
+            "zip_files_indexed": total_entries,
+            "total_indexed_entries": total_files,
+            "persist_enabled": os.getenv("TRANSFS_PERSIST_ZIP_INDEX", "0") == "1",
+        }
+
 # ==========================
 # Existing helpers (preserved)
 # ==========================

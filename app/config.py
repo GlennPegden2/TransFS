@@ -181,6 +181,7 @@ def get_systems_for_client(client_name, config_dir="config"):
 
 def get_manufacturers_and_canonical_names(config_dir="config"):
     clients_config = read_clients_config(config_dir)
+    archive_sources = read_config(config_dir).get("archive_sources", {})
     manufacturer_map = {}
     for client in clients_config.get("clients", []):
         client_name = client.get("name")
@@ -204,6 +205,25 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
                 if client_name not in manufacturer_map[manufacturer][key]["supported_by"]:
                     manufacturer_map[manufacturer][key]["supported_by"].append(client_name)
     
+    # Merge supported_by from pack metadata (if present)
+    for manufacturer, systems in archive_sources.items():
+        if manufacturer not in manufacturer_map:
+            continue
+        for canonical_name, source_config in systems.items():
+            if canonical_name not in manufacturer_map[manufacturer]:
+                continue
+            packs = source_config.get("packs", []) or []
+            if not packs:
+                continue
+            pack_supported = set()
+            for pack in packs:
+                supported = pack.get("supported_by") or ["MiSTer"]
+                pack_supported.update(supported)
+            if pack_supported:
+                combined = set(manufacturer_map[manufacturer][canonical_name].get("supported_by", []))
+                combined.update(pack_supported)
+                manufacturer_map[manufacturer][canonical_name]["supported_by"] = sorted(combined)
+
     # Convert dicts to sorted lists and return sorted by manufacturer name
     result = {}
     for man in sorted(manufacturer_map.keys()):

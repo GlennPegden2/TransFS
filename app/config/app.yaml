@@ -1,13 +1,13 @@
 cache:
-  dir_cache_enabled: false
-  dir_listing_cache_enabled: false
-  force_pkl_caches: false
-  getattr_cache_enabled: false
-  getattr_cache_save_interval: 5.0
-  readdir_direntry_cache_enabled: true
-  readdir_skip_cache_lookup_with_direntry: true
+  # File stat cache (persisted to .transfs_getattr_cache.pkl)
+  stat_cache_enabled: false
+  stat_cache_save_interval: 5.0
+  # Transform caches (in-memory runtime performance)
   transform_output_size_cache_enabled: true
   transform_pipeline_cache_enabled: true
+  # Readdir optimization (in-memory runtime performance)
+  readdir_direntry_cache_enabled: true
+  readdir_skip_cache_lookup_with_direntry: true
 cache_warmer:
   batch_size: 10
   check_interval_seconds: 5

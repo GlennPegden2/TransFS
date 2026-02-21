@@ -31,9 +31,8 @@ def _find_file_recursive(base_dir: str, filename: str) -> str | None:
             return os.path.join(root, filename)
     return None
 
-# Shared cache file between processes (persistent across container restarts)
-CACHE_FILE = "/mnt/filestorefs/.transfs_cache.pkl"
-GETATTR_CACHE_FILE = "/mnt/filestorefs/.transfs_getattr_cache.pkl"
+# Stat cache file (persistent across container restarts)
+STAT_CACHE_FILE = "/mnt/filestorefs/.transfs_stat_cache.pkl"
 
 # In-memory cache: {path: (mtime, entries_list)}
 _dir_cache = {}
@@ -41,27 +40,25 @@ _cache_hits = 0
 _cache_misses = 0
 _cache_loaded = False
 
-# Thread-safe lock for getattr cache (used by FUSE main loop + cache warmer thread)
-_getattr_cache_lock = threading.Lock()
+# Thread-safe lock for stat cache (used by FUSE main loop + cache warmer thread)
+_stat_cache_lock = threading.Lock()
 
 # Cache configuration (set via app.yaml and /cache/config endpoint)
 _cache_config = {
-    "dir_cache_enabled": True,
-    "dir_listing_cache_enabled": True,
-    "getattr_cache_enabled": True,
-    "getattr_cache_save_interval": 5.0,
+    "stat_cache_enabled": True,
+    "stat_cache_save_interval": 5.0,
     "transform_pipeline_cache_enabled": True,
     "transform_output_size_cache_enabled": True,
     "readdir_direntry_cache_enabled": True,
     "readdir_skip_cache_lookup_with_direntry": True,
 }
 
-# getattr cache: {path: (dir_mtime, stat_dict)}
-_getattr_cache = {}
-_getattr_cache_loaded = False
-_getattr_cache_dirty = False
-_last_getattr_save = time.time()
-GETATTR_SAVE_INTERVAL = 5.0  # Save every 5 seconds if dirty
+# Stat cache: {path: (dir_mtime, stat_dict)}
+_stat_cache = {}
+_stat_cache_loaded = False
+_stat_cache_dirty = False
+_last_stat_save = time.time()
+STAT_SAVE_INTERVAL = 5.0  # Save every 5 seconds if dirty
 
 def _load_cache():
     """Load cache from disk.
@@ -83,145 +80,119 @@ def _save_cache():
     # PKL cache is disabled - nothing to save
     pass
 
-def _load_getattr_cache():
-    """Load getattr cache from disk."""
-    global _getattr_cache, _getattr_cache_loaded
-    if not _cache_config.get("getattr_cache_enabled", True):
-        _getattr_cache = {}
-        _getattr_cache_loaded = True
+def _load_stat_cache():
+    """Load stat cache from disk."""
+    global _stat_cache, _stat_cache_loaded
+    if not _cache_config.get("stat_cache_enabled", True):
+        _stat_cache = {}
+        _stat_cache_loaded = True
         return
-    if not _getattr_cache_loaded:
+    if not _stat_cache_loaded:
         try:
-            if os.path.exists(GETATTR_CACHE_FILE):
-                with open(GETATTR_CACHE_FILE, 'rb') as f:
-                    _getattr_cache = pickle.load(f)
-                logger.info(f"Loaded getattr cache with {len(_getattr_cache)} entries from disk")
+            if os.path.exists(STAT_CACHE_FILE):
+                with open(STAT_CACHE_FILE, 'rb') as f:
+                    _stat_cache = pickle.load(f)
+                logger.info(f"Loaded stat cache with {len(_stat_cache)} entries from disk")
         except Exception as e:
-            logger.warning(f"Failed to load getattr cache: {e}")
-            _getattr_cache = {}
-        _getattr_cache_loaded = True
+            logger.warning(f"Failed to load stat cache: {e}")
+            _stat_cache = {}
+        _stat_cache_loaded = True
 
-def _save_getattr_cache():
-    """Save getattr cache to disk."""
-    if not _cache_config.get("getattr_cache_enabled", True):
+def _save_stat_cache():
+    """Save stat cache to disk."""
+    if not _cache_config.get("stat_cache_enabled", True):
         return
     try:
-        with open(GETATTR_CACHE_FILE, 'wb') as f:
-            pickle.dump(_getattr_cache, f)
+        with open(STAT_CACHE_FILE, 'wb') as f:
+            pickle.dump(_stat_cache, f)
     except Exception as e:
-        logger.warning(f"Failed to save getattr cache: {e}")
+        logger.warning(f"Failed to save stat cache: {e}")
 
-def cache_getattr(path: str, parent_dir: str, stat_dict: dict):
-    """Cache getattr result for a file. Saves periodically to avoid excessive disk I/O."""
-    global _getattr_cache_dirty, _last_getattr_save
-    if not _cache_config.get("getattr_cache_enabled", True):
+def cache_stat(path: str, parent_dir: str, stat_dict: dict):
+    """Cache stat result for a file. Saves periodically to avoid excessive disk I/O."""
+    global _stat_cache_dirty, _last_stat_save
+    if not _cache_config.get("stat_cache_enabled", True):
         return
     try:
-        _load_getattr_cache()
+        _load_stat_cache()
         
         # Use file's own mtime for validation instead of parent dir mtime
         # This prevents cache invalidation when directory is accessed/modified
         # For transforms, this is more stable and only invalidates when source changes
         file_mtime = stat_dict.get('st_mtime', 0)
         
-        with _getattr_cache_lock:
-            _getattr_cache[path] = (file_mtime, stat_dict)
-            _getattr_cache_dirty = True
+        with _stat_cache_lock:
+            _stat_cache[path] = (file_mtime, stat_dict)
+            _stat_cache_dirty = True
         
         # Save periodically (every N seconds) instead of after every call
         now = time.time()
-        if now - _last_getattr_save >= GETATTR_SAVE_INTERVAL:
-            _save_getattr_cache()
-            _getattr_cache_dirty = False
-            _last_getattr_save = now
+        if now - _last_stat_save >= STAT_SAVE_INTERVAL:
+            _save_stat_cache()
+            _stat_cache_dirty = False
+            _last_stat_save = now
     except Exception as e:
-        logger.warning(f"Failed to cache getattr: {e}")
+        logger.warning(f"Failed to cache stat: {e}")
 
-def flush_getattr_cache():
-    """Flush getattr cache to disk. Call this periodically or after bulk operations."""
-    global _getattr_cache_dirty
-    if _getattr_cache_dirty:
-        with _getattr_cache_lock:
-            _save_getattr_cache()
-            _getattr_cache_dirty = False
+def flush_stat_cache():
+    """Flush stat cache to disk. Call this periodically or after bulk operations."""
+    global _stat_cache_dirty
+    if _stat_cache_dirty:
+        with _stat_cache_lock:
+            _save_stat_cache()
+            _stat_cache_dirty = False
 
-def get_cached_getattr(path: str, parent_dir: str):
-    """Get cached getattr result if valid. Validates using file's own mtime."""
-    if not _cache_config.get("getattr_cache_enabled", True):
+def get_cached_stat(path: str, parent_dir: str):
+    """Get cached stat result if valid. Validates using file's own mtime."""
+    if not _cache_config.get("stat_cache_enabled", True):
         return None
     try:
-        _load_getattr_cache()
-        with _getattr_cache_lock:
-            result = path in _getattr_cache
+        _load_stat_cache()
+        with _stat_cache_lock:
+            result = path in _stat_cache
             
             if result:
-                cached_file_mtime, stat_dict = _getattr_cache[path]
+                cached_file_mtime, stat_dict = _stat_cache[path]
                 return stat_dict
     except Exception as e:
-        logger.warning(f"GETATTR CACHE ERROR: {path}: {e}")
+        logger.warning(f"STAT CACHE ERROR: {path}: {e}")
     return None
 
-def get_cache_status(path: str) -> dict:
-    """Get cache status for a given path."""
-    if not _cache_config.get("dir_cache_enabled", True):
-        return {"cached": False, "disabled": True, "hits": _cache_hits, "misses": _cache_misses}
-    _load_cache()
-    cache_key = str(path)
-    print(f"DEBUG get_cache_status: cache_key='{cache_key}', cache keys={list(_dir_cache.keys())}", flush=True)
-    logger.info(f"get_cache_status: checking cache_key='{cache_key}', cache has {len(_dir_cache)} entries: {list(_dir_cache.keys())}")
-    if cache_key in _dir_cache:
-        cached_mtime, entries = _dir_cache[cache_key]
-        return {
-            "cached": True,
-            "entry_count": len(entries),
-            "mtime": cached_mtime,
-            "hits": _cache_hits,
-            "misses": _cache_misses
-        }
-    return {"cached": False, "hits": _cache_hits, "misses": _cache_misses}
-
-def clear_cache(path: str = None) -> dict:
-    """Clear cache for a specific path or all caches."""
-    global _dir_cache
-    if not _cache_config.get("dir_cache_enabled", True):
-        _dir_cache = {}
-        return {"cleared": True, "disabled": True}
-    _load_cache()
-    if path:
-        cache_key = str(path)
-        if cache_key in _dir_cache:
-            del _dir_cache[cache_key]
-            _save_cache()
-            return {"cleared": True, "path": path}
-        return {"cleared": False, "message": "Path not in cache"}
-    else:
-        count = len(_dir_cache)
-        _dir_cache = {}
-        _save_cache()
-        return {"cleared": True, "count": count}
-
-
-def clear_getattr_cache() -> dict:
-    """Clear the getattr cache and remove persisted cache file."""
-    global _getattr_cache, _getattr_cache_loaded, _getattr_cache_dirty
-    _getattr_cache = {}
-    _getattr_cache_loaded = True
-    _getattr_cache_dirty = False
+def clear_stat_cache() -> dict:
+    """Clear the stat cache and remove persisted cache file."""
+    global _stat_cache, _stat_cache_loaded, _stat_cache_dirty
+    _stat_cache = {}
+    _stat_cache_loaded = True
+    _stat_cache_dirty = False
     try:
-        if os.path.exists(GETATTR_CACHE_FILE):
-            os.remove(GETATTR_CACHE_FILE)
+        if os.path.exists(STAT_CACHE_FILE):
+            os.remove(STAT_CACHE_FILE)
         return {"cleared": True}
     except Exception as e:
         return {"cleared": False, "error": str(e)}
 
 
+def clear_stat_cache_path(path: str) -> dict:
+    """Clear stat cache entries under a specific path."""
+    if not path:
+        return clear_stat_cache()
+    _load_stat_cache()
+    removed = 0
+    with _stat_cache_lock:
+        for key in list(_stat_cache.keys()):
+            if key.startswith(path):
+                del _stat_cache[key]
+                removed += 1
+        if removed:
+            _save_stat_cache()
+    return {"cleared": True, "path": path, "removed": removed}
+
+
 def clear_all_caches() -> dict:
-    """Clear both directory and getattr caches."""
-    dir_result = clear_cache(None)
-    getattr_result = clear_getattr_cache()
+    """Clear all caches (stat cache only - dir caches are disabled)."""
+    stat_result = clear_stat_cache()
     return {
-        "dir_cache": dir_result,
-        "getattr_cache": getattr_result,
+        "stat_cache": stat_result,
     }
 
 
@@ -232,41 +203,70 @@ def get_cache_config() -> dict:
 
 def set_cache_config(config: dict):
     """Set cache configuration. Used by transfs.py to configure caching behavior."""
-    global _cache_config, GETATTR_SAVE_INTERVAL
+    global _cache_config, STAT_SAVE_INTERVAL
+    # Backward compatibility: map legacy getattr cache keys to stat cache keys
+    legacy_map = {
+        "getattr_cache_enabled": "stat_cache_enabled",
+        "getattr_cache_save_interval": "stat_cache_save_interval",
+    }
+    for legacy_key, new_key in legacy_map.items():
+        if legacy_key in config and new_key not in config:
+            config[new_key] = config[legacy_key]
+
     _cache_config = dict(_cache_config, **config)
-    GETATTR_SAVE_INTERVAL = float(_cache_config.get("getattr_cache_save_interval", GETATTR_SAVE_INTERVAL))
+    STAT_SAVE_INTERVAL = float(_cache_config.get("stat_cache_save_interval", STAT_SAVE_INTERVAL))
     logger.info(f"Cache configuration set: {_cache_config}")
 
 
 def get_all_cache_status(path: str | None = None) -> dict:
-    """Get comprehensive status for both directory and getattr caches."""
-    dir_status = get_cache_status(path) if path else {
-        "cached": False,
-        "disabled": not _cache_config.get("dir_cache_enabled", True),
-        "hits": _cache_hits,
-        "misses": _cache_misses,
-        "entry_count": len(_dir_cache),
+    """Get comprehensive status for stat cache."""
+    _load_stat_cache()
+    path_count = 0
+    if path:
+        path_count = sum(1 for key in _stat_cache.keys() if key.startswith(path))
+    stat_status = {
+        "enabled": _cache_config.get("stat_cache_enabled", True),
+        "entry_count": len(_stat_cache),
+        "save_interval": _cache_config.get("stat_cache_save_interval", STAT_SAVE_INTERVAL),
+        "dirty": _stat_cache_dirty,
+        "path_cached": path_count > 0,
+        "path_entry_count": path_count,
     }
-    getattr_status = {
-        "enabled": _cache_config.get("getattr_cache_enabled", True),
-        "entry_count": len(_getattr_cache),
-        "save_interval": GETATTR_SAVE_INTERVAL,
-    }
+
     return {
-        "dir_cache": dir_status,
-        "getattr_cache": getattr_status,
-        "config": get_cache_config(),
+        "stat_cache": stat_status,
+        "cache_config": _cache_config,
     }
 
 
 def get_cache_info() -> dict:
     """Get detailed cache information for the dashboard."""
+    _load_stat_cache()
+
+    # Get ZIP index cache stats from zippath module
+    try:
+        from zippath import get_zip_cache_stats
+        zip_stats = get_zip_cache_stats()
+    except Exception:
+        zip_stats = {"entries": 0, "error": "Failed to load ZIP cache stats"}
+
     return {
-        "dir_cache_entries": len(_dir_cache),
-        "getattr_cache_entries": len(_getattr_cache),
-        "dir_cache_hits": _cache_hits,
-        "dir_cache_misses": _cache_misses,
-        "config": get_cache_config(),
+        "stat_cache": {
+            "enabled": _cache_config.get("stat_cache_enabled", True),
+            "entries": len(_stat_cache),
+            "save_interval": _cache_config.get("stat_cache_save_interval", STAT_SAVE_INTERVAL),
+            "dirty": _stat_cache_dirty,
+            "file": STAT_CACHE_FILE,
+        },
+        "zip_index_cache": zip_stats,
+        "transform_caches": {
+            "pipeline_enabled": _cache_config.get("transform_pipeline_cache_enabled", True),
+            "output_size_enabled": _cache_config.get("transform_output_size_cache_enabled", True),
+        },
+        "readdir_optimizations": {
+            "direntry_cache_enabled": _cache_config.get("readdir_direntry_cache_enabled", True),
+            "skip_lookup_with_direntry": _cache_config.get("readdir_skip_cache_lookup_with_direntry", True),
+        },
     }
 
 
@@ -447,7 +447,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
 
     cache_key = str(path)
-    cache_enabled = _cache_config.get("dir_cache_enabled", True) and _cache_config.get("dir_listing_cache_enabled", True)
+    cache_enabled = False  # Directory listing cache is disabled
 
     # For cache key mtime, use source directory if it exists
     check_dir = os.path.join(
@@ -679,7 +679,7 @@ def list_dynamic_map(
     cache_key = str(path)
     
     # In-memory session cache only (no persistent PKL cache)
-    cache_enabled = _cache_config.get("dir_cache_enabled", True) and _cache_config.get("dir_listing_cache_enabled", True)
+    cache_enabled = False  # Directory listing cache is disabled
 
     # Get directory mtime for in-memory cache validity check
     check_dir = source_dir

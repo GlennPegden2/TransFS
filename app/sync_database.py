@@ -301,38 +301,193 @@ class DatabaseSync:
         
         # Build map configurations for file matching
         maps = system_config.get("maps", [])
-        map_configs = []
+        query_map_configs = []
+        file_based_maps = []
+        
         for map_entry in maps:
             map_name = list(map_entry.keys())[0]
             map_config = map_entry[map_name]
             
-            # Skip non-query maps
-            if not is_query_map(map_config):
-                logger.debug(f"    Skipping non-query map: {map_name}")
-                continue
-            
-            query_cfg = get_query_config(map_config)
-            if query_cfg:
-                map_configs.append({
+            # Handle file-based maps (have "file" key)
+            if "file" in map_config:
+                file_based_maps.append({
                     'name': map_name,
                     'config': map_config,
-                    'query': query_cfg,
-                    'extensions': [e.upper() for e in query_cfg.get("extensions", [])],
-                    'source_dir': query_cfg.get("source_dir", "Software"),
-                    'extension_map': query_cfg.get("extension_map", {}),
-                    'transforms': map_config.get("transforms", {})
+                    'file_spec': map_config.get('file'),
                 })
+                logger.debug(f"    Found file-based map: {map_name}")
+            # Handle query maps (have "query" key)
+            elif is_query_map(map_config):
+                query_cfg = get_query_config(map_config)
+                if query_cfg:
+                    query_map_configs.append({
+                        'name': map_name,
+                        'config': map_config,
+                        'query': query_cfg,
+                        'extensions': [e.upper() for e in query_cfg.get("extensions", [])],
+                        'source_dir': query_cfg.get("source_dir", "Software"),
+                        'extension_map': query_cfg.get("extension_map", {}),
+                        'transforms': map_config.get("transforms", {})
+                    })
+                    logger.debug(f"    Found query map: {map_name}")
+            else:
+                logger.debug(f"    Skipping unknown map type: {map_name}")
         
-        if not map_configs:
-            logger.debug(f"    No query maps found for {system_name}")
+        # Process file-based maps first
+        for file_map in file_based_maps:
+            self._sync_file_based_map(
+                client_name, system_name, file_map['name'],
+                file_map['config'], system_config
+            )
+        
+        # Flush file-based map entries before scanning query maps
+        # This prevents them from being overwritten by query map scans of the same files
+        self._flush_file_batch()
+        
+        # Then process query maps
+        if query_map_configs:
+            logger.info(f"    Scanning entire system base: {system_base_path}")
+            self._scan_system_directory(
+                system_base_path, client_name, system_name, query_map_configs
+            )
+        elif not file_based_maps:
+            logger.debug(f"    No query or file-based maps found for {system_name}")
+    
+    def _sync_file_based_map(self, client_name: str, system_name: str, map_name: str,
+                            map_config: dict, system_config: dict):
+        """Sync files from a file-based map to database."""
+        logger.info(f"    Syncing file-based map: {map_name}")
+        
+        file_spec = map_config.get('file')
+        if not file_spec:
+            logger.warning(f"      No file spec for {map_name}")
             return
         
-        logger.info(f"    Scanning entire system base: {system_base_path}")
+        # Extract file path from spec
+        if isinstance(file_spec, dict):
+            file_path = file_spec.get('path')
+            unzip = file_spec.get('unzip', False)
+            zip_internal_file = file_spec.get('zip_internal_file')
+        else:
+            file_path = file_spec
+            unzip = map_config.get('unzip', False)
+            zip_internal_file = map_config.get('zip_internal_file')
         
-        # Scan entire system directory and match files to maps
-        self._scan_system_directory(
-            system_base_path, client_name, system_name, map_configs
+        if not file_path:
+            logger.warning(f"      No file path for {map_name}")
+            return
+        
+        # Build full path to the file
+        local_base_path = system_config.get("local_base_path", "")
+        full_path = os.path.join(
+            self.filestore,
+            "Native",
+            local_base_path,
+            file_path
         )
+        
+        logger.debug(f"      File-based map {map_name}: {full_path}")
+        
+        # Handle different cases
+        if unzip and full_path.lower().endswith('.zip'):
+            # File is inside a ZIP
+            if not os.path.exists(full_path):
+                logger.warning(f"      ZIP file not found: {full_path}")
+                return
+            
+            if zip_internal_file:
+                # Single internal file specified
+                logger.debug(f"      Adding zip entry: {zip_internal_file} from {full_path}")
+                # Use tuple notation for zip files
+                virtual_filename = os.path.basename(zip_internal_file)
+                virtual_path = os.path.join(
+                    self.mount_path,
+                    client_name,
+                    system_name,
+                    map_name,
+                    virtual_filename
+                )
+                
+                now = int(time.time())
+                
+                # For zip entries, we store the tuple as source (handled in open operations)
+                # Store as a simple entry in database with special handling
+                try:
+                    stat = os.stat(full_path)  # Get stats of the ZIP file
+                    
+                    self.file_batch.append({
+                        'source_path': f"{full_path}#ZIP#{zip_internal_file}",  # Special format for zip
+                        'virtual_path': virtual_path,
+                        'filename': virtual_filename,
+                        'extension': os.path.splitext(virtual_filename)[1][1:].lower(),
+                        'size': stat.st_size,  # Approximate with ZIP size
+                        'mtime': int(stat.st_mtime),
+                        'ctime': int(stat.st_ctime),
+                        'atime': int(stat.st_atime),
+                        'ino': stat.st_ino,
+                        'mode': stat.st_mode,
+                        'system': system_name,
+                        'client': client_name,
+                        'map_name': map_name,
+                        'now': now,
+                    })
+                    
+                    if len(self.file_batch) >= self.batch_size:
+                        self._flush_file_batch()
+                    
+                    self.stats['files_added'] += 1
+                    logger.info(f"      Added file-based map entry: {virtual_filename}")
+                except Exception as e:
+                    logger.error(f"      Error adding file {full_path}: {e}")
+                    self.stats['errors'] += 1
+            else:
+                logger.warning(f"      ZIP file specified but no zip_internal_file for {map_name}")
+        else:
+            # Regular file (not zipped)
+            if not os.path.exists(full_path):
+                logger.warning(f"      File not found: {full_path}")
+                return
+            
+            logger.debug(f"      Adding file entry: {full_path}")
+            
+            try:
+                stat = os.stat(full_path)
+                virtual_filename = os.path.basename(full_path)
+                virtual_path = os.path.join(
+                    self.mount_path,
+                    client_name,
+                    system_name,
+                    map_name,
+                    virtual_filename
+                )
+                
+                now = int(time.time())
+                
+                self.file_batch.append({
+                    'source_path': full_path,
+                    'virtual_path': virtual_path,
+                    'filename': virtual_filename,
+                    'extension': os.path.splitext(virtual_filename)[1][1:].lower(),
+                    'size': stat.st_size,
+                    'mtime': int(stat.st_mtime),
+                    'ctime': int(stat.st_ctime),
+                    'atime': int(stat.st_atime),
+                    'ino': stat.st_ino,
+                    'mode': stat.st_mode,
+                    'system': system_name,
+                    'client': client_name,
+                    'map_name': map_name,
+                    'now': now,
+                })
+                
+                if len(self.file_batch) >= self.batch_size:
+                    self._flush_file_batch()
+                
+                self.stats['files_added'] += 1
+                logger.info(f"      Added file-based map entry: {virtual_filename}")
+            except Exception as e:
+                logger.error(f"      Error adding file {full_path}: {e}")
+                self.stats['errors'] += 1
     
     def _sync_query_map(self, client_name: str, system_name: str, map_name: str, 
                        system_config: dict, map_config: dict):
@@ -611,6 +766,13 @@ class DatabaseSync:
             # Track that we've seen this file
             self.seen_source_paths.add(source_path)
             
+            # Check if this file is already in the batch with a different map_name
+            # If so, skip it to preserve the first map_name (usually from file-based maps)
+            for existing_entry in self.file_batch:
+                if existing_entry['source_path'] == source_path:
+                    logger.debug(f"File {source_path} already in batch with map {existing_entry['map_name']}, skipping map {map_name}")
+                    return
+            
             # Get file stats
             stat = os.stat(source_path)
             filename = os.path.basename(source_path)
@@ -680,6 +842,7 @@ class DatabaseSync:
             cursor = self.cursor
             
             # Use PostgreSQL's INSERT ... ON CONFLICT for upsert
+            # IMPORTANT: Only update if the file already existed, but preserve map_name if set
             upsert_query = """
                 INSERT INTO files (
                     source_path, virtual_path, filename, extension,
@@ -688,18 +851,18 @@ class DatabaseSync:
                     created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_path) DO UPDATE SET
-                    virtual_path = EXCLUDED.virtual_path,
-                    filename = EXCLUDED.filename,
-                    extension = EXCLUDED.extension,
-                    size = EXCLUDED.size,
-                    mtime = EXCLUDED.mtime,
-                    ctime = EXCLUDED.ctime,
-                    atime = EXCLUDED.atime,
-                    ino = EXCLUDED.ino,
-                    mode = EXCLUDED.mode,
-                    system = EXCLUDED.system,
-                    client = EXCLUDED.client,
-                    map_name = EXCLUDED.map_name,
+                    virtual_path = COALESCE(EXCLUDED.virtual_path, files.virtual_path),
+                    filename = COALESCE(EXCLUDED.filename, files.filename),
+                    extension = COALESCE(EXCLUDED.extension, files.extension),
+                    size = COALESCE(EXCLUDED.size, files.size),
+                    mtime = GREATEST(COALESCE(EXCLUDED.mtime, 0), COALESCE(files.mtime, 0)),
+                    ctime = COALESCE(EXCLUDED.ctime, files.ctime),
+                    atime = COALESCE(EXCLUDED.atime, files.atime),
+                    ino = COALESCE(EXCLUDED.ino, files.ino),
+                    mode = COALESCE(EXCLUDED.mode, files.mode),
+                    system = COALESCE(EXCLUDED.system, files.system),
+                    client = COALESCE(EXCLUDED.client, files.client),
+                    map_name = COALESCE(files.map_name, EXCLUDED.map_name),
                     updated_at = EXCLUDED.updated_at
                 RETURNING file_id, (xmax = 0) AS inserted
             """

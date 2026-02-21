@@ -4,7 +4,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+- System support icons now reflect pack-level `supported_by` metadata when available, ensuring system badges match pack client coverage.
+- **Cache Naming & UI Cleanup**: Renamed file attribute caching to **Stat Cache** in UI and API
+  - Updated cache configuration endpoints to use `stat_cache_*` keys
+  - Dashboard now surfaces Stat Cache and ZIP Index cache stats
+  - Removed directory cache indicators and hit-rate cards tied to deprecated pickle caches
+  - Removed Cache tab in favor of Config-tab cache controls and inline virtual browser status
+
+### Removed
+- **Deprecated Directory Pickle Cache Controls**: Removed config toggles and UI controls for directory listing pickle caches
+  - Directory cache has been disabled in code for stability and staleness reasons
+  - Cache UI now reflects only active caches (Stat Cache, ZIP Index, Transform caches)
+
 ### Fixed
+- Pack installation now selects a valid configured client when pack `supported_by` includes clients not present in the current config set.
+- Restored Browse Native/Virtual functionality in the web UI (rich file rendering, Zaparoo launch controls, metadata panel, cache status, and deep-link initialization).
 - **Metadata Rulesets Docker Accessibility**: Moved `/config/metadata/rulesets/` to `/app/config/metadata/rulesets/`
   - Ensures ruleset YAML files are accessible inside Docker container
   - Previous location was outside `/app` directory mount point
