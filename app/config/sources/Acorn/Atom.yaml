@@ -4,6 +4,14 @@
 base_path: Acorn/Atom/
 
 sources:
+
+  - name: MameBIOSroms
+    type: ddl
+    urls:
+      - https://archive.org/download/mame_bios_packs_2024_05_19/mame_bios_packs_2024_05_19.zip
+    folder: Software/BIOS
+    extract: false
+
   - name: hoglet67
     type: ddl
     urls:
@@ -19,8 +27,25 @@ sources:
     extract: true
 
 packs:
+
+  - id: mame_atom_bios
+    name: BIOS ROMs for MAME/MESS derivatives
+    description: BIOS ROMs for MAME/MESS derivatives
+    estimated_size: 32k
+    sources: [MameBIOSroms]
+    supported_by: [RetroBat,Mame,Batocera,RetroPie]
+    info_links:
+      - label: IA Page
+        url: https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: Tape
+        region: World
+        language: English
+
   - id: hoglet67
-    name: hoglet67 Atom Software Collection
+    name: hoglet67s Atom Software Collection
     description: hoglet67s Atom Software Collection (both as files and built into a VHD)
     estimated_size: 15.3MB
     sources: [hoglet67, blankvhd]
@@ -28,6 +53,7 @@ packs:
     info_links:
       - label: Hoglet67s Atom Software Archive
         url: https://github.com/hoglet67/AtomSoftwareArchive
+    supported_by: [MiSTer,RetroBat,Mame,Batocera,RetroPie]
     metadata:
       ruleset: Generic
       defaults:
@@ -35,3 +61,4 @@ packs:
         region: World
         language: English
         extension: ATM
+

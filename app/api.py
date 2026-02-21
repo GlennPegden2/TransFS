@@ -1966,7 +1966,8 @@ def api_get_packs(client_name: str, system_name: str):
                 "description": pack.description,
                 "estimated_size": pack.estimated_size,
                 "has_build_script": pack.build_script is not None,
-                "info_links": pack.info_links or []
+                "info_links": pack.info_links or [],
+                "supported_by": pack.supported_by or []
             }
             for pack in system_config.packs
         ]

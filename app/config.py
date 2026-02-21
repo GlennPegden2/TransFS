@@ -16,6 +16,7 @@ class Pack:
     build_script: Optional[str] = None  # Legacy bash script for complex cases
     info_links: Optional[list[dict]] = None  # List of {"label": "...", "url": "..."} info links
     metadata: Optional[dict] = None  # Optional pack-level metadata defaults
+    supported_by: Optional[list[str]] = None  # List of client names that support this pack
 
 @dataclass
 class SystemConfig:
@@ -200,7 +201,8 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
                 post_process=pack_data.get("post_process"),
                 build_script=pack_data.get("build_script"),
                 info_links=pack_data.get("info_links"),
-                metadata=pack_data.get("metadata")
+                metadata=pack_data.get("metadata"),
+                supported_by=pack_data.get("supported_by")
             ))
     
     # Get download_layout from clients config
