@@ -147,10 +147,10 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
                 if client_name not in manufacturer_map[manufacturer][key]["supported_by"]:
                     manufacturer_map[manufacturer][key]["supported_by"].append(client_name)
     
-    # Convert dicts to sorted lists
+    # Convert dicts to sorted lists and return sorted by manufacturer name
     result = {}
-    for man, systems in manufacturer_map.items():
-        result[man] = sorted(systems.values(), key=lambda s: s.get("display_name", s.get("mapping_name", "")))
+    for man in sorted(manufacturer_map.keys()):
+        result[man] = sorted(manufacturer_map[man].values(), key=lambda s: s.get("display_name", s.get("mapping_name", "")))
     return result
 
 def get_web_api_config(config_dir="config") -> dict:
