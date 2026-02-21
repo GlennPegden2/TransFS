@@ -114,17 +114,20 @@
                 <!-- API Documentation -->
                 <div style="border: 1px solid #ddd; padding: 1.5em; border-radius: 8px; background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);">
                     <h3 style="margin-top: 0; color: #667eea;">
-                        <span style="font-size: 1.5em;">🔌</span> API Documentation
+                        <span style="font-size: 1.5em;">🔌</span> REST API Documentation
                     </h3>
                     <p style="color: #555; line-height: 1.6;">
-                        Interactive API documentation with request/response examples and the ability to test endpoints directly from your browser.
+                        Interactive API documentation with request/response examples and the ability to test endpoints directly from your browser. All endpoints are accessible at <code style="background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px;">/api/</code>
                     </p>
-                    <div style="display: flex; gap: 1em; margin-top: 1em;">
-                        <a href="/docs" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #667eea40; transition: all 0.2s;">
-                            📖 Swagger UI
+                    <div style="display: flex; gap: 1em; margin-top: 1em; flex-wrap: wrap;">
+                        <a href="/api/docs" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #667eea40; transition: all 0.2s;">
+                            📖 API Swagger UI
                         </a>
-                        <a href="/redoc" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #764ba2; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #764ba240; transition: all 0.2s;">
-                            📘 ReDoc
+                        <a href="/api/redoc" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #764ba2; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #764ba240; transition: all 0.2s;">
+                            📘 API ReDoc
+                        </a>
+                        <a href="/api/openapi.json" target="_blank" style="display: inline-block; padding: 0.7em 1.5em; background: #2196F3; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; box-shadow: 0 2px 8px #2196F340; transition: all 0.2s;">
+                            📋 OpenAPI Spec
                         </a>
                     </div>
                 </div>
@@ -152,12 +155,24 @@
                     <h3 style="margin-top: 0; color: #f5576c;">
                         <span style="font-size: 1.5em;">⚡</span> Quick Links
                     </h3>
-                    <ul style="color: #555; line-height: 2;">
-                        <li><a href="/openapi.json" target="_blank" style="color: #667eea; text-decoration: none;">OpenAPI Specification (JSON)</a></li>
-                        <li><a href="https://github.com/GlennPegden2/TransFS/blob/main/README.md" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">README</a></li>
-                        <li><a href="https://github.com/GlennPegden2/TransFS/issues" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">Report an Issue</a></li>
-                        <li><a href="https://github.com/GlennPegden2/TransFS/blob/main/docs" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">Documentation</a></li>
-                    </ul>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em; margin-top: 1em;">
+                        <div>
+                            <h4 style="margin: 0 0 0.8em 0; color: #667eea; font-size: 0.95em;">API Documentation</h4>
+                            <ul style="color: #555; line-height: 2; margin: 0; padding-left: 1.2em;">
+                                <li><a href="/api/openapi.json" target="_blank" style="color: #667eea; text-decoration: none;">OpenAPI Spec (JSON)</a></li>
+                                <li><a href="/api/docs" target="_blank" style="color: #667eea; text-decoration: none;">Swagger Interactive Docs</a></li>
+                                <li><a href="/api/redoc" target="_blank" style="color: #667eea; text-decoration: none;">ReDoc Reference</a></li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h4 style="margin: 0 0 0.8em 0; color: #667eea; font-size: 0.95em;">Project Resources</h4>
+                            <ul style="color: #555; line-height: 2; margin: 0; padding-left: 1.2em;">
+                                <li><a href="https://github.com/GlennPegden2/TransFS/blob/main/README.md" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">README</a></li>
+                                <li><a href="https://github.com/GlennPegden2/TransFS/issues" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">Report an Issue</a></li>
+                                <li><a href="https://github.com/GlennPegden2/TransFS/blob/main/docs" target="_blank" rel="noopener noreferrer" style="color: #667eea; text-decoration: none;">Documentation</a></li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
