@@ -42,6 +42,7 @@ from config import (
     get_manufacturers_and_canonical_names,
     get_system_config,
     read_config,
+    read_clients_config,
 )
 from post_process import PostProcessor
 from sync_database import DatabaseSync
