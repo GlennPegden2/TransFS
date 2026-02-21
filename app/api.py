@@ -67,6 +67,7 @@ Downloads are shared across all clients - the same source files work for MiSTer,
     license_info={
         "name": "MIT",
     },
+    root_path="/api",
     openapi_url="/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc",
