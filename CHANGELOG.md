@@ -4,7 +4,27 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+- **Metadata Rulesets Docker Accessibility**: Moved `/config/metadata/rulesets/` to `/app/config/metadata/rulesets/`
+  - Ensures ruleset YAML files are accessible inside Docker container
+  - Previous location was outside `/app` directory mount point
+  - Affects GoodTools, TOSEC, Atarimania, and other metadata parsing rulesets
+
 ### Added
+- **Multi-Config-Set Support**: Switch between different configuration libraries for clients and sources
+  - New directory structure: `config/clients/<set_name>/` and `config/sources/<set_name>/`
+  - Moved default configs to `config/clients/default/` and `config/sources/default/`
+  - Active config sets tracked in app.yaml: `config_sets.active_client_config`, `config_sets.active_source_config`
+  - UI in Config tab with dropdowns to switch between config sets (triggers page reload)
+  - ZIP import functionality to upload and extract new config sets
+  - Backend API endpoints:
+    - GET `/api/config/sets` - List available config sets
+    - GET `/api/config/sets/active` - Get currently active config sets
+    - POST `/api/config/sets/switch` - Switch active config set
+    - POST `/api/config/sets/import` - Import ZIP containing new config set
+  - Maintains backward compatibility with legacy flat structure
+  - Useful for testing configurations, production vs development, or different source collections
+
 - **API Namespace Organization**: All API endpoints now consistently accessible under `/api/` prefix
   - FastAPI app mounted at `/api` in main.py for clean namespace
   - Swagger documentation available at `/api/docs` and `/api/redoc`

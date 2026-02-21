@@ -398,6 +398,60 @@
                         </div>
                     </div>
 
+                    <!-- Config Set Management -->
+                    <div style="border: 1px solid #9C27B0; background: #f3e5f5; padding: 1.5em; border-radius: 8px;">
+                        <h3 style="margin-top: 0; color: #6a1b9a;">📦 Configuration Sets</h3>
+                        <p style="margin: 0.5em 0 1em 0; color: #666; font-size: 0.9em;">
+                            Switch between different configuration sets or import new ones from ZIP files.
+                        </p>
+                        <div style="display: grid; gap: 1.5em;">
+                            <!-- Client Config Set -->
+                            <div>
+                                <label style="font-weight: 500; display: block; margin-bottom: 0.5em;">Client Configuration Set:</label>
+                                <div style="display: flex; gap: 0.5em; align-items: center;">
+                                    <select id="client-config-set-select" onchange="switchClientConfigSet()" style="flex: 1; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                                        <option value="">Loading...</option>
+                                    </select>
+                                    <button onclick="reloadConfigSets()" style="padding: 0.5em 1em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;" title="Refresh available config sets">🔄</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Source Config Set -->
+                            <div>
+                                <label style="font-weight: 500; display: block; margin-bottom: 0.5em;">Source Configuration Set:</label>
+                                <div style="display: flex; gap: 0.5em; align-items: center;">
+                                    <select id="source-config-set-select" onchange="switchSourceConfigSet()" style="flex: 1; padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                                        <option value="">Loading...</option>
+                                    </select>
+                                    <button onclick="reloadConfigSets()" style="padding: 0.5em 1em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;" title="Refresh available config sets">🔄</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Import Config Set -->
+                            <div style="border-top: 1px solid #ddd; padding-top: 1em;">
+                                <label style="font-weight: 500; display: block; margin-bottom: 0.5em;">Import New Config Set:</label>
+                                <div style="display: grid; gap: 0.8em;">
+                                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.5em; align-items: center;">
+                                        <label>Config Type:</label>
+                                        <select id="import-config-type" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px;">
+                                            <option value="client">Client Configuration</option>
+                                            <option value="source">Source Configuration</option>
+                                        </select>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.5em; align-items: center;">
+                                        <label>Config Set Name:</label>
+                                        <input type="text" id="import-config-name" placeholder="e.g., production, testing" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px;">
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.5em; align-items: center;">
+                                        <label>ZIP File:</label>
+                                        <input type="file" id="import-config-file" accept=".zip" style="padding: 0.5em; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                                    </div>
+                                    <button onclick="importConfigSet()" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; justify-self: start;">📦 Import Config Set</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Cache Configuration (Experimental) -->
                     <div style="border: 1px solid #ff9800; background: #fffbf0; padding: 1.5em; border-radius: 8px;">
                         <h3 style="margin-top: 0; color: #ff6f00;">✓ Cache Configuration (Experimental)</h3>
@@ -2823,6 +2877,9 @@
                 // Load cache configuration
                 await loadCacheConfigForConfigTab();
                 
+                // Load available config sets
+                await loadAvailableConfigSets();
+                
                 showConfigStatus('Settings loaded successfully', 'success');
             } catch (error) {
                 showConfigStatus('Failed to load settings: ' + error.message, 'error');
@@ -2895,6 +2952,193 @@
             
             if (type !== 'info') {
                 setTimeout(() => { statusDiv.style.display = 'none'; }, 5000);
+            }
+        }
+
+        // =================================
+        // CONFIG SET MANAGEMENT
+        // =================================
+        async function loadAvailableConfigSets() {
+            try {
+                const response = await fetch('/api/config/sets');
+                const data = await response.json();
+                
+                // Populate client config set dropdown
+                const clientSelect = document.getElementById('client-config-set-select');
+                clientSelect.innerHTML = data.client_sets.map(set => 
+                    `<option value="${set}">${set}</option>`
+                ).join('');
+                
+                // Populate source config set dropdown
+                const sourceSelect = document.getElementById('source-config-set-select');
+                sourceSelect.innerHTML = data.source_sets.map(set => 
+                    `<option value="${set}">${set}</option>`
+                ).join('');
+                
+                // Set the currently active config sets
+                await loadActiveConfigSets();
+            } catch (error) {
+                console.error('Failed to load config sets:', error);
+                showConfigStatus('Failed to load config sets: ' + error.message, 'error');
+            }
+        }
+
+        async function loadActiveConfigSets() {
+            try {
+                const response = await fetch('/api/config/sets/active');
+                const data = await response.json();
+                
+                // Set selected options to the active config sets
+                const clientSelect = document.getElementById('client-config-set-select');
+                const sourceSelect = document.getElementById('source-config-set-select');
+                
+                if (clientSelect && data.active_client_config) {
+                    clientSelect.value = data.active_client_config;
+                }
+                if (sourceSelect && data.active_source_config) {
+                    sourceSelect.value = data.active_source_config;
+                }
+            } catch (error) {
+                console.error('Failed to load active config sets:', error);
+            }
+        }
+
+        async function switchClientConfigSet() {
+            const select = document.getElementById('client-config-set-select');
+            const newConfigSet = select.value;
+            
+            if (!confirm(`Switch to client config set "${newConfigSet}"? The page will reload.`)) {
+                // Revert to previous selection
+                await loadActiveConfigSets();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/config/sets/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_type: 'client',
+                        config_set: newConfigSet
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                showConfigStatus('Client config set switched. Reloading page...', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showConfigStatus('Failed to switch config set: ' + error.message, 'error');
+                await loadActiveConfigSets(); // Revert dropdown
+            }
+        }
+
+        async function switchSourceConfigSet() {
+            const select = document.getElementById('source-config-set-select');
+            const newConfigSet = select.value;
+            
+            if (!confirm(`Switch to source config set "${newConfigSet}"? The page will reload.`)) {
+                // Revert to previous selection
+                await loadActiveConfigSets();
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/config/sets/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_type: 'source',
+                        config_set: newConfigSet
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                showConfigStatus('Source config set switched. Reloading page...', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showConfigStatus('Failed to switch config set: ' + error.message, 'error');
+                await loadActiveConfigSets(); // Revert dropdown
+            }
+        }
+
+        async function reloadConfigSets() {
+            await loadAvailableConfigSets();
+            showConfigStatus('Config sets refreshed', 'success');
+        }
+
+        async function importConfigSet() {
+            const configType = document.getElementById('import-config-type').value;
+            const configName = document.getElementById('import-config-name').value.trim();
+            const fileInput = document.getElementById('import-config-file');
+            const file = fileInput.files[0];
+            
+            // Validation
+            if (!configName) {
+                showConfigStatus('Please enter a config set name', 'error');
+                return;
+            }
+            if (!file) {
+                showConfigStatus('Please select a ZIP file', 'error');
+                return;
+            }
+            if (!file.name.endsWith('.zip')) {
+                showConfigStatus('File must be a ZIP archive', 'error');
+                return;
+            }
+            
+            try {
+                showConfigStatus('Importing config set...', 'info');
+                
+                const formData = new FormData();
+                formData.append('zip_file', file);
+                formData.append('config_type', configType);
+                formData.append('config_set', configName);
+                
+                const response = await fetch('/api/config/sets/import', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || `HTTP ${response.status}`);
+                }
+                
+                // Check if overwrite occurred
+                let overwriteMsg = '';
+                if (data.directory_existed) {
+                    overwriteMsg = ' (existing config was overwritten)';
+                }
+                
+                showConfigStatus(`Config set "${configName}" imported successfully${overwriteMsg}`, 'success');
+                
+                // Clear form
+                document.getElementById('import-config-name').value = '';
+                fileInput.value = '';
+                
+                // Reload available config sets
+                await loadAvailableConfigSets();
+                
+                // Ask if user wants to activate the newly imported config set
+                if (data.prompt_activation) {
+                    if (confirm(`Config set "${configName}" imported successfully. Activate it now?`)) {
+                        const select = configType === 'client' ? 
+                            document.getElementById('client-config-set-select') :
+                            document.getElementById('source-config-set-select');
+                        select.value = configName;
+                        
+                        if (configType === 'client') {
+                            await switchClientConfigSet();
+                        } else {
+                            await switchSourceConfigSet();
+                        }
+                    }
+                }
+            } catch (error) {
+                showConfigStatus('Failed to import config set: ' + error.message, 'error');
             }
         }
 
