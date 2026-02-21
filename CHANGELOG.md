@@ -24,6 +24,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Ensures ruleset YAML files are accessible inside Docker container
   - Previous location was outside `/app` directory mount point
   - Affects GoodTools, TOSEC, Atarimania, and other metadata parsing rulesets
+- **File-Based Map Database Sync**: Extended database sync to properly handle file-based maps (e.g., `boot.vhd`)
+  - Fixed `_sync_system()` to process both file-based maps and query maps
+  - Added `_sync_file_based_map()` handler for single-file map entries
+  - Flush file-based map entries before query map scanning to prevent overwrites
+  - Added deduplication logic to preserve file-based map assignment when same file appears in multiple maps
+  - Updated upsert query to use COALESCE to preserve existing map_name on conflict
+  - Ensures files from file-based maps are synced with correct `client`, `system`, and `map_name` columns
 
 ### Added
 - **Multi-Config-Set Support**: Switch between different configuration libraries for clients and sources
