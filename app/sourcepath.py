@@ -223,7 +223,50 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
             # subpath is everything after the matched map name
             subpath = map_path_parts[i:]
             
-            # If default_source->source_filename is present, return the mapped file
+            # Handle file-based map (new format: file: {path: ...})
+            if 'file' in mapdict:
+                file_config = mapdict.get('file') or {}
+                file_path = file_config.get('path')
+                if file_path:
+                    # Resolve the file path relative to local_base_path
+                    base = os.path.join(
+                        config.get("filestore", "/mnt/filestorefs"),
+                        "Native",
+                        system_info['local_base_path'],
+                        file_path
+                    )
+                    
+                    # Check if this is a zip file that needs to be extracted
+                    unzip = file_config.get('unzip', False)
+                    zip_internal_file = file_config.get('zip_internal_file')
+                    
+                    if base.lower().endswith('.zip') and (unzip or zip_internal_file):
+                        if zip_internal_file:
+                            # use zippath to test for entry existence
+                            if zippath_isfile(f"{base}/{zip_internal_file}"):
+                                logger.debug(f"File-based map: Using zip_internal_file: {zip_internal_file} in {base}")
+                                return (base, zip_internal_file)
+                            else:
+                                logger.debug(f"File-based map: zip_internal_file {zip_internal_file} not found in {base}")
+                            return None
+                        else:
+                            # fallback to existing mapping helper
+                            match_name = map_name.split('/')[-1]
+                            result = get_zip_mapping(logger, base, match_name)
+                            logger.debug(f"File-based map: ZIP mapping result for {map_name}: {result}")
+                            if result:
+                                return result
+                            return None
+                    
+                    # For regular files, check if they exist and return the path
+                    if os.path.exists(base):
+                        logger.debug(f"File-based map: Returning file path: {base}")
+                        return base
+                    else:
+                        logger.debug(f"File-based map: File {base} does not exist")
+                        return None
+            
+            # If default_source->source_filename is present, return the mapped file (legacy format)
             ds = mapdict.get('default_source') or {}
             if "source_filename" in ds:
                 source_filename = ds["source_filename"]
