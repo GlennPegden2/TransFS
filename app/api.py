@@ -46,7 +46,28 @@ from config import (
 )
 from post_process import PostProcessor
 from sync_database import DatabaseSync
-app = FastAPI()
+
+app = FastAPI(
+    title="TransFS API",
+    description="""
+TransFS (Transforming File System) API provides endpoints for:
+* **Download Management**: Install software packs for retro computing systems
+* **File Browsing**: Browse native and virtual file systems
+* **Database Sync**: Synchronize file metadata with PostgreSQL
+* **Cache Management**: Control directory and attribute caching
+* **System Configuration**: Manage clients, systems, and packs
+
+Downloads are shared across all clients - the same source files work for MiSTer, RetroBat, MAME, and other platforms.
+    """,
+    version="1.0.0",
+    contact={
+        "name": "TransFS Project",
+        "url": "https://github.com/GlennPegden2/TransFS",
+    },
+    license_info={
+        "name": "MIT",
+    },
+)
 
 
 # ============================================================================
@@ -360,7 +381,7 @@ class PackInstallRequest(BaseModel):
     skip_existing: bool = True  # Deduplicate - skip files that already exist
 
 
-@app.get("/logs", response_class=PlainTextResponse)
+@app.get("/logs", response_class=PlainTextResponse, tags=["System"])
 def get_logs():
     try:
         with open("/tmp/transfs.log", "r", encoding="utf-8") as f:
@@ -368,7 +389,7 @@ def get_logs():
     except Exception as e:  # pylint: disable=broad-except
         return f"Could not read log: {e}"
 
-@app.get("/source-paths")
+@app.get("/source-paths", tags=["File Browsing"])
 def api_source_paths(path: str):
     """Get the real filestore path(s) that back a virtual path.
     
@@ -452,9 +473,9 @@ def api_source_paths(path: str):
         logger.error(f"Error resolving source paths for {path}: {e}", exc_info=True)
         return {"error": str(e), "source_paths": []}
 
-@app.get("/browse")
+@app.get("/browse", tags=["File Browsing"])
 def api_browse_directory(path: str):
-    """Browse a directory and return its contents."""
+    """Browse a directory and return its contents with metadata and cache status.\"\"\"
     import time
     start_time = time.time()
     
@@ -604,7 +625,7 @@ def api_browse_directory(path: str):
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
 
-@app.get("/cache/status")
+@app.get("/cache/status", tags=["Cache"])
 def cache_status(path: str):
     """Get cache status for a given path."""
     try:
@@ -615,7 +636,7 @@ def cache_status(path: str):
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
 
-@app.post("/cache/clear")
+@app.post("/cache/clear", tags=["Cache"])
 def cache_clear(path: str = None):
     """Clear cache for a specific path or all caches."""
     try:
@@ -627,7 +648,7 @@ def cache_clear(path: str = None):
         return {"error": str(e)}
 
 
-@app.get("/cache/status-all")
+@app.get("/cache/status-all", tags=["Cache"])
 def cache_status_all(path: str | None = None):
     """Get comprehensive status for both directory and getattr caches."""
     try:
@@ -638,7 +659,7 @@ def cache_status_all(path: str | None = None):
         return {"error": str(e)}
 
 
-@app.post("/cache/clear-getattr")
+@app.post("/cache/clear-getattr", tags=["Cache"])
 def cache_clear_getattr():
     """Clear the getattr cache."""
     try:
@@ -648,7 +669,7 @@ def cache_clear_getattr():
         return {"error": str(e)}
 
 
-@app.post("/cache/clear-all")
+@app.post("/cache/clear-all", tags=["Cache"])
 def cache_clear_all():
     """Clear both directory and getattr caches."""
     try:
@@ -658,8 +679,8 @@ def cache_clear_all():
         return {"error": str(e)}
 
 
-@app.post("/db/sync")
-@app.get("/db/sync")
+@app.post("/db/sync", tags=["Database"])
+@app.get("/db/sync", tags=["Database"])
 async def db_sync(path: str | None = None, stream: bool = False, client: str | None = None, system: str | None = None):
     """
     Synchronize database with filesystem.
@@ -1875,21 +1896,29 @@ def file_metadata(path: str):
         return {"error": f"Failed to retrieve file metadata: {str(e)}"}
 
 
-@app.get("/clients")
+@app.get("/clients", tags=["Clients & Systems"])
 def api_get_clients():
-    """Return a list of all configured clients."""
+    """Get list of all available clients (MiSTer, RetroBat, MAME, etc.)."""
     return get_clients()
 
 
-@app.get("/clients/{client_name}/systems")
+@app.get("/clients/{client_name}/systems", tags=["Clients & Systems"])
 def api_get_systems(client_name: str):
-    """Return a list of systems for a given client."""
+    """Get list of systems supported by a specific client."""
     return get_systems_for_client(client_name)
 
 
-@app.get("/systems/meta")
+@app.get("/systems/meta", tags=["Clients & Systems"])
 def api_get_manufacturers_and_canonical_names():
-    """Return manufacturers and canonical system names metadata."""
+    """
+    Get all systems organized by manufacturer with multi-client support information.
+    
+    Returns a dict mapping manufacturer names to lists of systems, where each system includes:
+    - mapping_name: Canonical system identifier
+    - display_name: Human-readable name
+    - name: Filesystem name
+    - supported_by: List of client names that support this system
+    """
     return get_manufacturers_and_canonical_names()
 
 
@@ -1949,9 +1978,9 @@ def sync_system_cache(client_name: str, system_name: str):
         }
 
 
-@app.get("/clients/{client_name}/systems/{system_name}/packs")
+@app.get("/clients/{client_name}/systems/{system_name}/packs", tags=["Downloads"])
 def api_get_packs(client_name: str, system_name: str):
-    """Return available packs for a specific system."""
+    """Get available software packs for a specific system (client-specific endpoint)."""
     system_config = get_system_config(client_name, system_name)
     if not system_config:
         return {"error": "System not found"}
@@ -1975,9 +2004,15 @@ def api_get_packs(client_name: str, system_name: str):
     }
 
 
-@app.get("/systems/{manufacturer}/{system_name}/packs")
+@app.get("/systems/{manufacturer}/{system_name}/packs", tags=["Downloads"])
 def api_get_packs_no_client(manufacturer: str, system_name: str):
-    """Return available packs for a system without requiring client context."""
+    """
+    Get available software packs for a system (client-agnostic).
+    
+    Downloads are shared across all clients - use this endpoint to get packs
+    without selecting a specific client. The supported_by field indicates
+    which clients can use each pack.
+    """
     # Use any client that supports this system to get the pack info
     # Since packs are client-agnostic (downloads go to same location), 
     # we just need to find any client that defines this system
@@ -2011,13 +2046,16 @@ def api_get_packs_no_client(manufacturer: str, system_name: str):
     return {"error": "System not found"}
 
 
-@app.post("/clients/{client_name}/systems/{system_name}/install-packs")
+@app.post("/clients/{client_name}/systems/{system_name}/install-packs", tags=["Downloads"])
 async def api_install_packs(client_name: str, system_name: str, req: PackInstallRequest):
     """
-    Install selected packs for a system by:
-    1. Downloading sources referenced by each pack
-    2. Running build scripts to process the downloaded content
-    Streams output as downloads and builds execute.
+    Install selected software packs for a system.
+    
+    Downloads sources referenced by each pack and runs build scripts.
+    Returns a streaming response with real-time progress updates.
+    
+    Downloads are shared across all clients - files go to the same location
+    regardless of which client context is used.
     """
     system_config = get_system_config(client_name, system_name)
     if not system_config:

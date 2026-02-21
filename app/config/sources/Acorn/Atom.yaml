@@ -36,7 +36,7 @@ packs:
     supported_by: [RetroBat,Mame,Batocera,RetroPie]
     info_links:
       - label: IA Page
-        url: https://archive.org/download/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip/atom.zip
+        url: "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip&file=atom.zip"
     metadata:
       ruleset: Generic
       defaults:
