@@ -1805,7 +1805,9 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
 
             errors = []
             for script_variant in attempts:
+                logger.info(f"Zaparoo attempting script: {script_variant}")
                 script_used, run_resp, run_json = try_run(script_variant)
+                logger.info(f"Zaparoo response: status={run_resp.status_code}, json={run_json}")
 
                 if "result" in run_json:
                     # Give zaparoo time to start processing the command before we restore the setting
