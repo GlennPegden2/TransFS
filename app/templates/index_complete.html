@@ -1478,7 +1478,7 @@
             if (type === 'virtual') {
                 const timingBar = document.getElementById('virtual-timing');
                 if (timingBar) timingBar.style.display = 'none';
-                fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...<br><span style="font-size: 0.9em;">Checking stat cache...</span></div>';
+                fileList.innerHTML = '<div style="color: #666; padding: 10px;">Loading...</div>';
                 zaparooPromise = checkZaparooStatus();
             }
             
