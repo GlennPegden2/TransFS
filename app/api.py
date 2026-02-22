@@ -1756,7 +1756,9 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
         logger.info(f"Zaparoo final client_path: {client_path}")
 
         zaparoo_url = f"http://{host}:{port}/api/v0.1"
-        zapscript = f"**launch.path:{client_path}"
+        # Quote the path to handle special characters (commas, question marks, etc.)
+        # ZapScript requires quoting for arguments containing ',' or '?'
+        zapscript = f'**launch.path:"{client_path}"'
         logger.info(f"Zaparoo zapscript: {zapscript}")
 
         import uuid
@@ -1799,11 +1801,14 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
                 resp = zaparoo_rpc("run", {"text": script_text})
                 return script_text, resp, resp.json()
 
+            # Quote the path to handle special characters in filenames (commas, question marks, etc.)
+            # ZapScript requires quoting for arguments containing ',' or '?'
+            quoted_path = f'"{client_path}"'
             attempts = [
-                f"**launch:{client_path}",
-                f"**launch {client_path}",
+                f"**launch:{quoted_path}",
+                f"**launch {quoted_path}",
                 zapscript,
-                f"**launch.path {client_path}",
+                f"**launch.path {quoted_path}",
             ]
 
             errors = []
