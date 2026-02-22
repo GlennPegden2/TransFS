@@ -1525,29 +1525,25 @@
 
                 const fragment = document.createDocumentFragment();
                 const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
-                const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
-                    const div = document.createElement('div');
-                    div.className = `file-item ${entryType === 'directory' ? 'folder' : 'file'}`;
-                    if (entryType === 'directory') {
-                        div.addEventListener('click', () => loadDirectory(fullPath, type));
+                
+                // Function to wire up and show buttons lazily for a file item
+                const createButtonsForItem = (rightMeta, fileDiv, fullPath, type, supportsZaparoo, zaparooStatus) => {
+                    // Check if buttons already created (via data attribute)
+                    if (rightMeta.dataset.buttonsCreated === 'true') return;
+                    rightMeta.dataset.buttonsCreated = 'true';
+                    
+                    // Find or create button container
+                    let buttonContainer = rightMeta.querySelector('div');
+                    if (!buttonContainer) {
+                        buttonContainer = document.createElement('div');
+                        buttonContainer.style.display = 'flex';
+                        buttonContainer.style.gap = '0.3em';
+                        buttonContainer.style.alignItems = 'center';
+                        rightMeta.appendChild(buttonContainer);
                     }
-                    const iconSpan = document.createElement('span');
-                    iconSpan.className = 'icon';
-                    iconSpan.textContent = entryType === 'directory' ? '📁' : '📄';
-                    const nameSpan = document.createElement('span');
-                    nameSpan.className = 'name';
-                    nameSpan.textContent = name;
                     
-                    const sizeSpan = document.createElement('span');
-                    sizeSpan.className = 'size';
-                    sizeSpan.textContent = size || '';
-
-                    const rightMeta = document.createElement('div');
-                    rightMeta.className = 'right-meta';
-                    
-                    // Add launch button for files in virtual tab if Zaparoo is configured AND system supports it
                     let launchBtn = null;
-                    if (type === 'virtual' && supportsZaparoo && entryType !== 'directory') {
+                    if (type === 'virtual' && supportsZaparoo) {
                         const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
                         const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
                         
@@ -1622,7 +1618,7 @@
                     // Add info button for files in virtual tab
                     let infoBtn = null;
                     let metadataPanel = null;
-                    if (type === 'virtual' && entryType !== 'directory') {
+                    if (type === 'virtual') {
                         infoBtn = document.createElement('button');
                         infoBtn.className = 'info-btn';
                         infoBtn.textContent = 'ℹ️';
@@ -1806,21 +1802,71 @@
                         });
                     }
                     
-                    const buttonContainer = document.createElement('div');
-                    buttonContainer.style.display = 'flex';
-                    buttonContainer.style.gap = '0.3em';
-                    buttonContainer.style.alignItems = 'center';
-                    
-                    if (launchBtn) buttonContainer.appendChild(launchBtn);
+                    if (launchBtn || infoBtn) buttonContainer.appendChild(launchBtn);
                     if (infoBtn) buttonContainer.appendChild(infoBtn);
                     
-                    if (launchBtn || infoBtn) rightMeta.appendChild(buttonContainer);
-                    div.append(iconSpan, nameSpan, rightMeta);
-                    fragment.appendChild(div);
-                    
-                    if (metadataPanel) {
-                        fragment.appendChild(metadataPanel);
+                    if (metadataPanel && fileDiv) {
+                        // Insert metadata panel after the file item div
+                        if (fileDiv.nextSibling) {
+                            fileDiv.parentElement.insertBefore(metadataPanel, fileDiv.nextSibling);
+                        } else {
+                            fileDiv.parentElement.appendChild(metadataPanel);
+                        }
                     }
+                };
+                
+                const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
+                    const div = document.createElement('div');
+                    div.className = `file-item ${entryType === 'directory' ? 'folder' : 'file'}`;
+                    if (entryType === 'directory') {
+                        div.addEventListener('click', () => loadDirectory(fullPath, type));
+                    }
+                    const iconSpan = document.createElement('span');
+                    iconSpan.className = 'icon';
+                    iconSpan.textContent = entryType === 'directory' ? '📁' : '📄';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'name';
+                    nameSpan.textContent = name;
+                    
+                    const sizeSpan = document.createElement('span');
+                    sizeSpan.className = 'size';
+                    sizeSpan.textContent = size || '';
+
+                    const rightMeta = document.createElement('div');
+                    rightMeta.className = 'right-meta';
+                    
+                    div.append(iconSpan, nameSpan, rightMeta);
+                    
+                    // For virtual tab files: create empty button container that appears on hover
+                    if (type === 'virtual' && entryType !== 'directory') {
+                        const emptyButtonContainer = document.createElement('div');
+                        emptyButtonContainer.style.display = 'none';
+                        emptyButtonContainer.style.gap = '0.3em';
+                        emptyButtonContainer.style.alignItems = 'center';
+                        rightMeta.appendChild(emptyButtonContainer);
+                        
+                        // Show buttons, highlight row, and wire up listeners on mouseenter
+                        let listenersWired = false;
+                        div.addEventListener('mouseenter', () => {
+                            // Show buttons
+                            emptyButtonContainer.style.display = 'flex';
+                            // Highlight row
+                            div.style.backgroundColor = '#f0f0f0';
+                            // Wire up listeners on first hover only
+                            if (!listenersWired) {
+                                createButtonsForItem(rightMeta, div, fullPath, type, supportsZaparoo, zaparooStatus);
+                                listenersWired = true;
+                            }
+                        });
+                        div.addEventListener('mouseleave', () => {
+                            // Hide buttons
+                            emptyButtonContainer.style.display = 'none';
+                            // Remove highlight
+                            div.style.backgroundColor = '';
+                        });
+                    }
+                    
+                    fragment.appendChild(div);
                 };
 
                 if (!roots.includes(path)) {
