@@ -901,7 +901,13 @@ class DatabaseSync:
                         'file_info': self.file_batch[idx]
                     })
             
-            # Enrich metadata for newly added or updated files
+            # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
+            self.stats['files_updated'] += len(self.file_batch)
+            
+            # Commit files BEFORE metadata enrichment so foreign keys resolve
+            self.conn.commit()
+            
+            # Now enrich metadata for files that were committed above
             for enrichment_data in file_ids_for_enrichment:
                 try:
                     file_id = enrichment_data['file_id']
@@ -917,18 +923,11 @@ class DatabaseSync:
                         'size': file_info['size'],
                     }
                     
-                    # Call enrich_file_metadata - it will use get_cursor() internally,
-                    # but we need to commit the metadata in the same transaction as files
+                    # enrich_file_metadata uses get_cursor(commit=True) so it commits immediately
+                    # This is safe because files are already committed above
                     enrich_file_metadata(None, enrichment_file_info)
                 except Exception as e:
                     logger.warning(f"Failed to enrich metadata for file {file_id}: {e}")
-            
-            # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
-            self.stats['files_updated'] += len(self.file_batch)
-            
-            # Commit batch - this commits the files to the current connection.
-            # Metadata was committed separately within enrich_file_metadata context managers.
-            self.conn.commit()
             
             # Clear batch
             self.file_batch.clear()
