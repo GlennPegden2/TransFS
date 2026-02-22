@@ -4,6 +4,22 @@
     <meta charset="UTF-8">
     <title>TransFS Web UI</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script>
+        // Early route detection before body renders
+        // This prevents the download tab from flashing when visiting /browse/* URLs
+        function getInitialTabFromURL() {
+            const path = window.location.pathname;
+            if (path.startsWith('/browse/native')) {
+                return 'browse-native';
+            } else if (path.startsWith('/browse/virtual')) {
+                return 'browse-virtual';
+            }
+            return 'download';
+        }
+        
+        // Store the initial tab for use when DOMContentLoaded fires
+        window.initialTab = getInitialTabFromURL();
+    </script>
 </head>
 <body>
     <h1>TransFS Dashboard</h1>
@@ -22,7 +38,7 @@
     </div>
     
     <!-- Download Tab -->
-    <div id="download-tab" class="tab-content active">
+    <div id="download-tab" class="tab-content" id="download-initial-class">
         <form id="selectionForm">
             <div class="columns">
                 <div>
@@ -2475,6 +2491,24 @@
         // INITIALIZATION
         // =============================================
         window.addEventListener('DOMContentLoaded', async () => {
+            // Apply initial tab state based on URL (set in head script)
+            const initialTab = window.initialTab || 'download';
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                if (tab.id === initialTab + '-tab' || tab.id === initialTab) {
+                    tab.classList.add('active');
+                } else {
+                    tab.classList.remove('active');
+                }
+            });
+            document.querySelectorAll('.tab-button').forEach((btn, index) => {
+                const expectedTab = ['download', 'browse-native', 'browse-virtual'][index];
+                if (expectedTab === initialTab) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            
             // Load the dashboard data (clients, systems, packs)
             await loadData();
             
