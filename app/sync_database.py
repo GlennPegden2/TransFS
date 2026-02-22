@@ -327,7 +327,8 @@ class DatabaseSync:
                         'extensions': [e.upper() for e in query_cfg.get("extensions", [])],
                         'source_dir': query_cfg.get("source_dir", "Software"),
                         'extension_map': query_cfg.get("extension_map", {}),
-                        'transforms': map_config.get("transforms", {})
+                        'transforms': map_config.get("transforms", {}),
+                        'preserve_exact_filenames': query_cfg.get("preserve_exact_filenames", False)
                     })
                     logger.debug(f"    Found query map: {map_name}")
             else:
@@ -503,6 +504,7 @@ class DatabaseSync:
         source_dir = self._resolve_source_dir_for_layout(source_dir, system_config)
         extension_map = query_cfg.get("extension_map", {})
         transforms = map_config.get("transforms", {})
+        preserve_exact_filenames = query_cfg.get("preserve_exact_filenames", False)
         
         # Build source directory path
         local_base_path = system_config.get("local_base_path", "")
@@ -527,7 +529,7 @@ class DatabaseSync:
         if system_config.get("download_layout") == "source_based":
             file_count += self._scan_directory_recursive(
                 source_path, client_name, system_name, map_name,
-                extensions, extension_map, transforms, total_files
+                extensions, extension_map, transforms, total_files, preserve_exact_filenames
             )
         else:
             for ext in extensions:
@@ -538,7 +540,7 @@ class DatabaseSync:
                 if os.path.isdir(ext_dir):
                     file_count += self._scan_directory(
                         ext_dir, client_name, system_name, map_name,
-                        [ext_upper], extension_map, transforms, total_files
+                        [ext_upper], extension_map, transforms, total_files, preserve_exact_filenames
                     )
                 
                 # Also check lowercase
@@ -546,13 +548,13 @@ class DatabaseSync:
                 if os.path.isdir(ext_dir_lower) and ext_dir_lower != ext_dir:
                     file_count += self._scan_directory(
                         ext_dir_lower, client_name, system_name, map_name,
-                        [ext_upper], extension_map, transforms, total_files
+                        [ext_upper], extension_map, transforms, total_files, preserve_exact_filenames
                     )
             
             # Also scan source_dir directly for files (flat layout)
             file_count += self._scan_directory(
                 source_path, client_name, system_name, map_name,
-                extensions, extension_map, transforms, total_files
+                extensions, extension_map, transforms, total_files, preserve_exact_filenames
             )
         
         logger.info(f"      ✓ Processed {file_count}/{total_files} files in {map_name}")
@@ -583,9 +585,11 @@ class DatabaseSync:
                     for map_info in map_configs:
                         if ext in map_info['extensions']:
                             # File extension matches this map
+                            preserve_exact = map_info.get('preserve_exact_filenames', False)
                             self._add_file_to_database(
                                 file_path, client_name, system_name, map_info['name'],
-                                ext, map_info['extension_map'], map_info['transforms']
+                                ext, map_info['extension_map'], map_info['transforms'],
+                                preserve_exact
                             )
                             file_count += 1
                             matched = True
@@ -667,7 +671,7 @@ class DatabaseSync:
     
     def _scan_directory(self, dir_path: str, client_name: str, system_name: str,
                        map_name: str, extensions: List[str], extension_map: dict,
-                       transforms: dict, total_files: int = 0) -> int:
+                       transforms: dict, total_files: int = 0, preserve_exact_filenames: bool = False) -> int:
         """
         Scan a directory for files and add them to database.
         
@@ -689,7 +693,7 @@ class DatabaseSync:
                     if ext in [e.upper() for e in extensions]:
                         self._add_file_to_database(
                             entry.path, client_name, system_name, map_name,
-                            ext, extension_map, transforms
+                            ext, extension_map, transforms, preserve_exact_filenames
                         )
                         file_count += 1
                         
@@ -705,7 +709,7 @@ class DatabaseSync:
 
     def _scan_directory_recursive(self, dir_path: str, client_name: str, system_name: str,
                                  map_name: str, extensions: List[str], extension_map: dict,
-                                 transforms: dict, total_files: int = 0) -> int:
+                                 transforms: dict, total_files: int = 0, preserve_exact_filenames: bool = False) -> int:
         """Recursively scan a directory for files and add them to database."""
         if not os.path.isdir(dir_path):
             return 0
@@ -733,7 +737,7 @@ class DatabaseSync:
                     if ext in extensions_upper:
                         self._add_file_to_database(
                             os.path.join(root, filename), client_name, system_name, map_name,
-                            ext, extension_map, transforms
+                            ext, extension_map, transforms, preserve_exact_filenames
                         )
                         file_count += 1
                         
@@ -760,8 +764,20 @@ class DatabaseSync:
     
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
-                             transforms: dict):
-        """Add file to batch for processing."""
+                             transforms: dict, preserve_exact_filenames: bool = False):
+        """
+        Add file to batch for processing.
+        
+        Args:
+            source_path: Actual file path on filesystem
+            client_name: Client name (e.g., 'MiSTer')
+            system_name: System name (e.g., 'Atari2600')
+            map_name: Map name (e.g., 'ROMs')
+            extension: File extension (e.g., 'BIN')
+            extension_map: Mapping of extensions (e.g., {'SFC': 'SMC'})
+            transforms: Transform specifications for this extension
+            preserve_exact_filenames: If True, skip duplicates instead of renaming (default False)
+        """
         try:
             # Track that we've seen this file
             self.seen_source_paths.add(source_path)
@@ -795,6 +811,27 @@ class DatabaseSync:
             # Build virtual filename
             base_name, _ = os.path.splitext(filename)
             virtual_filename = f"{base_name}.{virtual_ext.lower()}"
+            
+            # Handle duplicate filenames in the same directory
+            dir_key = f"{client_name}/{system_name}/{map_name}"
+            duplicates_in_dir = [
+                entry for entry in self.file_batch
+                if entry['filename'] == virtual_filename and 
+                   f"{entry['client']}/{entry['system']}/{entry['map_name']}" == dir_key
+            ]
+            
+            if duplicates_in_dir:
+                if preserve_exact_filenames:
+                    # Skip this file - keep the one we already have
+                    logger.info(f"      Skipping duplicate {virtual_filename} in {dir_key} (preserve_exact_filenames=True)")
+                    self.stats['skipped'] += 1
+                    return
+                else:
+                    # Rename with suffix to create unique filename
+                    suffix_num = len(duplicates_in_dir) + 1
+                    name_without_ext = base_name
+                    virtual_filename = f"{name_without_ext}_{suffix_num}.{virtual_ext.lower()}"
+                    logger.debug(f"      Renaming duplicate: {base_name}.{virtual_ext.lower()} → {virtual_filename}")
             
             # Build virtual path
             virtual_path = os.path.join(
