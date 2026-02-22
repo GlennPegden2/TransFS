@@ -1527,9 +1527,10 @@
                 const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
                 
                 // Function to wire up and show buttons lazily for a file item
+                // Returns the metadata panel if created, so caller can attach hover handlers
                 const createButtonsForItem = (rightMeta, fileDiv, fullPath, type, supportsZaparoo, zaparooStatus) => {
                     // Check if buttons already created (via data attribute)
-                    if (rightMeta.dataset.buttonsCreated === 'true') return;
+                    if (rightMeta.dataset.buttonsCreated === 'true') return fileDiv.nextElementSibling;
                     rightMeta.dataset.buttonsCreated = 'true';
                     
                     // Find or create button container
@@ -1543,6 +1544,7 @@
                     }
                     
                     let launchBtn = null;
+                    let metadataPanel = null;
                     if (type === 'virtual' && supportsZaparoo) {
                         const availableClients = zaparooStatus.clients.filter(c => c.enabled && c.reachable);
                         const hasEnabled = zaparooStatus.clients.some(c => c.enabled);
@@ -1813,6 +1815,9 @@
                             fileDiv.parentElement.appendChild(metadataPanel);
                         }
                     }
+                    
+                    // Return metadata panel so caller can attach hover handlers
+                    return metadataPanel;
                 };
                 
                 const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
@@ -1845,24 +1850,47 @@
                         emptyButtonContainer.style.alignItems = 'center';
                         rightMeta.appendChild(emptyButtonContainer);
                         
+                        // Track whether this row or its metadata panel has hover focus
+                        let isRowHovered = false;
+                        
                         // Show buttons, highlight row, and wire up listeners on mouseenter
                         let listenersWired = false;
                         div.addEventListener('mouseenter', () => {
+                            isRowHovered = true;
                             // Show buttons
                             emptyButtonContainer.style.display = 'flex';
                             // Highlight row
                             div.style.backgroundColor = '#f0f0f0';
                             // Wire up listeners on first hover only
                             if (!listenersWired) {
-                                createButtonsForItem(rightMeta, div, fullPath, type, supportsZaparoo, zaparooStatus);
+                                const metadataPanel = createButtonsForItem(rightMeta, div, fullPath, type, supportsZaparoo, zaparooStatus);
                                 listenersWired = true;
+                                
+                                // If metadata panel was created, add hover handling to it
+                                if (metadataPanel) {
+                                    metadataPanel.addEventListener('mouseenter', () => {
+                                        // Keep buttons visible when hovering over metadata panel
+                                        emptyButtonContainer.style.display = 'flex';
+                                        div.style.backgroundColor = '#f0f0f0';
+                                    });
+                                    metadataPanel.addEventListener('mouseleave', () => {
+                                        // Hide buttons only if we're not also hovering the file row
+                                        if (!isRowHovered) {
+                                            emptyButtonContainer.style.display = 'none';
+                                            div.style.backgroundColor = '';
+                                        }
+                                    });
+                                }
                             }
                         });
                         div.addEventListener('mouseleave', () => {
-                            // Hide buttons
-                            emptyButtonContainer.style.display = 'none';
-                            // Remove highlight
-                            div.style.backgroundColor = '';
+                            isRowHovered = false;
+                            // Hide buttons unless mouse is over metadata panel
+                            const metadataPanel = div.nextElementSibling;
+                            if (!metadataPanel || metadataPanel.className !== 'metadata-panel' || metadataPanel.style.display === 'none') {
+                                emptyButtonContainer.style.display = 'none';
+                                div.style.backgroundColor = '';
+                            }
                         });
                     }
                     
