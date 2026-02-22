@@ -1,0 +1,675 @@
+# TransFS Clients Configuration
+# Defines how different retro gaming platforms map to the filesystem
+
+clients:
+  - name: MiSTer
+    download_layout: source_based
+    default_target_path: "{name}/{system_name}/{maps}"
+    systems:
+      # --- Acorn ---
+      - name: AcornAtom
+        manufacturer: Acorn
+        system_mapping_name: Atom
+        local_base_path: Acorn/Atom
+        maps:
+          - boot.vhd:
+              file:
+                path: Software/VHD/hoglet67.vhd
+          - HDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - VHD
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Archie
+        manufacturer: Acorn
+        system_mapping_name: Archimedes
+        local_base_path: Acorn/Archimedes
+        maps:
+          - riscos.rom:
+              file:
+                path: BIOS/riscos.rom
+          - riscos3_71.rom:
+              file:
+                path: BIOS/riscos3_71.rom
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ADF
+                supports_zip: false
+                supports_zaparoo: false
+          - HDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - HDF
+                supports_zip: false
+                supports_zaparoo: false
+      - name: AcornElectron
+        manufacturer: Acorn
+        system_mapping_name: Electron
+        local_base_path: Acorn/Electron/
+        maps:
+          - boot.vhd:
+              file:
+                path: Software/MMB/ElkBEEB.zip
+                unzip: true
+                zip_internal_file: BEEB.MMB
+                supports_zaparoo: true
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ADF
+                  - DFS
+                  - HFE
+                  - SSD
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+          - HDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - MMB
+                  - VHD
+                extension_map:
+                  MMB: VHD
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - UEF
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ROM
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+      - name: BBCMicro
+        manufacturer: Acorn
+        system_mapping_name: BBC Micro
+        local_base_path: Acorn/BBC_B/
+        maps:
+          - boot.vhd:
+              file:
+                path: Software/MMB/higgy_mmbeeb-v1.2.zip
+                unzip: true
+                zip_internal_file: BEEB.MMB
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - SSD
+                  - DSD
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+          - HDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - MMB
+                  - VHD
+                extension_map:
+                  MMB: VHD
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: flatten
+      # --- Amstrad ---
+      - name: Amstrad PCW
+        manufacturer: Amstrad
+        system_mapping_name: PCW
+        local_base_path: Amstrad/PCW
+        maps:
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - DSK
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Amstrad
+        manufacturer: Amstrad
+        system_mapping_name: CPC
+        local_base_path: Amstrad/CPC/
+        maps:
+          - boot.rom:
+              file:
+                path: BIOS/boot.rom
+          - boot2.rom:
+              file:
+                path: BIOS/boot.rom
+# Removed as it removes disk functionality
+#          - cpc464nd.eZ0:
+#              default_source:
+#                source_filename: BIOS/cpc464nd.eZ0
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - DSK
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: file
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - CDT
+                supports_zip: true
+                supports_zaparoo: true
+                zip_mode: file
+      # --- Apple ---
+      - name: Apple-I
+        display_name: "Apple I"
+        manufacturer: Apple
+        system_mapping_name: AppleI
+        local_base_path: Apple/AppleI
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - CAS
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Apple-II
+        display_name: "Apple //e"
+        manufacturer: Apple
+        system_mapping_name: AppleII
+        local_base_path: Apple/AppleII
+        maps:
+          - FDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - DSK
+                  - DO
+                  - PO
+                  - 2MG
+                extension_filters:
+                  2MG:
+                    max_size: 908288  # 865KB + 64KB header + 1 byte
+                supports_zip: false
+                supports_zaparoo: true
+              transforms:
+                2MG:
+                  - type: two_mg
+          - HDs:
+              query:
+                source_dir: Software
+                extensions:
+                  - HDV
+                  - 2MG
+                extension_filters:
+                  2MG:
+                    min_size: 908289  # 865KB + 64KB header + 2 bytes (exclusive lower bound)
+                supports_zip: false
+                supports_zaparoo: true
+              transforms:
+                2MG:
+                  - type: two_mg
+                    output_extension: hdv  # Large 2MG files in HDs should appear as .hdv
+
+      # --- Atari ---
+      - name: Atari2600
+        manufacturer: Atari
+        system_mapping_name: Atari2600
+        ruleset: atarimania
+        local_base_path: Atari/2600
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - BIN
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Atari5200
+        manufacturer: Atari
+        system_mapping_name: Atari5200
+        local_base_path: Atari/5200
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - A52
+                  - BIN
+                  - ROM
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Atari7800
+        manufacturer: Atari
+        system_mapping_name: Atari7800
+        local_base_path: Atari/7800
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - A78
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Atari800
+        manufacturer: Atari
+        system_mapping_name: Atari800
+        local_base_path: Atari/800
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ROM
+                supports_zip: false
+                supports_zaparoo: true
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - ATR
+                  - XFD
+                supports_zip: false
+                supports_zaparoo: true
+      - name: AtariLynx
+        manufacturer: Atari
+        system_mapping_name: Lynx
+        local_base_path: Atari/Lynx
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - LNX
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Coleco ---
+      - name: ColecoVision
+        manufacturer: Coleco
+        system_mapping_name: ColecoVision
+        local_base_path: Coleco/ColecoVision
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - COL
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Commodore ---
+      - name: Amiga
+        manufacturer: Commodore
+        system_mapping_name: Amiga
+        local_base_path: Commodore/Amiga
+        maps:
+          - KICK.ROM:
+              file:
+                path: BIOS/kick.rom
+          - HDs:
+              query:
+                source_dir: HDDs
+                extensions:
+                  - "*"
+          - FDs:
+              query:
+                source_dir: FDs
+                extensions:
+                  - "*"
+      - name: Commodore128
+        manufacturer: Commodore
+        system_mapping_name: C128
+        local_base_path: Commodore/C128
+        maps:
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - D64
+                  - D71
+                  - D81
+                supports_zip: false
+                supports_zaparoo: true
+      - name: Commodore64
+        manufacturer: Commodore
+        system_mapping_name: C64
+        local_base_path: Commodore/C64
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - TAP
+                supports_zip: false
+                supports_zaparoo: false
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - D64
+                  - G64
+                supports_zip: false
+                supports_zaparoo: false
+      - name: CommodorePET
+        manufacturer: Commodore
+        system_mapping_name: PET
+        local_base_path: Commodore/PET
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - TAP
+                supports_zip: false
+                supports_zaparoo: false
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - D64
+                supports_zip: false
+                supports_zaparoo: false
+      - name: CommodorePlus4
+        manufacturer: Commodore
+        system_mapping_name: Plus4
+        local_base_path: Commodore/Plus4
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - TAP
+                supports_zip: false
+                supports_zaparoo: false
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - D64
+                supports_zip: false
+                supports_zaparoo: false
+      # --- GCE ---
+      - name: Vectrex
+        manufacturer: GCE
+        system_mapping_name: Vectrex
+        local_base_path: GCE/Vectrex
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - BIN
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Mattel ---
+      - name: Intellivision
+        manufacturer: Mattel
+        system_mapping_name: Intellivision
+        local_base_path: Mattel/Intellivision
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - INT
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Microsoft ---
+      - name: MSX
+        manufacturer: Microsoft
+        system_mapping_name: MSX
+        local_base_path: Microsoft/MSX
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ROM
+                supports_zip: false
+                supports_zaparoo: true
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - DSK
+                supports_zip: false
+                supports_zaparoo: true
+      # --- MITS ---
+      - name: Altair8800
+        manufacturer: MITS
+        system_mapping_name: Altair8800
+        local_base_path: MITS/Altair8800
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ROM
+                  - BIN
+                  - HEX
+                extension_map:
+                  BIN: ROM
+                  HEX: ROM
+                supports_zip: false
+                supports_zaparoo: true
+      # --- NEC ---
+      - name: PC-Engine
+        manufacturer: NEC
+        system_mapping_name: PCE
+        local_base_path: NEC/PCE
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - PCE
+                supports_zip: false
+                supports_zaparoo: true
+      - name: TurboGrafx16
+        manufacturer: NEC
+        system_mapping_name: TurboGrafx16
+        local_base_path: NEC/TurboGrafx16
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - PCE
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Nintendo ---
+      - name: GameBoy
+        manufacturer: Nintendo
+        system_mapping_name: GameBoy
+        local_base_path: Nintendo/GameBoy
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - GB
+                supports_zip: false
+                supports_zaparoo: true
+      - name: GameBoyAdvance
+        manufacturer: Nintendo
+        system_mapping_name: GBA
+        local_base_path: Nintendo/GBA
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - GBA
+                supports_zip: false
+                supports_zaparoo: true
+      - name: GameBoyColor
+        manufacturer: Nintendo
+        system_mapping_name: GBC
+        local_base_path: Nintendo/GBC
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - GBC
+                supports_zip: false
+                supports_zaparoo: true
+      - name: NES
+        manufacturer: Nintendo
+        system_mapping_name: NES
+        local_base_path: Nintendo/NES
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - NES
+                supports_zip: false
+                supports_zaparoo: true
+      - name: SNES
+        manufacturer: Nintendo
+        system_mapping_name: SNES
+        local_base_path: Nintendo/SNES
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - SFC
+                  - SMC
+                extension_map:
+                  SFC: SMC
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Sega ---
+      - name: SegaGameGear
+        manufacturer: Sega
+        system_mapping_name: GameGear
+        local_base_path: Sega/GameGear
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - GG
+                supports_zip: false
+                supports_zaparoo: true
+      - name: SegaGenesis
+        manufacturer: Sega
+        system_mapping_name: Genesis
+        local_base_path: Sega/Genesis
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - BIN
+                  - GEN
+                  - MD
+                supports_zip: false
+                supports_zaparoo: true
+      - name: SegaMasterSystem
+        manufacturer: Sega
+        system_mapping_name: MasterSystem
+        local_base_path: Sega/MasterSystem
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - SMS
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Sinclair ---
+      - name: ZX Spectrum
+        manufacturer: Sinclair
+        system_mapping_name: Spectrum
+        local_base_path: Sinclair/Spectrum
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - TAP
+                  - TZX
+                supports_zip: false
+                supports_zaparoo: false
+          - Disks:
+              query:
+                source_dir: Software
+                extensions:
+                  - TRD
+                  - SCL
+                supports_zip: false
+                supports_zaparoo: false
+      # --- SNK ---
+      - name: NeoGeo
+        manufacturer: SNK
+        system_mapping_name: NeoGeo
+        local_base_path: SNK/NeoGeo
+        maps:
+          - ROMs:
+              query:
+                source_dir: Software
+                extensions:
+                  - ZIP
+                supports_zip: false
+                supports_zaparoo: true
+      # --- Tandy ---
+      - name: AliceMC10
+        manufacturer: Tandy
+        system_mapping_name: MC-10
+        local_base_path: Tandy/MC-10
+        maps:
+          - Tapes:
+              query:
+                source_dir: Software
+                extensions:
+                  - C10
+                supports_zip: false
+                supports_zaparoo: false
+  - name: Mame
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroBat
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: RetroPie                  
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+  - name: Generic
+    default_target_path: "{name}/{maps}/{system_name}/{maps2}"
+    systems:
+    - name: Apple-II
+      display_name: "Apple ][gs"
+      manufacturer: Apple
+      system_mapping_name: AppleII
+      local_base_path: Apple/AppleII
+      maps:
+        - FDs:
+            query:
+              source_dir: Software
+              extensions:
+                - DSK
+                - DO
+              supports_zip: false
+              supports_zaparoo: true
+        - HDs:
+            query:
+              source_dir: Software
+              extensions:
+                - 2MG
+              supports_zip: false
+              supports_zaparoo: true
+            transforms:
+              2MG:
+                - type: two_mg
+                  # output_extension auto-detected from disk content (do/po/hdv)
+
