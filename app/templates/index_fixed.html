@@ -367,9 +367,16 @@
                                             // Get extension from source path
                                             const sourceExt = sourceFilename.includes('.') ? sourceFilename.split('.').pop() : '';
                                             
+                                            // Extract native path from source_path by removing /mnt/filestorefs/Native/ prefix
+                                            let nativeBrowserPath = data.source_path;
+                                            if (nativeBrowserPath.includes('/mnt/filestorefs/Native/')) {
+                                                nativeBrowserPath = nativeBrowserPath.replace('/mnt/filestorefs/Native/', '');
+                                            }
+                                            const nativeBrowserLink = `/browse/native/${nativeBrowserPath}`;
+                                            
                                             html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
                                                 <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore Path:</span>
-                                                <span style="color: #333; font-family: monospace; font-size: 0.9em; word-break: break-all;">${escapeHtml(data.source_path)}</span>
+                                                <a href="${escapeHtml(nativeBrowserLink)}" style="color: #1976d2; cursor: pointer; text-decoration: none; font-family: monospace; font-size: 0.9em; word-break: break-all;" title="Open in Native Browser">${escapeHtml(data.source_path)}</a>
                                             </div>`;
                                             
                                             if (sourceExt && sourceExt !== data.extension) {
