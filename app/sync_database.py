@@ -889,13 +889,43 @@ class DatabaseSync:
                     file_info['now']
                 ))
             
-            # Execute batch upsert
-            cursor.executemany(upsert_query, batch_data)
+            # Execute batch upsert and collect returned file_ids for metadata enrichment
+            file_ids_for_enrichment = []
+            for idx, batch_row in enumerate(batch_data):
+                cursor.execute(upsert_query, batch_row)
+                result = cursor.fetchone()
+                if result:
+                    file_id, inserted = result
+                    file_ids_for_enrichment.append({
+                        'file_id': file_id,
+                        'file_info': self.file_batch[idx]
+                    })
+            
+            # Enrich metadata for newly added or updated files
+            for enrichment_data in file_ids_for_enrichment:
+                try:
+                    file_id = enrichment_data['file_id']
+                    file_info = enrichment_data['file_info']
+                    
+                    # Prepare file_info dict for enrichment
+                    enrichment_file_info = {
+                        'file_id': file_id,
+                        'filename': file_info['filename'],
+                        'extension': file_info['extension'],
+                        'map_name': file_info['map_name'],
+                        'virtual_path': file_info['virtual_path'],
+                        'size': file_info['size'],
+                    }
+                    
+                    # Call enrich_file_metadata (uses cursor internally)
+                    enrich_file_metadata(None, enrichment_file_info)
+                except Exception as e:
+                    logger.warning(f"Failed to enrich metadata for file {file_id}: {e}")
             
             # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
             self.stats['files_updated'] += len(self.file_batch)
             
-            # Commit batch
+            # Commit batch with metadata
             self.conn.commit()
             
             # Clear batch
