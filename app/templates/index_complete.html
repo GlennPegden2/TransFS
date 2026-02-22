@@ -1892,6 +1892,9 @@
                                 div.style.backgroundColor = '';
                             }
                         });
+                    } else if (type === 'native' && entryType !== 'directory') {
+                        // For native tab files: create buttons immediately with lazy wiring
+                        createButtonsForItem(rightMeta, div, fullPath, type, false, null);
                     }
                     
                     fragment.appendChild(div);
