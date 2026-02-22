@@ -372,11 +372,13 @@
                                             if (nativeBrowserPath.includes('/mnt/filestorefs/Native/')) {
                                                 nativeBrowserPath = nativeBrowserPath.replace('/mnt/filestorefs/Native/', '');
                                             }
-                                            const nativeBrowserLink = `/browse/native/${nativeBrowserPath}`;
+                                            // Navigate to the folder containing the file, not the file itself
+                                            const folderPath = nativeBrowserPath.substring(0, nativeBrowserPath.lastIndexOf('/'));
+                                            const nativeBrowserLink = `/browse/native/${folderPath}`;
                                             
                                             html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
                                                 <span style="font-weight: 600; color: #555; min-width: 140px;">Filestore Path:</span>
-                                                <a href="${escapeHtml(nativeBrowserLink)}" style="color: #1976d2; cursor: pointer; text-decoration: none; font-family: monospace; font-size: 0.9em; word-break: break-all;" title="Open in Native Browser">${escapeHtml(data.source_path)}</a>
+                                                <a href="${escapeHtml(nativeBrowserLink)}" style="color: #1976d2; cursor: pointer; text-decoration: none; font-family: monospace; font-size: 0.9em; word-break: break-all;" title="Open folder in Native Browser">${escapeHtml(data.source_path)}</a>
                                             </div>`;
                                             
                                             if (sourceExt && sourceExt !== data.extension) {
