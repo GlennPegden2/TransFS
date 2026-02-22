@@ -36,6 +36,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Supports ZIP files with unzip and zip_internal_file options
   - Enables boot.vhd and other file-based maps to resolve correctly in FUSE filesystem
   - Fixes missing file-based map entries appearing in system-level directory listings
+- **File-Based Map Metadata Enrichment**: Added metadata enrichment during file sync
+  - Modified _flush_file_batch() to enrich metadata for synced files
+  - Captures file_ids from UPSERT RETURNING clause
+  - Calls enrich_file_metadata() for each file after insertion
+  - Fixes "no metadata available" message for boot.vhd and other file-based maps in UI
 
 ### Added
 - **Multi-Config-Set Support**: Switch between different configuration libraries for clients and sources
