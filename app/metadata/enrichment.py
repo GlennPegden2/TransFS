@@ -185,7 +185,8 @@ def enrich_file_metadata(
 
     is_revision = bool(parsed.version)
 
-    with get_cursor(commit=False) as cursor:
+    # Commit file_metadata insert immediately since this function is called directly from sync_database
+    with get_cursor(commit=True) as cursor:
         cursor.execute(
             """
             INSERT INTO file_metadata (

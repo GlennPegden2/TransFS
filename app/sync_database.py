@@ -917,7 +917,8 @@ class DatabaseSync:
                         'size': file_info['size'],
                     }
                     
-                    # Call enrich_file_metadata (uses cursor internally)
+                    # Call enrich_file_metadata - it will use get_cursor() internally,
+                    # but we need to commit the metadata in the same transaction as files
                     enrich_file_metadata(None, enrichment_file_info)
                 except Exception as e:
                     logger.warning(f"Failed to enrich metadata for file {file_id}: {e}")
@@ -925,7 +926,8 @@ class DatabaseSync:
             # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
             self.stats['files_updated'] += len(self.file_batch)
             
-            # Commit batch with metadata
+            # Commit batch - this commits the files to the current connection.
+            # Metadata was committed separately within enrich_file_metadata context managers.
             self.conn.commit()
             
             # Clear batch
