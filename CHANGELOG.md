@@ -28,6 +28,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Fixed `_sync_system()` to process both file-based maps and query maps
   - Added `_sync_file_based_map()` handler for single-file map entries
   - Flush file-based map entries before query map scanning to prevent overwrites
+- **File-Based Map Path Resolution**: Fixed sourcepath.py to resolve file-based maps
+  - Added support for `file:` configuration format in get_source_path()
+  - Handles both regular files and ZIP archives with unzip/zip_internal_file options
+  - Ensures file-based maps appear in FUSE directory listings
+- **File-Based Map Metadata Enrichment**: Fixed metadata enrichment for file-based maps
+  - Modified sync_database.py to commit files before enriching metadata
+  - Changed enrichment.py to use commit=True for file_metadata INSERT
+  - Resolves foreign key constraint violations during sync
+  - Ensures file-based maps have complete metadata available in database and API
   - Added deduplication logic to preserve file-based map assignment when same file appears in multiple maps
   - Updated upsert query to use COALESCE to preserve existing map_name on conflict
   - Ensures files from file-based maps are synced with correct `client`, `system`, and `map_name` columns
