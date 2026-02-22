@@ -555,8 +555,14 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         zip_entries: list[str] = []
         for entry in db_entries:
             filename = entry.get("filename") if isinstance(entry, dict) else None
+            db_ext = entry.get("extension") if isinstance(entry, dict) else None
             if not filename:
                 filename = entry[0] if isinstance(entry, (tuple, list)) else str(entry)
+            
+            # Debug: Log first entry to understand database structure
+            if entry == db_entries[0]:
+                logger.info(f"DB entry structure: filename={filename}, extension={db_ext}, full_entry={entry}")
+            
             if filename.lower().endswith('.zip'):
                 zip_entries.append(filename)
                 if zip_mode == "file" or not supports_zip:
@@ -564,13 +570,26 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 elif zip_mode == "hierarchical":
                     entries.add(filename)
                 continue
-            name, ext = os.path.splitext(filename)
-            ext = ext[1:].upper() if ext else ""
+            
+            # Use extension from database if available, otherwise extract from filename
+            if db_ext:
+                ext = db_ext.upper() if db_ext else ""
+                # Build filename with extension if not already included
+                if not filename.lower().endswith(f".{db_ext.lower()}"):
+                    full_filename = f"{filename}.{db_ext.lower()}"
+                else:
+                    full_filename = filename
+            else:
+                name, ext = os.path.splitext(filename)
+                ext = ext[1:].upper() if ext else ""
+                full_filename = filename
+            
             if ext and ext in extension_map:
                 virt_ext = extension_map[ext]
+                name = filename.rsplit('.', 1)[0] if '.' in filename else filename
                 entries.add(f"{name}.{virt_ext.lower()}")
             else:
-                entries.add(filename)
+                entries.add(full_filename if db_ext else filename)
 
         if zip_mode == "flatten" and supports_zip and zip_entries:
             base_dir = os.path.join(

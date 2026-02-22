@@ -1752,9 +1752,12 @@ def zaparoo_launch(request: ZaparooLaunchRequest):
             client_path = f"/{relative_path}"
         else:
             client_path = f"{mount_path}/{relative_path}"
+        
+        logger.info(f"Zaparoo final client_path: {client_path}")
 
         zaparoo_url = f"http://{host}:{port}/api/v0.1"
         zapscript = f"**launch.path:{client_path}"
+        logger.info(f"Zaparoo zapscript: {zapscript}")
 
         import uuid
 
