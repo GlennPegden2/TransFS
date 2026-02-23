@@ -589,6 +589,9 @@ def api_browse_directory(path: str):
                         
                         logger = logging.getLogger("api")
                         logger.warning(f"[CRITICAL-API] Processing {map_name}. preserve_structure={preserve_structure}")
+                    except Exception as e:
+                        logger.warning(f"[CRITICAL-API] Error loading preserve_structure config: {e}")
+                        preserve_structure = False
                     
                     if preserve_structure:
                         # Build virtual directory tree from relative paths
