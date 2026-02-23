@@ -38,6 +38,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added support for `file:` configuration format in get_source_path()
   - Handles both regular files and ZIP archives with unzip/zip_internal_file options
   - Ensures file-based maps appear in FUSE directory listings
+- **Pack Default Extension for Nested Folders**: Fixed `metadata.defaults.extension` feature for deeply nested folder structures
+  - Added per-file pack context lookup in _scan_system_directory() to apply default extensions
+  - Fixes RetroBat Acorn Atom: 3,197 extensionless files (in Software/Sources/hoglet67/*/...) now indexed with ATM extension
+  - Default extensions applied before query map matching, allowing files to match appropriate maps
+  - Source folder path corrected in Atom.yaml from Science Collections to Software/Sources/hoglet67
 - **File-Based Map Metadata Enrichment**: Fixed metadata enrichment for file-based maps
   - Modified sync_database.py to commit files before enriching metadata
   - Changed enrichment.py to use commit=True for file_metadata INSERT

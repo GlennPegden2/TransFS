@@ -570,6 +570,18 @@ class DatabaseSync:
         file_count = 0
         unmatched_count = 0
         
+        # Get manufacturer and canonical name for pack context lookups
+        manufacturer = None
+        canonical_name = None
+        for client in self.config.get("clients", []):
+            if client.get("name") == client_name:
+                for system in client.get("systems", []):
+                    if system.get("name") == system_name:
+                        manufacturer = system.get("manufacturer")
+                        canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                        break
+                break
+        
         try:
             for root, _, files in os.walk(base_path):
                 for filename in files:
@@ -579,6 +591,13 @@ class DatabaseSync:
                     # Get file extension
                     _, ext = os.path.splitext(filename)
                     ext = ext[1:].upper() if ext else ""
+                    
+                    # If no extension, try to get pack context and apply default extension
+                    if not ext and manufacturer and canonical_name:
+                        pack_context = self._get_pack_context_for_file(manufacturer, canonical_name, file_path)
+                        if pack_context and pack_context.default_extension:
+                            ext = pack_context.default_extension.upper()
+                            logger.debug(f"      File {filename} has no extension, applying pack default: {ext}")
                     
                     # Try to match file to a map
                     matched = False
@@ -717,26 +736,40 @@ class DatabaseSync:
         file_count = 0
         extensions_upper = {e.upper() for e in extensions}
         
-        # Get pack context to check for default_extension
-        pack_context = self._get_pack_context_for_system(client_name, system_name, dir_path)
-        default_ext = None
-        if pack_context and pack_context.default_extension:
-            default_ext = pack_context.default_extension.upper()
+        # Get manufacturer and canonical name for pack context lookups
+        manufacturer = None
+        canonical_name = None
+        for client in self.config.get("clients", []):
+            if client.get("name") == client_name:
+                for system in client.get("systems", []):
+                    if system.get("name") == system_name:
+                        manufacturer = system.get("manufacturer")
+                        canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                        break
+                break
         
         try:
             for root, _, files in os.walk(dir_path):
                 for filename in files:
+                    file_path = os.path.join(root, filename)
                     _, ext = os.path.splitext(filename)
-                    ext = ext[1:].upper() if ext else ""
+                    ext_original = ext[1:].upper() if ext else ""
+                    ext = ext_original
                     
-                    # If no extension and we have a default, use it
-                    if not ext and default_ext:
-                        ext = default_ext
-                        logger.debug(f"File {filename} has no extension, applying default: {default_ext}")
+                    # Get pack context for this specific file to check for default_extension
+                    applied_default = False
+                    if not ext and manufacturer and canonical_name:
+                        pack_context = self._get_pack_context_for_file(manufacturer, canonical_name, file_path)
+                        if pack_context and pack_context.default_extension:
+                            default_ext = pack_context.default_extension.upper()
+                            ext = default_ext
+                            applied_default = True
+                            logger.debug(f"File {filename} has no extension, applying default from pack: {default_ext}")
                     
+                    # File matches if extension is in the list, OR if we applied a default extension that's in the list
                     if ext in extensions_upper:
                         self._add_file_to_database(
-                            os.path.join(root, filename), client_name, system_name, map_name,
+                            file_path, client_name, system_name, map_name,
                             ext, extension_map, transforms, preserve_exact_filenames
                         )
                         file_count += 1

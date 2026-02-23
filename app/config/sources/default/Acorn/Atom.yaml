@@ -16,7 +16,7 @@ sources:
     type: ddl
     urls:
       - https://github.com/hoglet67/AtomSoftwareArchive/releases/download/V13_00/AtomSoftwareArchive_20240505_1129_V13.00.zip
-    folder: Software/Collections/hoglet67/main
+    folder: Software/Sources/hoglet67
     extract: true
   
   - name: blankvhd
