@@ -600,49 +600,63 @@ class TransFS(Passthrough):
             # If preserve_structure is enabled, build a virtual directory tree
             entries_to_send = []
             if preserve_structure:
-                logger.info(f"READDIR_DB_ONLY: building virtual directory tree for preserve_structure")
+                logger.info("READDIR_DB_ONLY: building virtual directory tree for preserve_structure")
                 source_dir = query_config.get('source_dir', 'Software')
-                
-                # Single pass: collect relative paths and build fast lookup structures
-                top_level_entries = {}  # Maps entry name -> ('file'|'dir', file_record)
-                seen_dirs = set()  # Track which directories we've already added
-                
+
+                # Determine which subpath inside the map we're listing
+                rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
+                subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                subpath = '/'.join(subpath_parts)
+
+                entries_map = {}  # name -> ('dir'|'file', file_record)
+
                 for file_record in db_files:
                     filename = file_record.get('filename', '')
                     source_path = file_record.get('source_path', '')
-                    
-                    # Extract relative directory structure from source_path
-                    relative_path = ""
+
+                    # Extract relative directory parts from source_path
+                    rel_dir_parts = []
                     if source_path and source_dir in source_path:
                         try:
                             parts = source_path.split('/')
                             idx = parts.index(source_dir)
-                            relative_parts = parts[idx+1:]
+                            relative_parts = parts[idx + 1:]
                             if relative_parts:
-                                # Remove the filename (last part) to get just the directory path
-                                relative_path = '/'.join(relative_parts[:-1])
+                                rel_dir_parts = relative_parts[:-1]
                         except (ValueError, IndexError):
-                            pass
-                    
-                    # Top-level entry in map directory
-                    if relative_path:
-                        # Get first component (top-level directory)
-                        first_dir = relative_path.split('/')[0]
-                        if first_dir not in seen_dirs:
-                            top_level_entries[first_dir] = ('dir', None)
-                            seen_dirs.add(first_dir)
+                            rel_dir_parts = []
+
+                    rel_dir = '/'.join(rel_dir_parts)
+
+                    # Filter to the current subpath
+                    if subpath:
+                        if not rel_dir.startswith(subpath):
+                            continue
+                        remainder = rel_dir[len(subpath):].lstrip('/')
                     else:
-                        # File at root level
-                        if filename not in top_level_entries:
-                            top_level_entries[filename] = ('file', file_record)
-                
-                # Build entries_to_send from top-level entries only
+                        remainder = rel_dir
+
+                    if remainder:
+                        # Show the next directory segment under this subpath
+                        next_dir = remainder.split('/', 1)[0]
+                        if next_dir not in entries_map:
+                            entries_map[next_dir] = ('dir', None)
+                    else:
+                        # File is directly under this subpath
+                        if filename and filename not in entries_map:
+                            entries_map[filename] = ('file', file_record)
+
                 entries_to_send = [
                     (entry_type, entry_name, file_record)
-                    for entry_name, (entry_type, file_record) in sorted(top_level_entries.items())
+                    for entry_name, (entry_type, file_record) in sorted(entries_map.items())
                 ]
-                
-                logger.info(f"READDIR_DB_ONLY: preserve_structure created {len(entries_to_send)} top-level entries from {len(db_files)} files")
+
+                logger.info(
+                    "READDIR_DB_ONLY: preserve_structure created %d entries from %d files for subpath='%s'",
+                    len(entries_to_send),
+                    len(db_files),
+                    subpath,
+                )
             else:
                 # Normal mode: flat list of files
                 for file_record in db_files:
