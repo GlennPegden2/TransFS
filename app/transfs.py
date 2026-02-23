@@ -555,7 +555,12 @@ class TransFS(Passthrough):
             
             # Extract size filters from query config if present
             extension_filters = {}
+            preserve_structure = False
             if query_config:
+                # Parse preserve_structure option
+                preserve_structure = query_config.get('preserve_structure', False)
+                logger.info(f"READDIR_DB_ONLY: preserve_structure={preserve_structure}")
+                
                 # Build size filter dict from extension-specific configs
                 ext_config = query_config.get('extension_filters', {})
                 if ext_config:
@@ -592,60 +597,159 @@ class TransFS(Passthrough):
                 logger.info(f"READDIR_DB_ONLY: no files found, returning empty directory")
                 return False
             
+            # If preserve_structure is enabled, build a virtual directory tree
+            entries_to_send = []
+            if preserve_structure:
+                logger.info(f"READDIR_DB_ONLY: building virtual directory tree for preserve_structure")
+                source_dir = query_config.get('source_dir', 'Software')
+                
+                # First pass: collect all entries with their relative paths
+                entries_with_paths = []
+                for file_record in db_files:
+                    filename = file_record.get('filename', '')
+                    source_path = file_record.get('source_path', '')
+                    
+                    # Extract relative directory structure from source_path
+                    relative_path = ""
+                    if source_path and source_dir in source_path:
+                        try:
+                            parts = source_path.split('/')
+                            idx = parts.index(source_dir)
+                            relative_parts = parts[idx+1:]
+                            if relative_parts:
+                                # Remove the filename (last part) to get just the directory path
+                                relative_path = '/'.join(relative_parts[:-1])
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    entries_with_paths.append((filename, file_record, relative_path))
+                
+                # Second pass: build virtual tree of directories + files
+                virtual_tree = set()
+                for filename, file_record, relative_path in entries_with_paths:
+                    if relative_path:
+                        # Add entry as "dir/filename"
+                        entry_name = f"{relative_path}/{filename}"
+                        virtual_tree.add(entry_name)
+                        
+                        # Add all intermediate directories
+                        dir_parts = relative_path.split('/')
+                        for i in range(len(dir_parts)):
+                            dir_entry = '/'.join(dir_parts[:i+1])
+                            virtual_tree.add(dir_entry)
+                    else:
+                        # File at root level
+                        virtual_tree.add(filename)
+                
+                # Build entries_to_send from virtual tree
+                for entry in sorted(virtual_tree):
+                    if '/' in entry:
+                        # This is either a directory or a file in a subdirectory
+                        parts = entry.split('/')
+                        if len(parts) > 1 and parts[-1]:
+                            # Could be a file or a directory
+                            # Check if it matches a database file entry
+                            is_file = False
+                            file_record = None
+                            for filename, record, rel_path in entries_with_paths:
+                                if rel_path:
+                                    full_entry = f"{rel_path}/{filename}"
+                                else:
+                                    full_entry = filename
+                                if full_entry == entry:
+                                    is_file = True
+                                    file_record = record
+                                    break
+                            
+                            if is_file:
+                                # It's a file
+                                entries_to_send.append(('file', parts[-1], file_record))
+                            else:
+                                # It's a directory
+                                entries_to_send.append(('dir', parts[-1], None))
+                    else:
+                        # Root level entry - must be a file
+                        for filename, record, rel_path in entries_with_paths:
+                            if not rel_path and filename == entry:
+                                entries_to_send.append(('file', filename, record))
+                                break
+                
+                logger.info(f"READDIR_DB_ONLY: preserve_structure created {len(entries_to_send)} entries from {len(db_files)} files")
+            else:
+                # Normal mode: flat list of files
+                for file_record in db_files:
+                    filename = file_record.get('filename', '')
+                    entries_to_send.append(('file', filename, file_record))
+            
             # Build system transform map for extension-based renaming
             system_transform_map = self._build_system_transform_map(path)
             
             # Send entries to client
             sent_count = 0
-            for entry_id, file_record in enumerate(db_files, start=1):
+            for entry_id, (entry_type, display_name, file_record) in enumerate(entries_to_send, start=1):
                 if entry_id <= start_id:
                     continue
                 
-                filename = file_record.get('filename', '')
-                source_path = file_record.get('source_path', '')
-                extension = file_record.get('extension', '').upper()
-                size = file_record.get('size', 0)
-                mtime = file_record.get('mtime', int(time.time()))
+                # Determine stat mode based on entry type
+                if entry_type == 'dir':
+                    # Directory entry
+                    st_mode = 0o040555  # Directory, read-execute for all
+                    size = 4096
+                    stat_dict = {
+                        'st_atime': int(time.time()),
+                        'st_ctime': int(time.time()),
+                        'st_mtime': int(time.time()),
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': st_mode,
+                        'st_nlink': 2,  # Directories have at least 2 links (. and ..)
+                        'st_size': size,
+                    }
+                else:
+                    # File entry
+                    source_path = file_record.get('source_path', '')
+                    extension = file_record.get('extension', '').upper()
+                    size = file_record.get('size', 0)
+                    mtime = file_record.get('mtime', int(time.time()))
+                    
+                    # Create stat dict for file
+                    now = int(time.time())
+                    st_mtime = int(mtime) if mtime else now
+                    stat_dict = {
+                        'st_atime': st_mtime,
+                        'st_ctime': st_mtime,
+                        'st_mtime': st_mtime,
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': 0o100444,
+                        'st_nlink': 1,
+                        'st_size': size,
+                    }
+                    
+                    # Apply transform renaming for files
+                    if system_transform_map and file_record:
+                        _, ext = os.path.splitext(file_record.get('filename', ''))
+                        ext = ext[1:].upper() if ext else ""
+                        # Try both uppercase and lowercase for case-insensitive lookup
+                        pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
+                        if pipeline:
+                            effective_ext = pipeline.get_effective_output_extension()
+                            if effective_ext:
+                                base_name, _ = os.path.splitext(display_name)
+                                display_name = f"{base_name}.{effective_ext}"
+                                logger.debug(f"READDIR_DB_ONLY: {file_record.get('filename', '')} -> {display_name}")
                 
-                # Create stat dict
-                now = int(time.time())
-                st_mtime = int(mtime) if mtime else now
-                stat_dict = {
-                    'st_atime': st_mtime,
-                    'st_ctime': st_mtime,
-                    'st_mtime': st_mtime,
-                    'st_gid': 0,
-                    'st_uid': 0,
-                    'st_mode': 0o100444,
-                    'st_nlink': 1,
-                    'st_size': size,
-                }
-                
-                entry_path = os.path.join(path, filename)
+                entry_path = os.path.join(path, display_name)
                 entry_inode = self._make_synthetic_inode(entry_path)
                 self._add_path(entry_inode, entry_path)
                 entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
-                
-                # Apply transform renaming
-                display_name = filename
-                if system_transform_map:
-                    _, ext = os.path.splitext(filename)
-                    ext = ext[1:].upper() if ext else ""
-                    # Try both uppercase and lowercase for case-insensitive lookup
-                    pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
-                    if pipeline:
-                        effective_ext = pipeline.get_effective_output_extension()
-                        if effective_ext:
-                            base_name, _ = os.path.splitext(filename)
-                            display_name = f"{base_name}.{effective_ext}"
-                            logger.debug(f"READDIR_DB_ONLY: {filename} -> {display_name}")
                 
                 if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
                     logger.info(f"READDIR_DB_ONLY: client buffer full after {sent_count} entries")
                     break
                 sent_count += 1
             
-            logger.info(f"READDIR_DB_ONLY: complete, sent {sent_count}/{len(db_files)} entries")
+            logger.info(f"READDIR_DB_ONLY: complete, sent {sent_count}/{len(entries_to_send)} entries")
             return False  # Successfully completed database-only readdir
             
         except Exception as e:
