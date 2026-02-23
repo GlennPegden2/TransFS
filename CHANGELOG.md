@@ -34,6 +34,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Pack installation now selects a valid configured client when pack `supported_by` includes clients not present in the current config set.
 - Restored Browse Native/Virtual functionality in the web UI (rich file rendering, Zaparoo launch controls, metadata panel, cache status, and deep-link initialization).
 - Fixed `preserve_structure` directory browsing to return child entries for nested paths without O(N^2) lookups.
+- Fixed `preserve_structure` virtual directory getattr so nested folders resolve correctly in FUSE.
 - **Metadata Rulesets Docker Accessibility**: Moved `/config/metadata/rulesets/` to `/app/config/metadata/rulesets/`
   - Ensures ruleset YAML files are accessible inside Docker container
   - Previous location was outside `/app` directory mount point

@@ -751,6 +751,76 @@ class TransFS(Passthrough):
         logger.info(f"GETATTR_DB_ONLY: {path} client={client_name} system={system_name} map={map_name} file={filename}")
         
         try:
+            # Handle virtual directories for preserve_structure query maps
+            from pathutils import find_map_entry, get_map_config, get_query_config
+            client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if client_config:
+                system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
+                if system_info:
+                    map_entry = find_map_entry(system_info, map_name)
+                    if map_entry:
+                        map_config = get_map_config(map_entry)
+                        query_config = get_query_config(map_config)
+                        if query_config and query_config.get('preserve_structure', False):
+                            source_dir = query_config.get('source_dir', 'Software')
+                            rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
+                            subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                            subpath = '/'.join(subpath_parts)
+
+                            def build_dir_stat() -> dict:
+                                now = int(time.time())
+                                return {
+                                    'st_atime': now,
+                                    'st_ctime': now,
+                                    'st_mtime': now,
+                                    'st_gid': 0,
+                                    'st_uid': 0,
+                                    'st_mode': 0o040555,
+                                    'st_nlink': 2,
+                                    'st_size': 4096,
+                                }
+
+                            if not subpath:
+                                return build_dir_stat()
+
+                            map_root_path = os.path.join(self.mount_path, *rel_parts[:3])
+                            cache_entry = self._db_readdir_cache.get(map_root_path)
+                            if cache_entry:
+                                cached_at, cached_files = cache_entry
+                                if (time.time() - cached_at) <= self._db_readdir_cache_ttl:
+                                    db_files = cached_files
+                                else:
+                                    self._db_readdir_cache.pop(map_root_path, None)
+                                    db_files = None
+                            else:
+                                db_files = None
+
+                            if db_files is None:
+                                from db.queries import query_files_by_client_system_and_map
+                                allowed_extensions = query_config.get('extensions', [])
+                                extension_filters = query_config.get('extension_filters', {}) or {}
+                                db_files = query_files_by_client_system_and_map(
+                                    client_name, system_name, map_name, allowed_extensions, extension_filters
+                                )
+                                self._db_readdir_cache[map_root_path] = (time.time(), db_files)
+
+                            for file_record in db_files or []:
+                                source_path = file_record.get('source_path', '')
+                                rel_dir_parts = []
+                                if source_path and source_dir in source_path:
+                                    try:
+                                        parts = source_path.split('/')
+                                        idx = parts.index(source_dir)
+                                        relative_parts = parts[idx + 1:]
+                                        if relative_parts:
+                                            rel_dir_parts = relative_parts[:-1]
+                                    except (ValueError, IndexError):
+                                        rel_dir_parts = []
+
+                                rel_dir = '/'.join(rel_dir_parts)
+                                if rel_dir == subpath or rel_dir.startswith(subpath + '/'):
+                                    return build_dir_stat()
+
             # Query database for this specific file
             from db.queries import query_file_by_client_system_map_and_name
             file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
