@@ -553,6 +553,7 @@ def api_browse_directory(path: str):
         
         # Check if this is a query map directory (client/system/map)
         if len(rel_parts) == 3:
+            print(f"[BROWSE] ENTERED query map handler - rel_parts={rel_parts}", flush=True)
             client_name, system_name, map_name = rel_parts
             try:
                 from db.queries import query_files_by_client_system_and_map
