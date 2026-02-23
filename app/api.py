@@ -543,6 +543,47 @@ def api_browse_directory(path: str):
         
         print(f"[BROWSE] zaparoo config done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
+    # OPTIMIZATION: For query map directories, use database instead of FUSE
+    # This is MUCH faster for large directories (4000+ files)
+    if path.startswith("/mnt/transfs"):
+        from pathlib import Path as PathLib
+        parts = PathLib(path).parts
+        root_parts = PathLib("/mnt/transfs").parts
+        rel_parts = parts[len(root_parts):]
+        
+        # Check if this is a query map directory (client/system/map)
+        if len(rel_parts) == 3:
+            client_name, system_name, map_name = rel_parts
+            try:
+                from db.queries import query_files_by_client_system_and_map
+                print(f"[BROWSE] Attempting database query for {client_name}/{system_name}/{map_name}", flush=True)
+                
+                db_files = query_files_by_client_system_and_map(
+                    client=client_name,
+                    system=system_name,
+                    map_name=map_name
+                )
+                
+                if db_files:
+                    print(f"[BROWSE] Database returned {len(db_files)} files, elapsed={time.time()-start_time:.4f}s", flush=True)
+                    entries = [
+                        {
+                            "name": f["filename"],
+                            "type": "file",
+                            "size": f["size"],
+                            "supports_zaparoo": supports_zaparoo
+                        }
+                        for f in db_files
+                    ]
+                    return {"path": path, "entries": entries}
+                else:
+                    print(f"[BROWSE] Database returned no files, falling back to FUSE", flush=True)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("api")
+                logger.warning(f"Database query failed for {path}, falling back to FUSE: {e}")
+                print(f"[BROWSE] Database query failed, falling back to FUSE: {e}", flush=True)
+    
     try:
         # Optimization: for ZIP-internal paths under /mnt/transfs, translate to real path first
         # This bypasses FUSE and uses zippath's cached index directly
