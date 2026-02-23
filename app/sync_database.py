@@ -816,23 +816,34 @@ class DatabaseSync:
             # Check both the current batch AND the database for existing filenames
             dir_key = f"{client_name}/{system_name}/{map_name}"
             
-            # Check in-memory batch
-            duplicates_in_batch = [
-                entry for entry in self.file_batch
-                if entry['filename'] == virtual_filename and 
-                   f"{entry['client']}/{entry['system']}/{entry['map_name']}" == dir_key
-            ]
+            # Check in-memory batch for files with same base name (including suffixed versions)
+            import re as regex_module
+            duplicates_in_batch = []
+            for entry in self.file_batch:
+                if f"{entry['client']}/{entry['system']}/{entry['map_name']}" == dir_key:
+                    entry_filename = entry['filename']
+                    # Match exact filename OR filename_N.ext pattern
+                    if (entry_filename == virtual_filename or 
+                        (entry_filename.startswith(f"{base_name}_") and 
+                         regex_module.match(f"^{regex_module.escape(base_name)}_[0-9]+\\.{virtual_ext.lower()}$", entry_filename))):
+                        duplicates_in_batch.append(entry)
             
             # Check database for existing files with this name in this directory
             duplicates_in_db = []
             try:
+                # Query for exact match OR files with _N suffix pattern
+                # This ensures we don't match "Action Man - Action Force.bin" when looking for "Action Man.bin"
+                import re as regex_module
                 query = """
                     SELECT filename FROM files 
                     WHERE client = %s AND system = %s AND map_name = %s 
-                    AND filename LIKE %s
+                    AND (filename = %s OR filename ~ %s)
                 """
-                # Match both exact filename and any _N suffixed versions
-                self.cursor.execute(query, (client_name, system_name, map_name, f"{base_name}%"))
+                # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
+                # Escape special regex characters in base_name
+                escaped_base = regex_module.escape(base_name)
+                pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
+                self.cursor.execute(query, (client_name, system_name, map_name, virtual_filename, pattern))
                 duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
             except Exception as e:
                 logger.warning(f"Failed to check for duplicates in DB: {e}")
