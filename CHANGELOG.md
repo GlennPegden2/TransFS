@@ -5,6 +5,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Changed
+- Renamed the Debug tab to Logs in the web UI for future log expansions.
 - System support icons now reflect pack-level `supported_by` metadata when available, ensuring system badges match pack client coverage.
 - **Cache Naming & UI Cleanup**: Renamed file attribute caching to **Stat Cache** in UI and API
   - Updated cache configuration endpoints to use `stat_cache_*` keys
@@ -18,6 +19,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Cache UI now reflects only active caches (Stat Cache, ZIP Index, Transform caches)
 
 ### Fixed
+- Restored Test Results tab rendering, including per-test output parsing, run tabs, and progress updates.
 - Restored download log carriage return handling so progress updates overwrite the current line instead of spamming new lines.
 - Restored Debug tab log loading by fetching FUSE logs from the correct endpoint on tab activation.
 - Fixed Debug tab log fetch path to use `/api/logs` (API is mounted under `/api`).
