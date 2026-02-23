@@ -188,3 +188,61 @@ maps:
 **See Also**: [DEDUPLICATION_FEATURE.md](DEDUPLICATION_FEATURE.md) for detailed configuration examples and FAQ.
 
 ---
+
+### 13. Query Map Structure Preservation
+
+**Overview**: Query maps can optionally preserve the source directory structure from the database, creating virtual subdirectories instead of flattening all files to the map root.
+
+**Default Behavior** (`preserve_structure: false`): All files are flattened
+- Example: `Software/Sources/hoglet67/AA/GALAXIAN.atm` becomes `FDs/GALAXIAN.atm`
+- Simple flat file listing, fastest performance
+- Best for: Simple ROM collections without meaningful subdirectories
+
+**Structure Preservation Mode** (`preserve_structure: true`): Virtual directories are created from source paths
+- Example: `Software/Sources/hoglet67/AA/GALAXIAN.atm` appears as `FDs/Sources/hoglet67/AA/GALAXIAN.atm`
+- Directory structure extracted from database `source_path` field
+- Shows organized file hierarchy in virtual filesystem
+- Best for: Collections organized by author, region, or other meaningful categories
+
+**How It Works**:
+1. FUSE reads the `source_path` field from each database record (e.g., `/path/to/Software/Sources/hoglet67/AA/GALAXIAN.atm`)
+2. Extracts relative path components based on `source_dir` setting (e.g., `Sources/hoglet67/AA/`)
+3. Creates virtual directory entries with proper filesystem attributes (st_mode 0o040555)
+4. Files appear with correct parent directories (st_mode 0o100444)
+
+**Configuration Example**:
+```yaml
+FDs:
+  query:
+    source_dir: Software
+    extensions: [ATM]
+    preserve_structure: true  # Enable directory structure preservation
+    # Sources, hoglet67, AA are created as virtual directories
+    # Files show as FDs/Sources/hoglet67/AA/FILENAME.atm
+    
+HDs:
+  query:
+    source_dir: Software
+    extensions: [VHD]
+    # preserve_structure defaults to false
+    # All VHD files flatten to HDs/FILENAME.vhd (no subdirectories)
+```
+
+**Performance**:
+- Directory structure: 3,197 files → 3,669 total entries (472 virtual directories)
+- API response includes both directory and file type indicators
+- Traversal still uses database queries, maintaining database-only performance benefits
+
+**Benefits**:
+- Users see organized file hierarchies in the virtual filesystem
+- Maintains source directory structure without copying/reorganizing actual files
+- Works transparently with file transforms and ZIP handling
+- Web UI and mount both reflect the directory structure accurately
+
+**Implementation Details**:
+- **Extraction**: Uses `source_dir` from query config as the root reference point
+- **Virtual Entries**: Directory nodes created on-demand for each intermediate path
+- **File Type Detection**: Sets appropriate inode modes based on path depth and entry type
+- **Caching**: Directory listings cached per-map for performance
+
+---

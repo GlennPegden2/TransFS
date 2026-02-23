@@ -603,8 +603,10 @@ class TransFS(Passthrough):
                 logger.info(f"READDIR_DB_ONLY: building virtual directory tree for preserve_structure")
                 source_dir = query_config.get('source_dir', 'Software')
                 
-                # First pass: collect all entries with their relative paths
-                entries_with_paths = []
+                # Single pass: collect relative paths and build fast lookup structures
+                top_level_entries = {}  # Maps entry name -> ('file'|'dir', file_record)
+                seen_dirs = set()  # Track which directories we've already added
+                
                 for file_record in db_files:
                     filename = file_record.get('filename', '')
                     source_path = file_record.get('source_path', '')
@@ -622,59 +624,25 @@ class TransFS(Passthrough):
                         except (ValueError, IndexError):
                             pass
                     
-                    entries_with_paths.append((filename, file_record, relative_path))
-                
-                # Second pass: build virtual tree of directories + files
-                virtual_tree = set()
-                for filename, file_record, relative_path in entries_with_paths:
+                    # Top-level entry in map directory
                     if relative_path:
-                        # Add entry as "dir/filename"
-                        entry_name = f"{relative_path}/{filename}"
-                        virtual_tree.add(entry_name)
-                        
-                        # Add all intermediate directories
-                        dir_parts = relative_path.split('/')
-                        for i in range(len(dir_parts)):
-                            dir_entry = '/'.join(dir_parts[:i+1])
-                            virtual_tree.add(dir_entry)
+                        # Get first component (top-level directory)
+                        first_dir = relative_path.split('/')[0]
+                        if first_dir not in seen_dirs:
+                            top_level_entries[first_dir] = ('dir', None)
+                            seen_dirs.add(first_dir)
                     else:
                         # File at root level
-                        virtual_tree.add(filename)
+                        if filename not in top_level_entries:
+                            top_level_entries[filename] = ('file', file_record)
                 
-                # Build entries_to_send from virtual tree
-                for entry in sorted(virtual_tree):
-                    if '/' in entry:
-                        # This is either a directory or a file in a subdirectory
-                        parts = entry.split('/')
-                        if len(parts) > 1 and parts[-1]:
-                            # Could be a file or a directory
-                            # Check if it matches a database file entry
-                            is_file = False
-                            file_record = None
-                            for filename, record, rel_path in entries_with_paths:
-                                if rel_path:
-                                    full_entry = f"{rel_path}/{filename}"
-                                else:
-                                    full_entry = filename
-                                if full_entry == entry:
-                                    is_file = True
-                                    file_record = record
-                                    break
-                            
-                            if is_file:
-                                # It's a file
-                                entries_to_send.append(('file', parts[-1], file_record))
-                            else:
-                                # It's a directory
-                                entries_to_send.append(('dir', parts[-1], None))
-                    else:
-                        # Root level entry - must be a file
-                        for filename, record, rel_path in entries_with_paths:
-                            if not rel_path and filename == entry:
-                                entries_to_send.append(('file', filename, record))
-                                break
+                # Build entries_to_send from top-level entries only
+                entries_to_send = [
+                    (entry_type, entry_name, file_record)
+                    for entry_name, (entry_type, file_record) in sorted(top_level_entries.items())
+                ]
                 
-                logger.info(f"READDIR_DB_ONLY: preserve_structure created {len(entries_to_send)} entries from {len(db_files)} files")
+                logger.info(f"READDIR_DB_ONLY: preserve_structure created {len(entries_to_send)} top-level entries from {len(db_files)} files")
             else:
                 # Normal mode: flat list of files
                 for file_record in db_files:
