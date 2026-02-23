@@ -376,6 +376,68 @@
         let showAllPacks = false;
         let systemsMetaMap = {};
         
+        // Initialize log state tracker for carriage return support (download progress)
+        window.logState = { 
+            lines: [],  // Array of completed lines
+            currentLine: '',  // Current line being built
+            carriage_return_mode: false  // Are we in overwrite mode (after \r)?
+        };
+        
+        // Append to log with carriage return support for progress displays
+        function appendLog(msg) {
+            const logDiv = document.getElementById('log');
+            const state = window.logState;
+            
+            for (let i = 0; i < msg.length; i++) {
+                const char = msg[i];
+                
+                if (char === '\r') {
+                    // Carriage return: enter overwrite mode, clearing current line
+                    state.currentLine = '';
+                    state.carriage_return_mode = true;
+                } else if (char === '\n') {
+                    // Newline: finalize the current line and start a new one
+                    state.lines.push(state.currentLine);
+                    state.currentLine = '';
+                    state.carriage_return_mode = false;
+                } else {
+                    // Regular character: append it
+                    state.currentLine += char;
+                }
+            }
+            
+            // Reconstruct the full content: completed lines + current line
+            let fullContent = state.lines.join('\n');
+            if (state.lines.length > 0 && state.currentLine) {
+                fullContent += '\n' + state.currentLine;
+            } else if (state.currentLine) {
+                fullContent = state.currentLine;
+            }
+            
+            logDiv.textContent = fullContent;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        // Show test status with optional progress bar
+        function showTestStatus(message, isRunning = false, progress = 0) {
+            const statusDiv = document.getElementById('test-status');
+            const statusText = document.getElementById('test-status-text');
+            const progressBar = document.getElementById('test-progress-bar');
+            const progressFill = document.getElementById('test-progress-fill');
+
+            statusText.textContent = message;
+            statusDiv.style.display = 'block';
+
+            if (isRunning) {
+                progressBar.style.display = 'block';
+                if (progress > 0) {
+                    progressFill.style.width = progress + '%';
+                }
+            } else {
+                progressBar.style.display = 'none';
+            }
+        }
+        
         // Tab switching
         async function switchTab(tabName, skipHistory = false) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -403,6 +465,8 @@
                 await loadConfigSettings();
             } else if (tabName === 'test-results') {
                 await loadLastTestResults();
+            } else if (tabName === 'debug') {
+                await refreshFuseLog();
             }
         }
         
@@ -899,8 +963,7 @@
         }
         
         async function runDbSync() {
-            const msg = document.getElementById('log');
-            msg.textContent += "\nStarting database sync...\n";
+            appendLog("\nStarting database sync...\n");
             
             // Get selected client and system for optimized sync
             const checkedClient = document.querySelector('input[name="clients"]:checked');
@@ -910,26 +973,26 @@
             let syncUrl = '/api/db/sync?stream=true';
             if (checkedClient) {
                 syncUrl += `&client=${encodeURIComponent(checkedClient.value)}`;
-                msg.textContent += `Filtering sync to client: ${checkedClient.value}\n`;
+                appendLog(`Filtering sync to client: ${checkedClient.value}\n`);
             }
             if (checkedSystems.length === 1) {
                 const systemValue = checkedSystems[0].value;
                 const systemMeta = systemsMetaMap[systemValue];
                 if (systemMeta && systemMeta.name) {
                     syncUrl += `&system=${encodeURIComponent(systemMeta.name)}`;
-                    msg.textContent += `Filtering sync to system: ${systemMeta.name}\n`;
+                    appendLog(`Filtering sync to system: ${systemMeta.name}\n`);
                 }
             }
             
             try {
-                msg.textContent += 'Connecting to sync stream...\n';
+                appendLog('Connecting to sync stream...\n');
                 
                 const eventSource = new EventSource(syncUrl);
                 let receivedMessage = false;
                 
                 const fallbackTimer = setTimeout(() => {
                     if (!receivedMessage) {
-                        msg.textContent += 'No stream data yet, switching to fetch fallback...\n';
+                        appendLog('No stream data yet, switching to fetch fallback...\n');
                         eventSource.close();
                         runDbSyncFetch(syncUrl, msg);
                     }
@@ -1069,9 +1132,8 @@
             const [manufacturer, mappingName] = checkedSystem.value.split('|||');
             const packs = Array.from(checkedPacks).map(cb => cb.value);
             
-            const msg = document.getElementById('log');
             const clientDisplay = clientName ? `${clientName}/` : '(shared across all clients)/';
-            msg.textContent += `\nInstalling ${packs.length} pack(s) for ${clientDisplay}${mappingName}...\n`;
+            appendLog(`\nInstalling ${packs.length} pack(s) for ${clientDisplay}${mappingName}...\n`);
             
             try {
                 // Use client-agnostic endpoint if no client selected, otherwise use client-specific
@@ -1093,7 +1155,7 @@
                 });
                 
                 if (!response.ok) {
-                    msg.textContent += `Error: HTTP ${response.status}\n`;
+                    appendLog(`Error: HTTP ${response.status}\n`);
                     return;
                 }
                 
@@ -2512,25 +2574,6 @@
                 }
             } catch (error) {
                 showTestStatus('Failed to load results: ' + error.message, false);
-            }
-        }
-
-        function showTestStatus(message, isRunning = false, progress = 0) {
-            const statusDiv = document.getElementById('test-status');
-            const statusText = document.getElementById('test-status-text');
-            const progressBar = document.getElementById('test-progress-bar');
-            const progressFill = document.getElementById('test-progress-fill');
-
-            statusText.textContent = message;
-            statusDiv.style.display = 'block';
-
-            if (isRunning) {
-                progressBar.style.display = 'block';
-                if (progress > 0) {
-                    progressFill.style.width = progress + '%';
-                }
-            } else {
-                progressBar.style.display = 'none';
             }
         }
 
