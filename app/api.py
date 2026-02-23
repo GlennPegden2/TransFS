@@ -556,6 +556,7 @@ def api_browse_directory(path: str):
             client_name, system_name, map_name = rel_parts
             try:
                 from db.queries import query_files_by_client_system_and_map
+                from pathutils import get_client, get_system_info, get_map_config
                 print(f"[BROWSE] Attempting database query for {client_name}/{system_name}/{map_name}", flush=True)
                 
                 db_files = query_files_by_client_system_and_map(
@@ -566,15 +567,100 @@ def api_browse_directory(path: str):
                 
                 if db_files:
                     print(f"[BROWSE] Database returned {len(db_files)} files, elapsed={time.time()-start_time:.4f}s", flush=True)
-                    entries = [
-                        {
-                            "name": f["filename"],
-                            "type": "file",
-                            "size": f["size"],
-                            "supports_zaparoo": supports_zaparoo
-                        }
-                        for f in db_files
-                    ]
+                    
+                    # Check for preserve_structure setting
+                    config = read_config()
+                    client = get_client(config, rel_parts)
+                    system = next((s for s in client.get('systems', []) if s['name'] == system_name), None) if client else None
+                    map_entry = None
+                    preserve_structure = False
+                    
+                    if system:
+                        map_entry = next((m for m in system.get('maps', []) if m if isinstance(m, dict) and map_name in m else False), None)
+                        if map_entry and map_name in map_entry:
+                            map_config = get_map_config(map_entry)
+                            if map_config and isinstance(map_config, dict):
+                                query_cfg = map_config.get("query", {})
+                                preserve_structure = query_cfg.get("preserve_structure", False)
+                    
+                    logger = logging.getLogger("api")
+                    logger.warning(f"[CRITICAL-API] Processing {map_name}. preserve_structure={preserve_structure}")
+                    
+                    if preserve_structure:
+                        # Build virtual directory tree from relative paths
+                        entries_set = set()
+                        source_dir = "Software"  # Default, would come from query_cfg in real scenario
+                        
+                        logger.warning(f"[CRITICAL-API] Building virtual tree for {len(db_files)} files")
+                        
+                        for f in db_files:
+                            source_path = f.get("source_path", "")
+                            filename = f.get("filename", "")
+                            
+                            if source_path and source_dir in source_path:
+                                # Extract relative path from source_path
+                                parts = source_path.split('/')
+                                try:
+                                    idx = parts.index(source_dir)
+                                    relative_parts = parts[idx+1:]
+                                    if relative_parts:
+                                        # Join all but the last part (which is filename) to get directory
+                                        relative_dir = '/'.join(relative_parts[:-1])
+                                        if relative_dir:
+                                            entry = relative_dir + '/' + filename
+                                        else:
+                                            entry = filename
+                                        entries_set.add(entry)
+                                    else:
+                                        entries_set.add(filename)
+                                except ValueError:
+                                    entries_set.add(filename)
+                            else:
+                                entries_set.add(filename)
+                        
+                        # Build virtual tree with directory entries
+                        virtual_tree = set()
+                        for entry in entries_set:
+                            parts = entry.split('/')
+                            if len(parts) > 1:
+                                for i in range(len(parts)):
+                                    virtual_tree.add('/'.join(parts[:i+1]))
+                            else:
+                                virtual_tree.add(entry)
+                        
+                        logger.warning(f"[CRITICAL-API] Built virtual tree with {len(virtual_tree)} entries from {len(entries_set)}")
+                        
+                        # Convert to API response format
+                        entries = []
+                        for entry in sorted(virtual_tree):
+                            if '/' in entry:
+                                dir_parts = entry.split('/')
+                                name = dir_parts[-1]
+                                entries.append({
+                                    "name": name,
+                                    "type": "dir",
+                                    "size": None,
+                                    "supports_zaparoo": False
+                                })
+                            else:
+                                entries.append({
+                                    "name": entry,
+                                    "type": "file",
+                                    "size": next((f["size"] for f in db_files if f["filename"] == entry), None),
+                                    "supports_zaparoo": supports_zaparoo
+                                })
+                    else:
+                        # Plain file listing (original behavior)
+                        entries = [
+                            {
+                                "name": f["filename"],
+                                "type": "file",
+                                "size": f["size"],
+                                "supports_zaparoo": supports_zaparoo
+                            }
+                            for f in db_files
+                        ]
+                    
                     return {"path": path, "entries": entries}
                 else:
                     print(f"[BROWSE] Database returned no files, falling back to FUSE", flush=True)

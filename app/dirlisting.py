@@ -446,6 +446,11 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     supports_zip = query_cfg.get("supports_zip", True)
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
     preserve_structure = query_cfg.get("preserve_structure", False)  # New: preserve source directory structure
+    
+    # CRITICAL DEBUG: Log config loading
+    logger.warning(f"[CRITICAL] list_query_map called for {map_name}. map_config keys: {list(map_config.keys())}")
+    logger.warning(f"[CRITICAL] query_cfg keys: {list(query_cfg.keys())}")
+    logger.warning(f"[CRITICAL] preserve_structure value: {preserve_structure} (type: {type(preserve_structure).__name__})")
 
     cache_key = str(path)
     cache_enabled = False  # Directory listing cache is disabled
@@ -662,6 +667,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         # When preserve_structure is enabled, build virtual directory tree from relative paths
         if preserve_structure and entries:
+            logger.warning(f"[CRITICAL] About to build virtual tree. preserve_structure={preserve_structure}, entries count={len(entries)}")
             virtual_tree: set[str] = set()
             for entry in entries:
                 # Split paths and extract components for virtual directory structure
