@@ -576,7 +576,7 @@ def api_browse_directory(path: str):
                     preserve_structure = False
                     
                     if system:
-                        map_entry = next((m for m in system.get('maps', []) if m if isinstance(m, dict) and map_name in m else False), None)
+                        map_entry = next((m for m in system.get('maps', []) if m and isinstance(m, dict) and map_name in m), None)
                         if map_entry and map_name in map_entry:
                             map_config = get_map_config(map_entry)
                             if map_config and isinstance(map_config, dict):
