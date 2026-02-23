@@ -963,6 +963,7 @@
         }
         
         async function runDbSync() {
+            const msg = document.getElementById('log');
             appendLog("\nStarting database sync...\n");
             
             // Get selected client and system for optimized sync
@@ -1115,6 +1116,7 @@
         }
         
         async function submitInstallPacks(updateDb) {
+            const msg = document.getElementById('log');
             const checkedClient = document.querySelector('input[name="clients"]:checked');
             const checkedSystem = document.querySelector('input[name="systems"]:checked');
             const checkedPacks = document.querySelectorAll('input[name="packs"]:checked');
