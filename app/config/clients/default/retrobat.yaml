@@ -29,5 +29,6 @@ systems:
             supports_zip: false
             supports_zaparoo: false
             preserve_exact_filenames: true
+            preserve_structure: false  # Set to true to keep AA/, AGD/ subdirectories instead of flattening
       
 

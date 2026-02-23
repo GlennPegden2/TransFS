@@ -445,6 +445,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     )
     supports_zip = query_cfg.get("supports_zip", True)
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
+    preserve_structure = query_cfg.get("preserve_structure", False)  # New: preserve source directory structure
 
     cache_key = str(path)
     cache_enabled = False  # Directory listing cache is disabled
@@ -556,12 +557,13 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         for entry in db_entries:
             filename = entry.get("filename") if isinstance(entry, dict) else None
             db_ext = entry.get("extension") if isinstance(entry, dict) else None
+            source_path = entry.get("source_path") if isinstance(entry, dict) else None
             if not filename:
                 filename = entry[0] if isinstance(entry, (tuple, list)) else str(entry)
             
             # Debug: Log first entry to understand database structure
             if entry == db_entries[0]:
-                logger.info(f"DB entry structure: filename={filename}, extension={db_ext}, full_entry={entry}")
+                logger.info(f"DB entry structure: filename={filename}, extension={db_ext}, source_path={source_path}, full_entry={entry}")
             
             if filename.lower().endswith('.zip'):
                 zip_entries.append(filename)
@@ -587,9 +589,19 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             if ext and ext in extension_map:
                 virt_ext = extension_map[ext]
                 name = filename.rsplit('.', 1)[0] if '.' in filename else filename
-                entries.add(f"{name}.{virt_ext.lower()}")
+                final_entry = f"{name}.{virt_ext.lower()}"
             else:
-                entries.add(full_filename if db_ext else filename)
+                final_entry = full_filename if db_ext else filename
+            
+            # If preserve_structure is enabled, include relative directory path
+            if preserve_structure and source_path:
+                relative_path = _extract_relative_path(source_path, source_dir, system.get("local_base_path"))
+                if relative_path:
+                    entries.add(f"{relative_path}/{final_entry}")
+                else:
+                    entries.add(final_entry)
+            else:
+                entries.add(final_entry)
 
         if zip_mode == "flatten" and supports_zip and zip_entries:
             base_dir = os.path.join(
@@ -626,6 +638,46 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     except Exception as e:
         logger.error(f"Query map failed: {e}", exc_info=True)
         return []
+
+def _extract_relative_path(source_path: str, source_dir: str, local_base_path: str) -> str:
+    """
+    Extract the relative directory path from a full source path.
+    
+    For example:
+      source_path: "/mnt/filestorefs/Native/Acorn/Atom/Software/Sources/hoglet67/AA/GALAXIAN"
+      source_dir: "Software"
+      local_base_path: "Acorn/Atom"
+    Returns: "Sources/hoglet67/AA"
+    """
+    if not source_path:
+        return ""
+    
+    try:
+        # Normalize paths
+        source_path = source_path.replace("\\", "/")
+        source_dir = source_dir.strip("/").lower()
+        local_base_path = (local_base_path or "").strip("/").lower()
+        
+        # Find the source_dir in the path
+        source_dir_idx = source_path.lower().find(f"/{source_dir}/")
+        if source_dir_idx == -1:
+            source_dir_idx = source_path.lower().find(f"/{source_dir.lower()}/")
+        
+        if source_dir_idx == -1:
+            return ""
+        
+        # Extract everything after source_dir/
+        start_idx = source_dir_idx + len(source_dir) + 2  # +2 for the slashes
+        remainder = source_path[start_idx:]
+        
+        # Get the directory part (everything except the filename)
+        dir_part = remainder.rsplit("/", 1)[0] if "/" in remainder else ""
+        
+        return dir_part
+    except Exception as e:
+        logger.warning(f"Error extracting relative path from {source_path}: {e}")
+        return ""
+
 
 def is_dynamic_map(config, map_name: str, sa_entry: dict) -> bool:
     """Check if the map is a dynamic ...SoftwareArchives... map."""

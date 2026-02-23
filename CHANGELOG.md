@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **Query Map Structure Preservation**: New `preserve_structure` option for query maps
+  - Set `preserve_structure: true` in map config to preserve source directory structure in virtual filesystem
+  - Default: `false` (flattens all files into the map root)
+  - Enables organizing files by subdirectory while still using query-based filtering
+  - Example: `Software/Sources/hoglet67/AA/GALAXIAN` can appear as `FDs/Sources/hoglet67/AA/GALAXIAN` instead of just `FDs/GALAXIAN`
+
 ### Changed
 - Renamed the Debug tab to Logs in the web UI for future log expansions.
 - System support icons now reflect pack-level `supported_by` metadata when available, ensuring system badges match pack client coverage.
