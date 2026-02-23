@@ -586,6 +586,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         entries: set[str] = set()
         zip_entries: list[str] = []
+        logger.debug(f"Processing {len(db_entries)} database entries with preserve_structure={preserve_structure}")
         for entry in db_entries:
             filename = entry.get("filename") if isinstance(entry, dict) else None
             db_ext = entry.get("extension") if isinstance(entry, dict) else None
@@ -629,8 +630,11 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             if preserve_structure and source_path:
                 relative_path = _extract_relative_path(source_path, source_dir, system.get("local_base_path"))
                 if relative_path:
-                    entries.add(f"{relative_path}/{final_entry}")
+                    full_entry = f"{relative_path}/{final_entry}"
+                    logger.debug(f"Adding with structure: {full_entry} (from {final_entry})")
+                    entries.add(full_entry)
                 else:
+                    logger.debug(f"No relative path found for {final_entry}, adding as root")
                     entries.add(final_entry)
             else:
                 entries.add(final_entry)
@@ -670,7 +674,9 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                     # Top-level files/entries without subdirectories
                     virtual_tree.add(entry)
             entries = virtual_tree
-            logger.info(f"Preserve_structure enabled: built virtual tree with {len(entries)} entries (files and dirs)")
+            logger.info(f"Preserve_structure enabled: built virtual tree with {len(entries)} total entries (dirs + files)")
+            sample_entries = sorted(list(entries))[:10]
+            logger.debug(f"Sample entries from virtual tree: {sample_entries}")
 
         entries_list = sorted(entries)
 
@@ -712,6 +718,7 @@ def _extract_relative_path(source_path: str, source_dir: str, local_base_path: s
             source_dir_idx = source_path.lower().find(f"/{source_dir.lower()}/")
         
         if source_dir_idx == -1:
+            logger.debug(f"Source dir '{source_dir}' not found in path '{source_path}'")
             return ""
         
         # Extract everything after source_dir/
@@ -721,6 +728,7 @@ def _extract_relative_path(source_path: str, source_dir: str, local_base_path: s
         # Get the directory part (everything except the filename)
         dir_part = remainder.rsplit("/", 1)[0] if "/" in remainder else ""
         
+        logger.debug(f"_extract_relative_path: source_path={source_path}, source_dir={source_dir}, result={dir_part}")
         return dir_part
     except Exception as e:
         logger.warning(f"Error extracting relative path from {source_path}: {e}")
