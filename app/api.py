@@ -555,9 +555,11 @@ def api_browse_directory(path: str):
         if len(rel_parts) == 3:
             print(f"[BROWSE] ENTERED query map handler - rel_parts={rel_parts}", flush=True)
             client_name, system_name, map_name = rel_parts
+            print(f"[BROWSE] Extracted client={client_name}, system={system_name}, map={map_name}", flush=True)
             try:
                 from db.queries import query_files_by_client_system_and_map
                 from pathutils import get_client, get_system_info, get_map_config
+                print(f"[BROWSE] imports successful, attempting database query", flush=True)
                 print(f"[BROWSE] Attempting database query for {client_name}/{system_name}/{map_name}", flush=True)
                 
                 db_files = query_files_by_client_system_and_map(
@@ -570,22 +572,23 @@ def api_browse_directory(path: str):
                     print(f"[BROWSE] Database returned {len(db_files)} files, elapsed={time.time()-start_time:.4f}s", flush=True)
                     
                     # Check for preserve_structure setting
-                    config = read_config()
-                    client = get_client(config, rel_parts)
-                    system = next((s for s in client.get('systems', []) if s['name'] == system_name), None) if client else None
-                    map_entry = None
-                    preserve_structure = False
-                    
-                    if system:
-                        map_entry = next((m for m in system.get('maps', []) if m and isinstance(m, dict) and map_name in m), None)
-                        if map_entry and map_name in map_entry:
-                            map_config = get_map_config(map_entry)
-                            if map_config and isinstance(map_config, dict):
-                                query_cfg = map_config.get("query", {})
-                                preserve_structure = query_cfg.get("preserve_structure", False)
-                    
-                    logger = logging.getLogger("api")
-                    logger.warning(f"[CRITICAL-API] Processing {map_name}. preserve_structure={preserve_structure}")
+                    try:
+                        config = read_config()
+                        client = get_client(config, rel_parts)
+                        system = next((s for s in client.get('systems', []) if s['name'] == system_name), None) if client else None
+                        map_entry = None
+                        preserve_structure = False
+                        
+                        if system:
+                            map_entry = next((m for m in system.get('maps', []) if m and isinstance(m, dict) and map_name in m), None)
+                            if map_entry and map_name in map_entry:
+                                map_config = get_map_config(map_entry)
+                                if map_config and isinstance(map_config, dict):
+                                    query_cfg = map_config.get("query", {})
+                                    preserve_structure = query_cfg.get("preserve_structure", False)
+                        
+                        logger = logging.getLogger("api")
+                        logger.warning(f"[CRITICAL-API] Processing {map_name}. preserve_structure={preserve_structure}")
                     
                     if preserve_structure:
                         # Build virtual directory tree from relative paths
