@@ -2,6 +2,7 @@
 # Defines system mappings and file organization for RetroBat frontend
 
 name: RetroBat
+download_layout: source_based
 default_target_path: "{name}/{system_name}/roms/Atom/{maps}"
 
 systems: 
@@ -20,5 +21,13 @@ systems:
               - VHD
             supports_zip: false
             supports_zaparoo: true
-
+      - FDs:
+          query:
+            source_dir: Software
+            extensions:
+              - ATM
+            supports_zip: false
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+      
 

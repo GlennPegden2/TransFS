@@ -1901,7 +1901,7 @@ def file_metadata(path: str):
             
             # Get file info via virtual_mappings table (one-to-many mapping)
             cursor.execute("""
-                SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path
+                SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path, f.created_at, f.updated_at
                 FROM files f
                 JOIN virtual_mappings vm ON f.file_id = vm.file_id
                 WHERE vm.virtual_path = %s
@@ -1912,7 +1912,7 @@ def file_metadata(path: str):
             if not file_row:
                 # Fallback: try direct source_path or legacy virtual_path lookup
                 cursor.execute("""
-                    SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path
+                    SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
                     FROM files
                     WHERE source_path = %s OR virtual_path = %s
                     LIMIT 1
@@ -1939,7 +1939,7 @@ def file_metadata(path: str):
 
                     if resolved_paths:
                         cursor.execute("""
-                            SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path
+                            SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
                             FROM files
                             WHERE source_path = ANY(%s)
                             LIMIT 1
@@ -1955,7 +1955,7 @@ def file_metadata(path: str):
                     "path": path,
                 }
             
-            file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path = file_row
+            file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path, created_at, updated_at = file_row
             
             # Get normalized metadata with joins to get actual lookup table values
             cursor.execute("""
@@ -2000,6 +2000,8 @@ def file_metadata(path: str):
                 "extension": extension,
                 "size": size,
                 "mtime": mtime,
+                "created_at": created_at,
+                "updated_at": updated_at,
                 "is_archive": is_archive,
                 "content_type": content_type,
                 "source_path": source_path,

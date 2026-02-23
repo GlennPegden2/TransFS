@@ -50,14 +50,68 @@
                                     
                                     if (data.error) {
                                         html = `<div style="padding: 1em; color: #d32f2f;">Error: ${escapeHtml(data.error)}</div>`;
-                                    } else if (data.metadata && Object.keys(data.metadata).length > 0) {
-                                        // Format metadata for display
+                                    } else {
+                                        // Always show file information if we have data
                                         html = '<div style="padding: 1em;">';
                                         
                                         // Add file information section first
                                         html += '<div style="margin-bottom: 1em; padding-bottom: 1em; border-bottom: 2px solid #1976d2;">';
                                         html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">File Information</div>';
-        }
+                                        
+                                        // Display name
+                                        if (data.display_name || data.filename) {
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">Name:</span> <span style="color: #333; font-weight: 500;">' + escapeHtml(data.display_name || data.filename) + '</span></div>';
+                                        }
+                                        
+                                        // Size
+                                        if (data.size != null) {
+                                            const sizeKB = (data.size / 1024).toFixed(1);
+                                            const sizeMB = (data.size / 1024 / 1024).toFixed(2);
+                                            const sizeStr = data.size >= 1048576 ? `${sizeMB} MB` : `${sizeKB} KB`;
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">Size:</span> <span style="color: #333;">' + sizeStr + '</span></div>';
+                                        }
+                                        
+                                        // Source path
+                                        if (data.source_path) {
+                                            const shortPath = data.source_path.length > 60 ? '...' + data.source_path.slice(-57) : data.source_path;
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">Source:</span> <span style="color: #333; font-family: monospace; font-size: 0.85em;">' + escapeHtml(shortPath) + '</span></div>';
+                                        }
+                                        
+                                        // Timestamps
+                                        if (data.created_at) {
+                                            const createdDate = new Date(data.created_at * 1000);
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">Added to DB:</span> <span style="color: #333;">' + createdDate.toLocaleString() + '</span></div>';
+                                        }
+                                        
+                                        if (data.updated_at) {
+                                            const updatedDate = new Date(data.updated_at * 1000);
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">Last Updated:</span> <span style="color: #333;">' + updatedDate.toLocaleString() + '</span></div>';
+                                        }
+                                        
+                                        if (data.mtime) {
+                                            const mtimeDate = new Date(data.mtime * 1000);
+                                            html += '<div style="margin: 0.3em 0;"><span style="color: #666;">File Modified:</span> <span style="color: #333;">' + mtimeDate.toLocaleString() + '</span></div>';
+                                        }
+                                        
+                                        html += '</div>';  // Close file information section
+                                        
+                                        // Add metadata section if available
+                                        if (data.metadata && Object.keys(data.metadata).length > 0) {
+                                            html += '<div style="margin-top: 1em;">';
+                                            html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">ROM Metadata</div>';
+                                            
+                                            for (const [key, value] of Object.entries(data.metadata)) {
+                                                if (value != null && value !== '' && value !== false) {
+                                                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                                    html += '<div style="margin: 0.3em 0;"><span style="color: #666;">' + label + ':</span> <span style="color: #333;">' + escapeHtml(String(value)) + '</span></div>';
+                                                }
+                                            }
+                                            
+                                            html += '</div>';
+                                        }
+                                        
+                                        html += '</div>';  // Close outer container
+                                    }
 
         function sanitizeUrl(url) {
             try {

@@ -489,7 +489,7 @@ def query_files_by_client_system_and_map(
     """
     try:
         with get_cursor(commit=False) as cursor:
-            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = %s AND system = %s AND map_name = %s"
+            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at FROM files WHERE client = %s AND system = %s AND map_name = %s"
             params = [client, system, map_name]
             
             # Build extension filter with optional size constraints
@@ -574,7 +574,7 @@ def query_file_by_client_system_map_and_name(
     """
     try:
         with get_cursor(commit=False) as cursor:
-            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime FROM files WHERE client = %s AND system = %s AND map_name = %s AND filename = %s"
+            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at FROM files WHERE client = %s AND system = %s AND map_name = %s AND filename = %s"
             params = [client, system, map_name, filename]
             
             logger.info(f"Querying single file: client={client}, system={system}, map={map_name}, filename={filename}")

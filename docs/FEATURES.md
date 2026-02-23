@@ -140,3 +140,51 @@ maps:
 **Fallback Behavior**: If database query fails, gracefully falls back to filesystem-based resolution (cache/parse_trans_path)
 
 ---
+
+### 12. Automatic Filename Deduplication
+
+**Problem**: When the same ROM exists in multiple sources (e.g., DataGhost-Full and RomHunter-Full both containing "Acid Drop.bin"), the filesystem would display duplicate filenames in the same directory, violating POSIX semantics where each file must have a unique name.
+
+**Solution**: TransFS automatically deduplicates filenames at database sync time, ensuring each virtual filename in a directory is unique.
+
+**Default Behavior** (`preserve_exact_filenames: false`): Duplicates are auto-renamed with numeric suffixes:
+- `Acid Drop.bin` (from DataGhost-Full)
+- `Acid Drop_2.bin` (from RomHunter-Full)
+- `Acid Drop_3.bin` (if third source exists)
+
+**Strict Mode** (`preserve_exact_filenames: true`): Only the first occurrence is indexed; duplicates are skipped.
+- Useful for systems like MAME that require exact filenames from XML file lists
+- Example: RetroBAT FDs map configured with `preserve_exact_filenames: true`
+
+**Configuration**:
+```yaml
+maps:
+  - ROMs:
+      query:
+        source_dir: Software
+        extensions: [BIN]
+        # preserve_exact_filenames defaults to false (auto-rename)
+  
+  - FDs:
+      query:
+        source_dir: Software
+        extensions: [DSK]
+        preserve_exact_filenames: true  # MAME-compatible: exact names only
+```
+
+**Benefits**:
+-  Users can access all ROM variants (default mode)
+-  All files remain accessible (renamed, not hidden)
+-  Works transparently with no runtime overhead
+-  System-specific naming requirements supported (strict mode)
+-  Original source files unchanged on disk
+
+**Implementation Details**:
+- **When**: During `python3 -m app.sync_database` execution
+- **Where**: Virtual filenames in database are deduplicated; source files untouched
+- **Cost**: One-time computation during sync, zero runtime overhead
+- **Algorithm**: Track filenames per (client, system, map) directory; rename subsequent duplicates with `_N` suffix
+
+**See Also**: [DEDUPLICATION_FEATURE.md](DEDUPLICATION_FEATURE.md) for detailed configuration examples and FAQ.
+
+---
