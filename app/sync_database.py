@@ -813,25 +813,65 @@ class DatabaseSync:
             virtual_filename = f"{base_name}.{virtual_ext.lower()}"
             
             # Handle duplicate filenames in the same directory
+            # Check both the current batch AND the database for existing filenames
             dir_key = f"{client_name}/{system_name}/{map_name}"
-            duplicates_in_dir = [
+            
+            # Check in-memory batch
+            duplicates_in_batch = [
                 entry for entry in self.file_batch
                 if entry['filename'] == virtual_filename and 
                    f"{entry['client']}/{entry['system']}/{entry['map_name']}" == dir_key
             ]
             
-            if duplicates_in_dir:
+            # Check database for existing files with this name in this directory
+            duplicates_in_db = []
+            try:
+                query = """
+                    SELECT filename FROM files 
+                    WHERE client = %s AND system = %s AND map_name = %s 
+                    AND filename LIKE %s
+                """
+                # Match both exact filename and any _N suffixed versions
+                self.cursor.execute(query, (client_name, system_name, map_name, f"{base_name}%"))
+                duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
+            except Exception as e:
+                logger.warning(f"Failed to check for duplicates in DB: {e}")
+            
+            # Count total duplicates
+            total_duplicates = len(duplicates_in_batch) + (1 if virtual_filename in duplicates_in_db else 0)
+            
+            if total_duplicates > 0:
                 if preserve_exact_filenames:
                     # Skip this file - keep the one we already have
                     logger.info(f"      Skipping duplicate {virtual_filename} in {dir_key} (preserve_exact_filenames=True)")
                     self.stats['skipped'] += 1
                     return
                 else:
-                    # Rename with suffix to create unique filename
-                    suffix_num = len(duplicates_in_dir) + 1
-                    name_without_ext = base_name
-                    virtual_filename = f"{name_without_ext}_{suffix_num}.{virtual_ext.lower()}"
-                    logger.debug(f"      Renaming duplicate: {base_name}.{virtual_ext.lower()} → {virtual_filename}")
+                    # Find the next available suffix number
+                    # Check what suffixes already exist
+                    existing_numbers = set()
+                    for dup_filename in duplicates_in_db + [entry['filename'] for entry in duplicates_in_batch]:
+                        # Check if it matches pattern: basename_N.ext
+                        if dup_filename.startswith(base_name):
+                            # Extract the part between base_name and .extension
+                            remainder = dup_filename[len(base_name):]
+                            if remainder.startswith('_'):
+                                # Try to extract the number
+                                parts = remainder[1:].split('.', 1)
+                                if parts[0].isdigit():
+                                    existing_numbers.add(int(parts[0]))
+                            elif remainder == f".{virtual_ext.lower()}":
+                                # This is the base filename without suffix (counts as 1)
+                                existing_numbers.add(1)
+                    
+                    # Find next available number (start from 2)
+                    suffix_num = 2
+                    while suffix_num in existing_numbers:
+                        suffix_num += 1
+                    
+                    # If the original exists, this becomes _2, _3, etc.
+                    virtual_filename = f"{base_name}_{suffix_num}.{virtual_ext.lower()}"
+                    logger.info(f"      Renaming duplicate: {base_name}.{virtual_ext.lower()} → {virtual_filename}")
             
             # Build virtual path
             virtual_path = os.path.join(
