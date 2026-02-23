@@ -1679,20 +1679,23 @@
                                     
                                     if (data.error) {
                                         html = `<div style="padding: 1em; color: #d32f2f;">Error: ${escapeHtml(data.error)}</div>`;
-                                    } else if (data.metadata && Object.keys(data.metadata).length > 0) {
+                                    } else {
+                                        // Always show file information
                                         html = '<div style="padding: 1em;">';
                                         
                                         html += '<div style="margin-bottom: 1em; padding-bottom: 1em; border-bottom: 2px solid #1976d2;">';
                                         html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">File Information</div>';
                                         
+                                        // Format file size
+                                        const formatBytes = (bytes) => {
+                                            if (bytes === 0) return '0 Bytes';
+                                            const k = 1024;
+                                            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                            const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                            return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+                                        };
+                                        
                                         if (data.size !== null && data.size !== undefined) {
-                                            const formatBytes = (bytes) => {
-                                                if (bytes === 0) return '0 Bytes';
-                                                const k = 1024;
-                                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-                                                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                                                return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-                                            };
                                             html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
                                                 <span style="font-weight: 600; color: #555; min-width: 140px;">File Size:</span>
                                                 <span style="color: #333;">${escapeHtml(formatBytes(data.size))}</span>
@@ -1732,10 +1735,37 @@
                                             }
                                         }
                                         
+                                        // NEW: Timestamp fields
+                                        if (data.created_at) {
+                                            const createdDate = new Date(data.created_at * 1000);
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Added to DB:</span>
+                                                <span style="color: #333;">${createdDate.toLocaleString()}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        if (data.updated_at) {
+                                            const updatedDate = new Date(data.updated_at * 1000);
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">Last Updated:</span>
+                                                <span style="color: #333;">${updatedDate.toLocaleString()}</span>
+                                            </div>`;
+                                        }
+                                        
+                                        if (data.mtime) {
+                                            const mtimeDate = new Date(data.mtime * 1000);
+                                            html += `<div style="margin-bottom: 0.5em; display: flex; gap: 0.8em;">
+                                                <span style="font-weight: 600; color: #555; min-width: 140px;">File Modified:</span>
+                                                <span style="color: #333;">${mtimeDate.toLocaleString()}</span>
+                                            </div>`;
+                                        }
+                                        
                                         html += '</div>';
                                         
-                                        html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">Game Metadata</div>';
-                                        const metadataFields = [
+                                        // Add Game Metadata section if available
+                                        if (data.metadata && Object.keys(data.metadata).length > 0) {
+                                            html += '<div style="font-weight: 700; color: #1976d2; margin-bottom: 0.5em; font-size: 1.05em;">Game Metadata</div>';
+                                            const metadataFields = [
                                             { key: 'media_type', label: 'Media Type' },
                                             { key: 'region', label: 'Region' },
                                             { key: 'language', label: 'Language' },
@@ -1772,10 +1802,9 @@
                                                 <span style="color: #333; margin-left: 0.8em;">${escapeHtml(flags.join(', '))}</span>
                                             </div>`;
                                         }
+                                        }  // Close metadata if block
                                         
-                                        html += '</div>';
-                                    } else {
-                                        html = '<div style="padding: 1em; color: #888;">No metadata available</div>';
+                                        html += '</div>';  // Close outer container
                                     }
                                     
                                     metadataPanel.innerHTML = html;
