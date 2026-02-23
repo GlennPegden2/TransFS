@@ -1006,30 +1006,28 @@
                         const data = JSON.parse(event.data);
                         
                         if (data.status === 'starting' || data.status === 'initialized') {
-                            msg.textContent += `${data.message || 'Initializing...'}\n`;
+                            appendLog(`${data.message || 'Initializing...'}\n`);
                         } else if (data.status === 'syncing') {
-                            msg.textContent += `${data.message}\n`;
+                            appendLog(`${data.message}\n`);
                         } else if (data.status === 'client') {
-                            msg.textContent += `Processing client ${data.client} (${data.progress}/${data.total})...\n`;
+                            appendLog(`Processing client ${data.client} (${data.progress}/${data.total})...\n`);
                         } else if (data.status === 'system') {
-                            msg.textContent += `  Syncing ${data.client}/${data.system}...\n`;
+                            appendLog(`  Syncing ${data.client}/${data.system}...\n`);
                         } else if (data.status === 'files') {
-                            msg.textContent += `    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`;
+                            appendLog(`    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`);
                         } else if (data.status === 'system_complete') {
-                            msg.textContent += `  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`;
+                            appendLog(`  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`);
                         } else if (data.status === 'cleanup') {
-                            msg.textContent += `${data.message}\n`;
+                            appendLog(`${data.message}\n`);
                         } else if (data.status === 'complete' || data.status === 'done') {
                             const stats = data.stats ? `${data.stats.files_added} added, ${data.stats.files_updated} updated, ${data.stats.files_deleted} deleted` : '';
                             const duration = data.duration ? ` in ${data.duration.toFixed(1)}s` : '';
-                            msg.textContent += `Database sync complete: ${stats}${duration}\n`;
+                            appendLog(`Database sync complete: ${stats}${duration}\n`);
                             eventSource.close();
                         } else if (data.status === 'error') {
-                            msg.textContent += `ERROR: ${data.message}\n`;
+                            appendLog(`ERROR: ${data.message}\n`);
                             eventSource.close();
                         }
-                        
-                        msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
                     } catch (e) {
                         console.error('Failed to parse SSE data:', e);
                     }
@@ -1038,16 +1036,16 @@
                 eventSource.onerror = () => {
                     if (!receivedMessage) {
                         clearTimeout(fallbackTimer);
-                        msg.textContent += 'Database sync connection error, switching to fetch fallback...\n';
+                        appendLog('Database sync connection error, switching to fetch fallback...\n');
                         eventSource.close();
                         runDbSyncFetch(syncUrl, msg);
                     } else {
-                        msg.textContent += 'Database sync connection error\n';
+                        appendLog('Database sync connection error\n');
                         eventSource.close();
                     }
                 };
             } catch (e) {
-                msg.textContent += `Database sync error: ${e.message}\n`;
+                appendLog(`Database sync error: ${e.message}\n`);
             }
         }
 
@@ -1055,7 +1053,7 @@
             try {
                 const response = await fetch(syncUrl);
                 if (!response.ok) {
-                    msg.textContent += `Database sync failed: HTTP ${response.status}\n`;
+                    appendLog(`Database sync failed: HTTP ${response.status}\n`);
                     return;
                 }
                 
@@ -1082,28 +1080,26 @@
                                 const data = JSON.parse(jsonStr);
                                 
                                 if (data.status === 'starting' || data.status === 'initialized') {
-                                    msg.textContent += `${data.message || 'Initializing...'}\n`;
+                                    appendLog(`${data.message || 'Initializing...'}\n`);
                                 } else if (data.status === 'syncing') {
-                                    msg.textContent += `${data.message}\n`;
+                                    appendLog(`${data.message}\n`);
                                 } else if (data.status === 'client') {
-                                    msg.textContent += `Processing client ${data.client} (${data.progress}/${data.total})...\n`;
+                                    appendLog(`Processing client ${data.client} (${data.progress}/${data.total})...\n`);
                                 } else if (data.status === 'system') {
-                                    msg.textContent += `  Syncing ${data.client}/${data.system}...\n`;
+                                    appendLog(`  Syncing ${data.client}/${data.system}...\n`);
                                 } else if (data.status === 'files') {
-                                    msg.textContent += `    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`;
+                                    appendLog(`    Processed ${data.processed} files (${data.added} added, ${data.updated} updated)...\n`);
                                 } else if (data.status === 'system_complete') {
-                                    msg.textContent += `  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`;
+                                    appendLog(`  ✓ ${data.system}: ${data.files} files (${data.unmatched} unmatched)\n`);
                                 } else if (data.status === 'cleanup') {
-                                    msg.textContent += `${data.message}\n`;
+                                    appendLog(`${data.message}\n`);
                                 } else if (data.status === 'complete' || data.status === 'done') {
                                     const stats = data.stats ? `${data.stats.files_added} added, ${data.stats.files_updated} updated, ${data.stats.files_deleted} deleted` : '';
                                     const duration = data.duration ? ` in ${data.duration.toFixed(1)}s` : '';
-                                    msg.textContent += `Database sync complete: ${stats}${duration}\n`;
+                                    appendLog(`Database sync complete: ${stats}${duration}\n`);
                                 } else if (data.status === 'error') {
-                                    msg.textContent += `ERROR: ${data.message}\n`;
+                                    appendLog(`ERROR: ${data.message}\n`);
                                 }
-                                
-                                msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
                             } catch (e) {
                                 console.error('Failed to parse SSE data:', e);
                             }
@@ -1111,7 +1107,7 @@
                     }
                 }
             } catch (e) {
-                msg.textContent += `Database sync error: ${e.message}\n`;
+                appendLog(`Database sync error: ${e.message}\n`);
             }
         }
         
@@ -1170,14 +1166,12 @@
                     if (done) break;
                     
                     const text = decoder.decode(value, { stream: true });
-                    msg.textContent += text;
-                    msg.parentElement.scrollTop = msg.parentElement.scrollHeight;  // Auto-scroll
+                    appendLog(text);
                 }
                 
                 const finalText = decoder.decode();  // Flush remaining bytes
                 if (finalText) {
-                    msg.textContent += finalText;
-                    msg.parentElement.scrollTop = msg.parentElement.scrollHeight;
+                    appendLog(finalText);
                 }
             } catch (e) {
                 msg.textContent += `Error: ${e.message}\n`;
@@ -2591,14 +2585,19 @@
         // FUSE LOG
         // =============================================
         async function refreshFuseLog() {
+            const fuseLogDiv = document.getElementById('fuse-log');
             try {
-                const response = await fetch('/api/fuse-log');
-                const data = await response.json();
-                const fuseLogDiv = document.getElementById('fuse-log');
-                fuseLogDiv.textContent = data.log || 'No log data available';
+                const response = await fetch('/logs');
+                if (!response.ok) {
+                    fuseLogDiv.textContent = 'Failed to fetch FUSE log.';
+                    return;
+                }
+                const text = await response.text();
+                fuseLogDiv.textContent = text || 'No log data available';
                 fuseLogDiv.scrollTop = fuseLogDiv.scrollHeight;
             } catch (e) {
                 console.error('Failed to refresh FUSE log:', e);
+                fuseLogDiv.textContent = `Error fetching FUSE log: ${e.message}`;
             }
         }
 

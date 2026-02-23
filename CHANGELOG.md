@@ -18,6 +18,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Cache UI now reflects only active caches (Stat Cache, ZIP Index, Transform caches)
 
 ### Fixed
+- Restored download log carriage return handling so progress updates overwrite the current line instead of spamming new lines.
+- Restored Debug tab log loading by fetching FUSE logs from the correct endpoint on tab activation.
+- Restored test progress status rendering to keep the progress bar updated during test runs.
 - Pack installation now selects a valid configured client when pack `supported_by` includes clients not present in the current config set.
 - Restored Browse Native/Virtual functionality in the web UI (rich file rendering, Zaparoo launch controls, metadata panel, cache status, and deep-link initialization).
 - **Metadata Rulesets Docker Accessibility**: Moved `/config/metadata/rulesets/` to `/app/config/metadata/rulesets/`
