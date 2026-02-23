@@ -492,6 +492,38 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         # If navigating within a subpath, fall back to filesystem/zip handling
         if subpath:
+            # If preserve_structure is enabled, filter database results instead of filesystem
+            if preserve_structure:
+                subpath_prefix = '/'.join(subpath)
+                logger.info(f"Preserve_structure subpath navigation: {subpath_prefix}")
+                
+                filtered_entries: set[str] = set()
+                for entry in entries:
+                    # Check if this entry is under the requested subpath
+                    if entry.startswith(subpath_prefix + '/'):
+                        # Extract the relative path after the subpath
+                        remainder = entry[len(subpath_prefix) + 1:]
+                        filtered_entries.add(remainder)
+                    elif entry.startswith(subpath_prefix) and '/' in entry[len(subpath_prefix):]:
+                        # Handle partial matches (e.g., subpath_prefix is part of a deeper path)
+                        remainder = entry[len(subpath_prefix):].lstrip('/')
+                        filtered_entries.add(remainder)
+                
+                if not filtered_entries:
+                    return []
+                
+                # Rebuild virtual tree for this subpath
+                virtual_tree: set[str] = set()
+                for entry in filtered_entries:
+                    parts = entry.split('/')
+                    if len(parts) > 1:
+                        for i in range(len(parts)):
+                            virtual_tree.add('/'.join(parts[:i+1]))
+                    else:
+                        virtual_tree.add(entry)
+                
+                return sorted(virtual_tree)
+            
             base_dir = os.path.join(
                 config.get("filestore", "/mnt/filestorefs"),
                 "Native",
@@ -623,6 +655,22 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                             entries.add(child)
                     except Exception:
                         continue
+
+        # When preserve_structure is enabled, build virtual directory tree from relative paths
+        if preserve_structure and entries:
+            virtual_tree: set[str] = set()
+            for entry in entries:
+                # Split paths and extract components for virtual directory structure
+                parts = entry.split('/')
+                if len(parts) > 1:
+                    # Add each directory level
+                    for i in range(len(parts)):
+                        virtual_tree.add('/'.join(parts[:i+1]))
+                else:
+                    # Top-level files/entries without subdirectories
+                    virtual_tree.add(entry)
+            entries = virtual_tree
+            logger.info(f"Preserve_structure enabled: built virtual tree with {len(entries)} entries (files and dirs)")
 
         entries_list = sorted(entries)
 
