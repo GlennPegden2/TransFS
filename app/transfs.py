@@ -1070,7 +1070,9 @@ class TransFS(Passthrough):
         t_parse = time.time() - t_parse_start
 
         # Detect if this is a query map directory (e.g., /MiSTer/Apple-II/FDs)
+        # or a nested file map virtual directory (e.g., /MiSTer/BBCMicro/bios from bios/atom.zip)
         is_query_map_dir = False
+        is_nested_file_map_dir = False
         try:
             from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map
             rel_parts = Path(xfull_path).parts[len(Path(self.root).parts):]
@@ -1084,12 +1086,22 @@ class TransFS(Passthrough):
                         map_entry = find_map_entry(system_info, map_name)
                         map_config = get_map_config(map_entry)
                         is_query_map_dir = bool(map_config and is_query_map(map_config))
+                        
+                        # Check if this is a nested file map virtual directory
+                        # e.g., map_name="bios" and we have a map "bios/atom.zip"
+                        if not is_query_map_dir:
+                            is_nested_file_map_dir = any(
+                                list(m.keys())[0].startswith(map_name + '/')
+                                for m in system_info.get('maps', [])
+                            )
+                            if is_nested_file_map_dir:
+                                logger.info(f"READDIR: detected nested file map virtual directory: {map_name}")
         except Exception:
             pass
 
-        # Fast-path for query map directories: avoid per-entry resolution and stat
-        # This keeps listings responsive for large query maps and defers stat to getattr.
-        if is_query_map_dir and virtual_entries:
+        # Fast-path for query map directories and nested file map virtual directories
+        # This avoids per-entry resolution and stat, keeping listings responsive.
+        if (is_query_map_dir or is_nested_file_map_dir) and virtual_entries:
             # Build system transform map once for efficient extension-based renaming
             system_transform_map = self._build_system_transform_map(xfull_path)
             logger.info(f"READDIR fast-path: built transform map with {len(system_transform_map)} extensions")
@@ -1863,6 +1875,58 @@ class TransFS(Passthrough):
         # PRIORITY 3: Full resolution (slowest, computes transforms)
         logger.info(f"GETATTR: full resolution for {xfull_path}")
         
+        # Check for nested file map virtual directories BEFORE calling get_source_path
+        # This handles paths like /RetroBat/AcornAtom/bios where "bios/atom.zip" is the actual map
+        from pathutils import find_map_entry, is_query_map, get_map_config
+        path_parts = Path(xfull_path).parts
+        mount_parts = Path(self.mount_path).parts
+        rel_parts = path_parts[len(mount_parts):]
+        if len(rel_parts) == 3:  # /<client>/<system>/<map>
+            client_name = rel_parts[0]
+            system_name = rel_parts[1]
+            map_name = rel_parts[2]
+            client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if client:
+                system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
+                if system_info:
+                    # Check if this is a virtual directory for nested file maps (e.g., "bios" from "bios/atom.zip")
+                    is_virtual_dir = any(
+                        list(m.keys())[0].startswith(map_name + '/')
+                        for m in system_info.get('maps', [])
+                    )
+                    if is_virtual_dir:
+                        now = int(time.time())
+                        result = {
+                            'st_atime': now,
+                            'st_ctime': now,
+                            'st_mtime': now,
+                            'st_gid': 0,
+                            'st_uid': 0,
+                            'st_mode': 0o040755,
+                            'st_nlink': 2,
+                            'st_size': 4096,
+                        }
+                        logger.info(f"GETATTR: returning virtual directory for nested map parent {map_name}")
+                        return self._dict_to_entry_attributes(result, inode)
+                    
+                    # Also check if it's a query map directory
+                    map_entry = find_map_entry(system_info, map_name)
+                    map_config = get_map_config(map_entry)
+                    if is_query_map(map_config):
+                        now = int(time.time())
+                        result = {
+                            'st_atime': now,
+                            'st_ctime': now,
+                            'st_mtime': now,
+                            'st_gid': 0,
+                            'st_uid': 0,
+                            'st_mode': 0o040755,
+                            'st_nlink': 2,
+                            'st_size': 4096,
+                        }
+                        logger.info(f"GETATTR: returning virtual directory for query map {map_name}")
+                        return self._dict_to_entry_attributes(result, inode)
+        
         # Check if source path was cached by readdir (major optimization - avoid re-computation)
         if xfull_path in self._source_path_cache:
             logger.info(f"GETATTR: source path CACHE HIT for {xfull_path}")
@@ -1984,7 +2048,7 @@ class TransFS(Passthrough):
                     cache_getattr(xfull_path, parent_dir, result)
                     return self._dict_to_entry_attributes(result, inode)
                 
-                # Check if it's a query map directory
+                # Check if it's a query map directory or virtual directory for nested maps
                 from pathutils import find_map_entry, is_query_map, get_map_config
                 path_parts = Path(xfull_path).parts
                 mount_parts = Path(self.mount_path).parts
@@ -1997,6 +2061,27 @@ class TransFS(Passthrough):
                     if client:
                         system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
                         if system_info:
+                            # Check if this is a virtual directory for nested file maps (e.g., "bios" from "bios/atom.zip")
+                            is_virtual_dir = any(
+                                list(m.keys())[0].startswith(map_name + '/')
+                                for m in system_info.get('maps', [])
+                            )
+                            if is_virtual_dir:
+                                now = int(time.time())
+                                result = {
+                                    'st_atime': now,
+                                    'st_ctime': now,
+                                    'st_mtime': now,
+                                    'st_gid': 0,
+                                    'st_uid': 0,
+                                    'st_mode': 0o040755,
+                                    'st_nlink': 2,
+                                    'st_size': 4096,
+                                }
+                                cache_getattr(xfull_path, parent_dir, result)
+                                logger.info(f"GETATTR: returning virtual directory for nested map parent {map_name}")
+                                return self._dict_to_entry_attributes(result, inode)
+                            
                             map_entry = find_map_entry(system_info, map_name)
                             map_config = get_map_config(map_entry)
                             if is_query_map(map_config):
@@ -2462,16 +2547,10 @@ class TransFS(Passthrough):
                     return result
 
             if has_other:
-                orig_atime = fields.update_atime
-                orig_mtime = fields.update_mtime
-                if has_times:
-                    fields.update_atime = False
-                    fields.update_mtime = False
-                try:
-                    result = await super().setattr(inode, attr, fields, fh, ctx)
-                finally:
-                    fields.update_atime = orig_atime
-                    fields.update_mtime = orig_mtime
+                # Note: fields is a read-only SetattrFields object, we can't modify it
+                # If time updates are also requested, they're handled by deferred mechanism above
+                # and the parent class will also process them (slight redundancy but no harm)
+                result = await super().setattr(inode, attr, fields, fh, ctx)
             else:
                 result = await self.getattr(inode, ctx)
             logger.info("SETATTR DONE: inode=%s", inode)

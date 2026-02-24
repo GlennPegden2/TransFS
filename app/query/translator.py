@@ -48,19 +48,19 @@ class QueryBuilder:
         # Match directory prefix
         # Virtual path like /Atari/5200 should match files under that path
         path_pattern = virtual_path.rstrip('/') + '/%'
-        where_clauses.append("virtual_path LIKE ?")
+        where_clauses.append("virtual_path LIKE %s")
         params.append(path_pattern)
         
         # Add metadata filters
         for column, operator, value in query_params.filters:
             if column in ['is_prototype', 'is_homebrew', 'is_translation', 'is_hack']:
-                where_clauses.append(f"m.{column} = ?")
+                where_clauses.append(f"m.{column} = %s")
                 params.append(1)
             elif column == 'year':
-                where_clauses.append(f"m.year {operator} ?")
+                where_clauses.append(f"m.year {operator} %s")
                 params.append(int(value))
             else:
-                where_clauses.append(f"m.{column} = ?")
+                where_clauses.append(f"m.{column} = %s")
                 params.append(value)
         
         # Build full query
@@ -104,7 +104,7 @@ class QueryBuilder:
                 f.extension, f.size, f.mtime, f.ctime, f.atime,
                 f.ino, f.mode, f.is_directory, f.is_archive
             FROM files f
-            WHERE f.virtual_path = ?
+            WHERE f.virtual_path = %s
             LIMIT 1
         """
         
@@ -176,19 +176,19 @@ class QueryBuilder:
         Returns:
             (sql_query, parameters) tuple
         """
-        where_clauses = ["f.filename LIKE ?"]
+        where_clauses = ["f.filename LIKE %s"]
         params = [f"%{pattern}%"]
         
         if filters:
             for key, value in filters.items():
                 if key in ['is_prototype', 'is_homebrew', 'is_translation', 'is_hack']:
-                    where_clauses.append(f"m.{key} = ?")
+                    where_clauses.append(f"m.{key} = %s")
                     params.append(1 if value else 0)
                 elif key in ['genre', 'language', 'region']:
-                    where_clauses.append(f"m.{key} = ?")
+                    where_clauses.append(f"m.{key} = %s")
                     params.append(value)
                 elif key == 'year':
-                    where_clauses.append("m.year = ?")
+                    where_clauses.append("m.year = %s")
                     params.append(int(value))
         
         sql = f"""

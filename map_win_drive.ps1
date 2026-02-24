@@ -1,0 +1,1 @@
+$creds = Get-Credential ; New-SmbGlobalMapping -LocalPath U: -RemotePath \\GLENNS-DESKTOP\TransFS\RetroBat -TcpPort 3445 -Credential $creds -Persistent $true
