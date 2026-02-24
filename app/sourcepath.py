@@ -354,6 +354,21 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                     return None
             # If we matched a map but it has no source_filename, continue to next iteration
             break
+    
+    # Handle nested maps like bios/atom.zip accessed as a virtual directory (e.g., path .../bios)
+    # When user accesses /mnt/transfs/RetroBat/AcornAtom/bios but only bios/atom.zip exists
+    if len(rel_parts) >= 3:
+        requested_dir = rel_parts[2]
+        # Look for any map that starts with requested_dir/
+        nested_maps = [m for m in system_info['maps'] if list(m.keys())[0].startswith(f"{requested_dir}/")]
+        if nested_maps:
+            # Found nested maps under this directory
+            # Return the first nested map as a virtual directory
+            first_nested_map_name = list(nested_maps[0].keys())[0]
+            logger.debug(f"Found nested maps under '{requested_dir}': {[list(m.keys())[0] for m in nested_maps]}")
+            # For a virtual directory pointing to nested maps, return None so FUSE treats it as a virtual directory
+            # The actual file resolution will happen when accessing specific files within
+            return None
 
     # Handle parent-level maps (../) - shared resources accessible from systems
     if len(rel_parts) >= 3:
