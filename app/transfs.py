@@ -501,11 +501,28 @@ class TransFS(Passthrough):
             
             # Check if it's a query map
             map_config = map_entry.get(map_name)
-            if not map_config or 'query' not in map_config:
-                logger.debug(f"_extract_map_info: {map_name} is not a query map")
+            if not map_config:
+                logger.debug(f"_extract_map_info: no config for map {map_name}")
                 return None
             
-            logger.debug(f"_extract_map_info: found query map {client_name}/{system_name}/{map_name}")
+            # Accept both query maps and unzipped file maps
+            is_query_map = 'query' in map_config
+            is_unzipped_file_map = False
+            if 'file' in map_config:
+                file_spec = map_config.get('file')
+                if isinstance(file_spec, dict):
+                    is_unzipped_file_map = file_spec.get('unzip', False)
+                elif isinstance(map_config.get('unzip'), bool):
+                    is_unzipped_file_map = map_config.get('unzip', False)
+            
+            if not is_query_map and not is_unzipped_file_map:
+                logger.debug(f"_extract_map_info: {map_name} is not a query map or unzipped file map")
+                return None
+            
+            if is_query_map:
+                logger.debug(f"_extract_map_info: found query map {client_name}/{system_name}/{map_name}")
+            else:
+                logger.debug(f"_extract_map_info: found unzipped file map {client_name}/{system_name}/{map_name}")
             return (client_name, system_name, map_name)
         except Exception as e:
             logger.debug(f"_extract_map_info error for {path}: {e}")
@@ -1073,6 +1090,7 @@ class TransFS(Passthrough):
         # or a nested file map virtual directory (e.g., /MiSTer/BBCMicro/bios from bios/atom.zip)
         is_query_map_dir = False
         is_nested_file_map_dir = False
+        is_unzipped_file_map_dir = False
         try:
             from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map
             rel_parts = Path(xfull_path).parts[len(Path(self.root).parts):]
@@ -1087,9 +1105,21 @@ class TransFS(Passthrough):
                         map_config = get_map_config(map_entry)
                         is_query_map_dir = bool(map_config and is_query_map(map_config))
                         
+                        # Check if this is a file-based unzipped map
+                        # e.g., map_config has 'file' with 'unzip: true'
+                        is_unzipped_file_map_dir = False
+                        if not is_query_map_dir and map_config:
+                            file_spec = map_config.get('file')
+                            if isinstance(file_spec, dict):
+                                is_unzipped_file_map_dir = file_spec.get('unzip', False)
+                            elif file_spec and isinstance(map_config.get('unzip'), bool):
+                                is_unzipped_file_map_dir = map_config.get('unzip', False)
+                            if is_unzipped_file_map_dir:
+                                logger.info(f"READDIR: detected unzipped file map directory: {map_name}")
+                        
                         # Check if this is a nested file map virtual directory
                         # e.g., map_name="bios" and we have a map "bios/atom.zip"
-                        if not is_query_map_dir:
+                        if not is_query_map_dir and not is_unzipped_file_map_dir:
                             is_nested_file_map_dir = any(
                                 list(m.keys())[0].startswith(map_name + '/')
                                 for m in system_info.get('maps', [])
@@ -1099,9 +1129,9 @@ class TransFS(Passthrough):
         except Exception:
             pass
 
-        # Fast-path for query map directories and nested file map virtual directories
+        # Fast-path for query map directories, unzipped file maps, and nested file map virtual directories
         # This avoids per-entry resolution and stat, keeping listings responsive.
-        if (is_query_map_dir or is_nested_file_map_dir) and virtual_entries:
+        if (is_query_map_dir or is_nested_file_map_dir or is_unzipped_file_map_dir) and virtual_entries:
             # Build system transform map once for efficient extension-based renaming
             system_transform_map = self._build_system_transform_map(xfull_path)
             logger.info(f"READDIR fast-path: built transform map with {len(system_transform_map)} extensions")
@@ -2597,6 +2627,13 @@ class TransFS(Passthrough):
         # Use consistent hash-based inode for deterministic lookups
         synthetic_inode = self._make_synthetic_inode(path)
 
+        # Determine hierarchy level - system directories (level 2) should use synthetic inodes
+        # to avoid collisions when multiple clients map to the same physical directory
+        root_parts = Path(self.root).parts
+        path_parts = Path(path).parts
+        hierarchy_level = len(path_parts) - len(root_parts)
+        is_system_dir = (hierarchy_level == 2)  # e.g., /mnt/transfs/MiSTer/AcornAtom
+
         # Check if it's a real file that exists
         if source_path and isinstance(source_path, str) and os.path.exists(source_path):
             filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
@@ -2604,6 +2641,14 @@ class TransFS(Passthrough):
             if os.path.normpath(source_path) == os.path.normpath(filestore_root):
                 self._add_path(synthetic_inode, path)
                 logger.info(f"LOOKUP: SUCCESS - virtual root mapping, synthetic_inode={synthetic_inode}")
+                self._increment_lookup_count(synthetic_inode)
+                return await self.getattr(synthetic_inode, ctx)
+
+            # CRITICAL: Use synthetic inodes for system directories to avoid collisions
+            # when multiple clients map to the same physical directory
+            if is_system_dir:
+                self._add_path(synthetic_inode, path)
+                logger.info(f"LOOKUP: SUCCESS - system dir (using synthetic), synthetic_inode={synthetic_inode}")
                 self._increment_lookup_count(synthetic_inode)
                 return await self.getattr(synthetic_inode, ctx)
 

@@ -26,6 +26,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Cache UI now reflects only active caches (Stat Cache, ZIP Index, Transform caches)
 
 ### Fixed
+- **Inode Collision for Multi-Client Systems**: Fixed critical bug where multiple clients mapping to the same physical directory would share inodes
+  - System directories (level 2, e.g., `/mnt/transfs/MiSTer/AcornAtom`) now use synthetic inodes instead of real filesystem inodes
+  - Prevents configuration bleeding between clients (e.g., MiSTer showing RetroBat's file-based maps)
+  - Each client now maintains isolated virtual views even when sharing underlying storage
 - Restored Test Results tab rendering, including per-test output parsing, run tabs, and progress updates.
 - Restored download log carriage return handling so progress updates overwrite the current line instead of spamming new lines.
 - Restored Debug tab log loading by fetching FUSE logs from the correct endpoint on tab activation.

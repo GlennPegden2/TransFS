@@ -442,7 +442,54 @@ class DatabaseSync:
                     logger.error(f"      Error adding file {full_path}: {e}")
                     self.stats['errors'] += 1
             else:
-                logger.warning(f"      ZIP file specified but no zip_internal_file for {map_name}")
+                # Extract all files from ZIP
+                logger.info(f"      Extracting all files from ZIP: {full_path}")
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(full_path, 'r') as zf:
+                        for info in zf.filelist:
+                            if info.is_dir():
+                                continue  # Skip directories
+                            
+                            virtual_filename = os.path.basename(info.filename)
+                            virtual_path = os.path.join(
+                                self.mount_path,
+                                client_name,
+                                system_name,
+                                map_name,
+                                virtual_filename
+                            )
+                            
+                            now = int(time.time())
+                            stat = os.stat(full_path)  # Get stats of the ZIP file
+                            
+                            self.file_batch.append({
+                                'source_path': f"{full_path}#ZIP#{info.filename}",
+                                'virtual_path': virtual_path,
+                                'filename': virtual_filename,
+                                'extension': os.path.splitext(virtual_filename)[1][1:].lower(),
+                                'size': info.file_size,
+                                'mtime': int(stat.st_mtime),
+                                'ctime': int(stat.st_ctime),
+                                'atime': int(stat.st_atime),
+                                'ino': stat.st_ino,
+                                'mode': stat.st_mode,
+                                'system': system_name,
+                                'client': client_name,
+                                'map_name': map_name,
+                                'now': now,
+                            })
+                            
+                            if len(self.file_batch) >= self.batch_size:
+                                self._flush_file_batch()
+                            
+                            self.stats['files_added'] += 1
+                            logger.debug(f"        Added zip entry: {virtual_filename} from {info.filename}")
+                        
+                        logger.info(f"      Extracted {len(zf.filelist)} files from {os.path.basename(full_path)}")
+                except Exception as e:
+                    logger.error(f"      Error extracting ZIP {full_path}: {e}")
+                    self.stats['errors'] += 1
         else:
             # Regular file (not zipped)
             if not os.path.exists(full_path):

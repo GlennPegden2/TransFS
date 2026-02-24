@@ -11,10 +11,10 @@ systems:
     system_mapping_name: Atom
     local_base_path: Acorn/Atom
     maps:
-      - bios/atom.zip:
+      - bios:
           file:
             path: Software/BIOS/atom.zip
-            zip_mode: file
+            unzip: true
       - HDs:
           query:
             source_dir: Software
