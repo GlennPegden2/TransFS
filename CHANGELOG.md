@@ -47,6 +47,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added support for `file:` configuration format in get_source_path()
   - Handles both regular files and ZIP archives with unzip/zip_internal_file options
   - Ensures file-based maps appear in FUSE directory listings
+- **Nested Map Virtual Directory Handling**: Added proper handling for nested maps in path resolution
+  - Virtual directories like 'bios' (for 'bios/atom.zip' maps) now correctly identified as virtual
+  - Prevents cross-client configuration mixing (e.g., MiSTer files showing in RetroBat when sharing same physical directory)
 - **Pack Default Extension for Nested Folders**: Fixed `metadata.defaults.extension` feature for deeply nested folder structures
   - Added per-file pack context lookup in _scan_system_directory() to apply default extensions
   - Fixes RetroBat Acorn Atom: 3,197 extensionless files (in Software/Sources/hoglet67/*/...) now indexed with ATM extension
