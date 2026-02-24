@@ -321,7 +321,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
         return []
     display_or_actual_name = path.parts[len(root_parts) + 1]
     # Resolve display name to actual system name
-    from pathutils import resolve_system_name
+    from pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name
     system_name = resolve_system_name(client, display_or_actual_name)
     if not system_name:
         return []
@@ -342,6 +342,15 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
 
     for map_entry in system['maps']:
         map_name = list(map_entry.keys())[0]
+        
+        # Skip flattened maps (.) - their contents appear directly in this directory
+        if is_flatten_map(map_name):
+            continue
+        
+        # Skip parent-level maps (../) - they appear at parent directory level
+        if is_parent_level_map(map_name):
+            continue
+        
         # If map_name contains '/', extract the top-level directory
         if '/' in map_name:
             top_dir = map_name.split('/')[0]
@@ -362,6 +371,29 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     # Add virtual directories
     maps.extend(virtual_dirs)
     # Don't add implicit real files/dirs - only show explicitly mapped items
+    
+    # Handle flattened maps (.) - merge their contents directly into this listing
+    flatten_map_entry = next((m for m in system['maps'] if list(m.keys())[0] == '.'), None)
+    if flatten_map_entry:
+        flatten_config = flatten_map_entry['.']
+        if 'query' in flatten_config:
+            # For flattened query maps, list the files from the source_dir
+            query_cfg = flatten_config['query']
+            source_dir = query_cfg.get('source_dir', 'Software')
+            local_base = system.get('local_base_path', '')
+            filestore = config.get('filestore', '/mnt/filestorefs')
+            
+            flat_source_path = os.path.join(filestore, 'Native', local_base, source_dir)
+            if os.path.isdir(flat_source_path):
+                try:
+                    files_in_source = os.listdir(flat_source_path)
+                    for fname in files_in_source:
+                        if not fname.startswith('.'):
+                            maps.append(fname)
+                            mapped_names.add(fname)
+                except OSError:
+                    pass
+    
     # Deduplicate while preserving order
     deduped = []
     seen = set()

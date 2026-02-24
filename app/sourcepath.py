@@ -209,6 +209,36 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                 return {'path': dynamic_result, 'transform_pipeline': pipeline}
         return dynamic_result
 
+    # Handle flattened maps (.) - files appear directly in system folder
+    if len(rel_parts) >= 3:
+        flatten_map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == '.'), None)
+        if flatten_map_entry:
+            flatten_config = flatten_map_entry['.']
+            filename = rel_parts[2]
+            
+            # Use query-based lookup for flattened maps
+            if 'query' in flatten_config:
+                query_cfg = flatten_config['query']
+                source_dir = query_cfg.get('source_dir', 'Software')
+                logger.debug(f"Found flattened map (.), using source_dir={source_dir} for file={filename}")
+                
+                # Build the full path in the filesystem
+                base_path = os.path.join(
+                    config.get("filestore", "/mnt/filestorefs"),
+                    "Native",
+                    system_info['local_base_path'],
+                    source_dir
+                )
+                full_path = os.path.join(base_path, filename)
+                
+                if os.path.exists(full_path):
+                    logger.debug(f"Flattened map: Found file {full_path}")
+                    return full_path
+                else:
+                    logger.debug(f"Flattened map: File {full_path} does not exist")
+            # Flattened file maps could be added here if needed
+            return None
+
     # Handle named maps (including nested paths like MMBs/beeb1_mmb.VHD)
     if len(rel_parts) >= 3:
         # Support nested map names by joining remaining parts
@@ -324,6 +354,41 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                     return None
             # If we matched a map but it has no source_filename, continue to next iteration
             break
+
+    # Handle parent-level maps (../) - shared resources accessible from systems
+    if len(rel_parts) >= 3:
+        from pathutils import is_parent_level_map, normalize_map_name
+        map_path_parts = rel_parts[2:]
+        # Try progressively longer paths to find a matching parent-level map
+        for i in range(len(map_path_parts), 0, -1):
+            potential_path = '/'.join(map_path_parts[:i])
+            # Check all maps for one with ../ prefix that matches after normalization
+            for map_entry in system_info.get('maps', []):
+                map_name = list(map_entry.keys())[0]
+                if is_parent_level_map(map_name):
+                    normalized = normalize_map_name(map_name)
+                    if normalized == potential_path:
+                        logger.debug(f"Found parent-level map: {map_name} -> {normalized}")
+                        mapdict = map_entry[map_name]
+                        subpath = map_path_parts[i:]
+                        
+                        # Handle file-based parent-level maps
+                        if 'file' in mapdict:
+                            file_config = mapdict.get('file') or {}
+                            file_path = file_config.get('path')
+                            if file_path:
+                                base = os.path.join(
+                                    config.get("filestore", "/mnt/filestorefs"),
+                                    "Native",
+                                    system_info['local_base_path'],
+                                    file_path
+                                )
+                                if os.path.exists(base):
+                                    logger.debug(f"Parent-level file map: returning {base}")
+                                    return base
+                        # Handle query-based parent-level maps if needed
+                        # For now, file-based is the main use case (bios files)
+                        return None
 
     # Try regular map logic
     regular_result = get_regular_source_path(logger, config, system_info, rel_parts)

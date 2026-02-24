@@ -14,6 +14,7 @@ systems:
       - bios/atom.zip:
           file:
             path: Software/BIOS/atom.zip
+            zip_mode: file
       - HDs:
           query:
             source_dir: Software

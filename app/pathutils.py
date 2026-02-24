@@ -8,6 +8,67 @@ def full_path(root: str, partial: str) -> str:
         partial = partial[1:]
     return os.path.join(root, partial)
 
+def is_flatten_map(map_name: str) -> bool:
+    """Check if a map name is '.' (flatten into parent)."""
+    return map_name == '.'
+
+def is_parent_level_map(map_name: str) -> bool:
+    """Check if a map name starts with '../' (parent-level shared resource)."""
+    return map_name.startswith('../')
+
+def get_map_display_name(map_name: str) -> str:
+    """
+    Get the display name for a map (handling special prefixes).
+    
+    Examples:
+        '.' -> '.' (flattened, no subdirectory)
+        '../bios/neogeo.zip' -> 'bios/neogeo.zip' (shown at parent level)
+        'FDs' -> 'FDs' (normal map)
+    """
+    return map_name
+
+def resolve_map_display_level(map_name: str, current_level: int) -> int:
+    """
+    Resolve the directory level where a map should appear.
+    
+    Args:
+        map_name: The map name (may contain ../ prefix)
+        current_level: Current directory level (3 for system root)
+    
+    Returns:
+        Directory level where the map should appear
+    
+    Examples:
+        'FDs' at level 3 -> 3 (show as /Client/System/FDs)
+        '../bios' at level 3 -> 2 (show as /Client/bios)
+        '.' at level 3 -> 3 (files appear directly in system folder)
+    """
+    if is_parent_level_map(map_name):
+        # Count how many ../ levels
+        count = 0
+        temp = map_name
+        while temp.startswith('../'):
+            count += 1
+            temp = temp[3:]
+        return current_level - count
+    return current_level
+
+def normalize_map_name(map_name: str) -> str:
+    """
+    Normalize a map name, removing special prefixes.
+    
+    Examples:
+        '../bios/neogeo.zip' -> 'bios/neogeo.zip'
+        '.' -> '.'
+        'FDs' -> 'FDs'
+    """
+    if is_parent_level_map(map_name):
+        # Remove all ../ prefixes
+        while map_name.startswith('../'):
+            map_name = map_name[3:]
+        return map_name
+    return map_name
+
 def is_virtual_path(config, root: str, full_path: str) -> bool:
     """Determine if a path is a virtual path based on config."""
     parts = Path(full_path).parts
