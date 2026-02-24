@@ -79,27 +79,5 @@ services:
         tail -f /dev/null
       "
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: transfs-pgadmin
-    hostname: pgadmin
-    profiles:
-      - development
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@transfs.dev
-      PGADMIN_DEFAULT_PASSWORD: admin
-      PGADMIN_CONFIG_PROXY_X_FOR_COUNT: 1
-      PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: 1
-    ports:
-      - "5050:80"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - default
-
 volumes:
   postgres_data:
-  pgadmin_data:
