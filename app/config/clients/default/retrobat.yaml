@@ -13,7 +13,7 @@ systems:
     maps:
       - bios/atom.zip:
           file:
-            path: BIOS/atom.zip
+            path: Software/BIOS/atom.zip
       - HDs:
           query:
             source_dir: Software
