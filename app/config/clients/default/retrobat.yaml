@@ -51,13 +51,6 @@ systems:
             supports_zaparoo: false
             preserve_exact_filenames: true
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
-      - FDs/bios/:
-          query:
-            source_dir: Software/BIOS
-            extensions:
-              - "*"
-            supports_zip: true
-            preserve_structure: true
       - ROMs/bios/atom.zip:
           file:
             path: Acorn/Atom/Software/BIOS/atom.zip
