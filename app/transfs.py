@@ -1043,7 +1043,7 @@ class TransFS(Passthrough):
                 
                 # Get allowed entries from config using parse_trans_path
                 t_config_start = time.time()
-                config_entries = set(parse_trans_path(self.config, self.root, path))
+                config_entries = list(parse_trans_path(self.config, self.root, path))
                 t_config = time.time() - t_config_start
                 logger.info(f"READDIR DATABASE: config allows {len(config_entries)} entries (parsed in {t_config:.4f}s)")
                 
@@ -1053,7 +1053,51 @@ class TransFS(Passthrough):
                 # Get entries from database
                 db_entries = self.data_adapter.readdir_entries(path)
                 logger.info(f"READDIR DATABASE: got {len(db_entries) if db_entries else 0} entries from adapter")
+                
+                # If we have config_entries but no db_entries, or if config_entries don't look like files,
+                # create synthetic directory entries for them (handles category paths and map directories)
+                entries_to_send = []
+                if config_entries:
+                    # Check if config_entries look like file entries (have extensions) or directory names
+                    config_entries_set = set(config_entries)
+                    file_extensions = {os.path.splitext(e)[1].lower() for e in config_entries}
+                    looks_like_files = len([e for e in file_extensions if e]) > 0 and len(file_extensions) > 1
+                    looks_like_dirs = len([e for e in config_entries if '.' not in e]) > 0 or not looks_like_files
+                    
+                    logger.info(f"READDIR DATABASE: config_entries look_like_files={looks_like_files}, look_like_dirs={looks_like_dirs}")
+                    
+                    if looks_like_dirs:
+                        # Create synthetic directory entries from config_entries
+                        logger.info(f"READDIR DATABASE: creating synthetic directory entries from config_entries")
+                        sent_count = 0
+                        for entry_id, entry_name in enumerate(config_entries, start=1):
+                            if entry_id <= start_id:
+                                continue
+                            
+                            entry_path = os.path.join(path, entry_name)
+                            # Create synthetic directory stat
+                            now = int(time.time())
+                            stat_dict = {
+                                'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                'st_gid': 0, 'st_uid': 0,
+                                'st_mode': 0o040555,  # Directory, read-only
+                                'st_nlink': 2,  # Directory
+                                'st_size': 0,
+                            }
+                            entry_inode = self._make_synthetic_inode(entry_path)
+                            self._add_path(entry_inode, entry_path)
+                            entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
+                            
+                            if not pyfuse3.readdir_reply(token, entry_name.encode('utf-8'), entry, entry_id):
+                                break
+                            sent_count += 1
+                        
+                        logger.info(f"READDIR DATABASE: sent {sent_count} synthetic directory entries")
+                        return
+                
+                # Otherwise, filter database entries against config
                 if db_entries:
+                    config_entries_set = set(config_entries)
                     sent_count = 0
                     filtered_count = 0
                     for entry_id, (entry_name, stat_dict) in enumerate(db_entries, start=1):
@@ -1061,7 +1105,7 @@ class TransFS(Passthrough):
                             continue
                         
                         # Filter: only send entries that are allowed by config
-                        if entry_name not in config_entries:
+                        if entry_name not in config_entries_set:
                             filtered_count += 1
                             continue
                             

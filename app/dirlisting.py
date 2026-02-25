@@ -11,6 +11,77 @@ import logging
 logger = logging.getLogger("transfs")
 
 
+def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
+    """
+    Query database to discover subdirectories under a given virtual path prefix.
+    
+    Args:
+        mount_path: Mount point path (e.g., "/mnt/transfs")
+        virtual_prefix: Virtual path prefix to search under (e.g., "RetroBat/ROMS/AcornAtom")
+    
+    Returns:
+        List of unique subdirectory names at the next level
+    """
+    try:
+        from db.connection import get_cursor, init_database
+        from db import get_connection
+        
+        # Initialize database connection if needed
+        try:
+            conn = get_connection()
+            if conn is None:
+                init_database()
+        except:
+            init_database()
+        
+        # Build the full path prefix, ensuring it ends with /
+        if virtual_prefix.startswith('/'):
+            full_prefix = virtual_prefix
+        else:
+            full_prefix = os.path.join(mount_path, virtual_prefix)
+        
+        if not full_prefix.endswith('/'):
+            full_prefix += '/'
+        
+        # Calculate the position to extract from (after the prefix)
+        extract_from_pos = len(full_prefix) + 1  # +1 for 1-based PostgreSQL indexing
+        
+        # Query for unique next-level components
+        # For paths like /mnt/transfs/RetroBat/ROMS/AcornAtom/FDs/file.dsk
+        # When querying /mnt/transfs/RetroBat/ROMS/AcornAtom/, extract "FDs"
+        sql = """
+            SELECT DISTINCT 
+                SPLIT_PART(
+                    SUBSTRING(virtual_path FROM %s),
+                    '/',
+                    1
+                ) AS subdir
+            FROM files
+            WHERE virtual_path LIKE %s
+                AND LENGTH(SUBSTRING(virtual_path FROM %s)) > 0
+                AND virtual_path <> %s
+        """
+        
+        params = [
+            extract_from_pos,       # Extract substring starting after prefix
+            full_prefix + '%',      # Match paths under prefix
+            extract_from_pos,       # Same as first param
+            full_prefix.rstrip('/') # Exclude the directory itself
+        ]
+        
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+        
+        subdirs = [row['subdir'] for row in rows if row['subdir'] and row['subdir'].strip()]
+        logger.debug(f"Found {len(subdirs)} subdirectories under {full_prefix}: {subdirs}")
+        return subdirs
+    
+    except Exception as e:
+        logger.error(f"Error querying subdirectories from database for {virtual_prefix}: {e}")
+        return []
+
+
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
     layout = system_info.get("download_layout") if system_info else None
     if layout != "source_based":
@@ -284,34 +355,69 @@ def parse_trans_path(config,root,full_path: str) -> list:
     """
     Return directory entries for the given virtual path, using get_source_path for translation.
     Supports dynamic expansion of ...SoftwareArchives... maps, including subfolders and zip logic.
+    Handles variable-depth hierarchies with category paths.
     """
+    from pathutils import get_system_info
+    
     path = Path(full_path)
     root_parts = Path(root).parts
     lev = len(path.parts) - len(root_parts)
 
+    # Level 0: List clients
     if lev == 0:
         return list_clients(config)
+    
+    # Level 1+: Could be systems, categories, or maps depending on configuration
+    client_name = path.parts[len(root_parts)]
+    client = next((c for c in config.get('clients', []) if c['name'] == client_name), None)
+    if not client:
+        return []
+    
+    # Level 1: List systems/categories under client
     if lev == 1:
         return list_systems(config, path, root_parts)
-    if lev == 2:
-        # Check if this is a client-level nested map directory (e.g., /RetroBat/bios)
-        # or a system-level map listing (e.g., /RetroBat/AcornAtom)
-        client_name = path.parts[len(root_parts)]
-        potential_path = path.parts[len(root_parts) + 1]
-        client = next((c for c in config.get('clients', []) if c['name'] == client_name), None)
-        if client:
-            # Check if it's a client-level nested map
-            client_maps = client.get('maps', [])
-            is_client_nested_map = any(
-                list(m.keys())[0].startswith(potential_path + '/')
-                for m in client_maps
-            )
-            if is_client_nested_map:
-                # List contents of client-level nested map directory
-                return list_client_nested_map_entries(config, client, potential_path)
-        
-        # Otherwise, it's a system-level map listing
-        return list_maps(config, path, root_parts)
+    
+    # Level 2+: Could be system, category+system, or maps
+    # Try to find system at any position in the path
+    rel_path_parts = path.parts[len(root_parts):]
+    system_info = get_system_info(client, rel_path_parts)
+    
+    if system_info:
+        # Found a system - determine if we're AT the system level or deeper
+        system_name = system_info['name']
+        # Find where the system name appears in the path
+        try:
+            system_idx = rel_path_parts.index(system_name)
+            # If we're exactly at the system level, list maps
+            if len(rel_path_parts) == system_idx + 1:
+                return list_maps(config, path, root_parts)
+            # If we're deeper, use the dynamic listing
+            else:
+                return list_dynamic_or_regular(config, path, root_parts)
+        except ValueError:
+            pass
+    
+    # Not at system level - might be at category level
+    # Check if this is a client-level nested map directory
+    potential_map_name = path.parts[len(root_parts) + 1] if lev >= 2 else None
+    if potential_map_name:
+        client_maps = client.get('maps', [])
+        is_client_nested_map = any(
+            list(m.keys())[0].startswith(potential_map_name + '/')
+            for m in client_maps
+        )
+        if is_client_nested_map:
+            return list_client_nested_map_entries(config, client, potential_map_name)
+    
+    # At category level (e.g., /RetroBat/ROMS/) - list systems with those categories
+    # Query database to find subdirectories
+    mount_path = config.get('mount_path', '/mnt/transfs')
+    rel_path = '/'.join(rel_path_parts)
+    db_subdirs = _get_subdirectories_from_db(mount_path, rel_path)
+    if db_subdirs:
+        return db_subdirs
+    
+    # Fallback to dynamic listing
     return list_dynamic_or_regular(config, path, root_parts)
 
 def list_clients(config) -> list:
@@ -319,49 +425,74 @@ def list_clients(config) -> list:
     return [client['name'] for client in config['clients']]
 
 def list_systems(config, path: Path, root_parts: tuple) -> list:
-    """List all systems for a client, plus any client-level maps."""
+    """List all systems for a client, plus any client-level maps and category directories."""
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
     
     result = []
+    seen = set()
     
     # Add client-level maps (e.g., bios/atom.zip)
     # For nested maps, only show the top-level directory (e.g., 'bios' from 'bios/atom.zip')
     client_maps = client.get('maps', [])
-    seen_dirs = set()
     for map_entry in client_maps:
         map_name = list(map_entry.keys())[0]
         # Extract the first component (e.g., 'bios' from 'bios/atom.zip')
         top_level = map_name.split('/')[0]
-        if top_level not in seen_dirs:
+        if top_level not in seen:
             result.append(top_level)
-            seen_dirs.add(top_level)
+            seen.add(top_level)
     
-    # Add systems
-    # Handle clients that don't have systems defined yet
+    # Query database to discover actual directory structure (handles category paths)
+    mount_path = config.get('mount_path', '/mnt/transfs')
+    db_subdirs = _get_subdirectories_from_db(mount_path, client_name)
+    
+    # Add database-discovered directories (categories like ROMS, BIOS, or systems)
+    for subdir in db_subdirs:
+        if subdir not in seen:
+            result.append(subdir)
+            seen.add(subdir)
+    
+    # Also add configured systems (in case database is empty or incomplete)
     if 'systems' in client:
-        # Return name for filesystem paths (display_name is only for UI)
-        result.extend([system['name'] for system in client['systems']])
+        for system in client['systems']:
+            system_name = system['name']
+            if system_name not in seen:
+                result.append(system_name)
+                seen.add(system_name)
     
     return result
 
 def list_maps(config, path: Path, root_parts: tuple) -> list:
     """List all maps and dynamic SoftwareArchives for a system."""
+    from pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name, get_system_info
+    
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
-    display_or_actual_name = path.parts[len(root_parts) + 1]
-    # Resolve display name to actual system name
-    from pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name
-    system_name = resolve_system_name(client, display_or_actual_name)
-    if not system_name:
+    
+    # First try database-driven discovery (works with category paths)
+    mount_path = config.get('mount_path', '/mnt/transfs')
+    rel_path_parts = path.parts[len(root_parts):]
+    rel_path = '/'.join(rel_path_parts)
+    db_maps = _get_subdirectories_from_db(mount_path, rel_path)
+    
+    # If database returns results, use them
+    if db_maps:
+        logger.debug(f"list_maps: Using database-discovered maps for {rel_path}: {db_maps}")
+        return db_maps
+    
+    # Fallback: Try to find system using flexible search
+    system_info = get_system_info(client, rel_path_parts)
+    if not system_info:
+        # Not found - might be at a different level, return empty
+        logger.debug(f"list_maps: No system found for {rel_path}")
         return []
-    system = next((s for s in client['systems'] if s['name'] == system_name), None)
-    if not system:
-        return []
+    
+    system = system_info
     maps = []
     mapped_names = set()
     # Track top-level virtual directories (e.g., "MMBs" from "MMBs/beeb1_mmb.VHD")
@@ -436,6 +567,8 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
             continue
         seen.add(entry)
         deduped.append(entry)
+    
+    logger.debug(f"list_maps: Config-based maps for {rel_path}: {deduped}")
     return deduped
 
 def list_nested_map_entries(config, path: Path, root_parts: tuple, system: dict, parent_path: str) -> list:

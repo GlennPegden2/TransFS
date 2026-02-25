@@ -3,7 +3,16 @@
 
 name: RetroBat
 download_layout: source_based
-default_target_path: "{name}/{system_name}/roms/Atom/{maps}"
+default_target_path: "{name}/{system_name}/{maps}"
+
+# Category-based path templates
+# Maps with category="roms" will appear under ROMS/{system_name}
+# Maps with category="bios" will appear under BIOS/{system_name}
+category_paths:
+  roms: "{name}/ROMS/{system_name}"
+  bios: "{name}/BIOS/{system_name}"
+  mame_roms: "{name}/mame/ROMS/{system_name}"
+  mame_bios: "{name}/mame/BIOS/{system_name}"
 
 # Client-level maps (appear at /mnt/transfs/RetroBat/)
 #maps:
@@ -23,11 +32,12 @@ systems:
 #            source_dir: Software
 #            extensions:
 #              - VHD
-#            supports_zip: flase
+#            supports_zip: false
 #            supports_zaparoo: true
       - FDs:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/FDs
           query:
-            source_dir: Software
+            source_dir: Software/Sources
             extensions:
 #              - ATM
               - DSK
@@ -35,28 +45,31 @@ systems:
             supports_zaparoo: false
             preserve_exact_filenames: true
       - ROMs:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/ROMs
           query:
-            source_dir: Software
+            source_dir: Software/Sources
             extensions:
               - ROM
             supports_zip: true
             supports_zaparoo: false
             preserve_exact_filenames: true
       - Tapes:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/Tapes
           query:
-            source_dir: Software
+            source_dir: Software/Sources
             extensions:
               - UEF
             supports_zip: true
             supports_zaparoo: false
             preserve_exact_filenames: true
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
-      - ROMs/bios/atom.zip:
+      - bios:
+          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios
           file:
-            path: Acorn/Atom/Software/BIOS/atom.zip
-            zip_mode: file  # Treat as a file, not a browsable directory
-      - Tapes/bios/atom.zip:
+            path: Software/BIOS/atom.zip
+            unzip: true
+      - bios/atom.zip:
+          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios/atom.zip
           file:
-            path: Acorn/Atom/Software/BIOS/atom.zip
+            path: Software/BIOS/atom.zip
             zip_mode: file  # Treat as a file, not a browsable directory
-

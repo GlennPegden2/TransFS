@@ -129,24 +129,42 @@ def client_exists(config, name_to_check: str) -> bool:
     """Check if a client exists in the config."""
     return any(client.get("name") == name_to_check for client in config.get("clients", []))
 
-def get_system_info(client: dict, rel_parts: list, path_template_parts: tuple) -> Optional[dict]:
-    """Extract system info from the config."""
+def get_system_info(client: dict, rel_parts: list, path_template_parts: tuple = None) -> Optional[dict]:
+    """
+    Extract system info from the config by finding which system name appears in rel_parts.
+    
+    Args:
+        client: Client configuration dict
+        rel_parts: Path components after mount point (e.g., ['RetroBat', 'ROMS', 'AcornAtom', 'FDs'])
+        path_template_parts: Optional path template for hint (backwards compatible)
+    
+    Returns:
+        System config dict if found, None otherwise
+        
+    Handles both category-based paths (e.g., RetroBat/ROMS/AcornAtom) 
+    and non-category paths (e.g., MiSTer/AcornAtom).
+    """
     systems = client.get('systems', []) if client else []
     if not systems:
         return None
-    system_name = None
-    if "{system_name}" in path_template_parts:
+    
+    # Strategy 1: If path_template_parts provided, use it as a hint
+    if path_template_parts and "{system_name}" in path_template_parts:
         idx = path_template_parts.index("{system_name}")
         if len(rel_parts) > idx:
             potential_name = rel_parts[idx]
-            # Resolve display name to actual name
             system_name = resolve_system_name(client, potential_name)
-    else:
-        for sys in systems:
-            if sys['name'] in rel_parts or sys.get('display_name') in rel_parts:
-                system_name = sys['name']
-                break
-    return next((s for s in systems if s['name'] == system_name), None)
+            if system_name:
+                return next((s for s in systems if s['name'] == system_name), None)
+    
+    # Strategy 2: Search for system name in any position (handles category paths)
+    # Try each rel_part to see if it matches a system name or display name
+    for part in rel_parts:
+        system_name = resolve_system_name(client, part)
+        if system_name:
+            return next((s for s in systems if s['name'] == system_name), None)
+    
+    return None
 
 def get_client(config, rel_parts: tuple) -> Optional[dict]:
     """Return the client dict for the given rel_parts."""
@@ -260,3 +278,56 @@ def get_system_identifier(system_info: dict) -> Optional[str]:
     if not manufacturer or not canonical:
         return None
     return f"{manufacturer}/{canonical}"
+
+def resolve_virtual_base_path(client_config: dict, system_config: dict, map_config: Optional[dict]) -> str:
+    """
+    Resolve the virtual base path for a map based on category configuration.
+    
+    Args:
+        client_config: Client configuration dict
+        system_config: System configuration dict
+        map_config: Map configuration dict (may contain 'category' field)
+    
+    Returns:
+        Virtual base path template (e.g., "{name}/ROMS/{system_name}" or "{name}/{system_name}")
+    
+    Examples:
+        With category="roms": returns "{name}/ROMS/{system_name}"
+        With no category: returns "{name}/{system_name}" (from default_target_path)
+    """
+    category = map_config.get('category') if map_config else None
+    
+    if category:
+        # Check system-level category override first
+        system_category_paths = system_config.get('category_paths', {})
+        if isinstance(system_category_paths, dict) and category in system_category_paths:
+            return system_category_paths[category]
+        
+        # Check client-level category paths
+        client_category_paths = client_config.get('category_paths', {})
+        if isinstance(client_category_paths, dict) and category in client_category_paths:
+            return client_category_paths[category]
+        
+        # If category specified but not found, raise error for visibility
+        raise ValueError(f"Category '{category}' not defined in category_paths for client '{client_config.get('name')}'")
+    
+    # No category = use default_target_path (backwards compatible)
+    return client_config.get('default_target_path', '{name}/{system_name}')
+
+def format_virtual_base_path(base_path_template: str, client_name: str, system_name: str) -> str:
+    """
+    Format a virtual base path template with actual client and system names.
+    
+    Args:
+        base_path_template: Template string (e.g., "{name}/ROMS/{system_name}")
+        client_name: Client name (e.g., "RetroBat")
+        system_name: System name (e.g., "AcornAtom")
+    
+    Returns:
+        Formatted path (e.g., "RetroBat/ROMS/AcornAtom")
+    """
+    return base_path_template.format(
+        name=client_name,
+        system_name=system_name,
+        maps=''  # Not used at base path level
+    ).rstrip('/')

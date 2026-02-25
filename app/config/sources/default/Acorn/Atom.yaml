@@ -5,12 +5,21 @@ base_path: Acorn/Atom/
 
 sources:
 
+
+  - name: RetrobatBios
+    type: ddl
+    urls:
+      - https://github.com/RetroBat-Official/retrobat-bios/archive/refs/heads/main.zip
+    folder: Software/BIOS
+    extract: true
+
   - name: MameBIOSroms
     type: ddl
     urls:
       - "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip&file=atom.zip"
-    folder: Software/BIOS
+    folder: Software/BIOS/mame/atom
     extract: false
+
 
   - name: hoglet67
     type: ddl
@@ -23,21 +32,8 @@ sources:
     type: ddl
     urls:
       - https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
-    folder: Software/BIOS
-    extract: true
-
-  - name: retobat_bios_files
-    type: ddl
-    urls:
-      - https://github.com/RetroBat-Official/retrobat-bios/archive/refs/heads/main.zip
-    folder: Software/ReroBat_BIOS
-    extract: true
-
     folder: Software/Utils
-    extract: true
-
-
-    
+    extract: true    
 
   # MAME Software List downloader
   # Downloads verified software from Internet Archive based on MAME hash files
@@ -63,8 +59,9 @@ packs:
     name: BIOS ROMs for MAME/MESS derivatives
     description: BIOS ROMs for MAME/MESS derivatives
     estimated_size: 32k
-    sources: [MameBIOSroms,retobat_bios_files]
+    sources: [MameBIOSroms,RetrobatBios]
     supported_by: [RetroBat,Mame,Batocera,RetroPie]
+    build_script: RetroBat/Acorn/Atom/build.sh
     info_links:
       - label: IA Page
         url: "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip"
@@ -98,6 +95,7 @@ packs:
     estimated_size: 15.3MB
     sources: [hoglet67, blankvhd]
     build_script: MiSTer/Acorn/Atom/build.sh
+    supported_by: [RetroBat,Mame,Batocera,RetroPie]
     info_links:
       - label: Hoglet67s Atom Software Archive
         url: https://github.com/hoglet67/AtomSoftwareArchive

@@ -31,7 +31,11 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import read_config
-from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map, get_query_config
+from pathutils import (
+    get_client, get_system_info, find_map_entry, get_map_config, 
+    is_query_map, get_query_config, resolve_virtual_base_path, 
+    format_virtual_base_path
+)
 from transforms import build_transform_pipeline
 from metadata import enrich_file_metadata, PackContext
 from db.connection import get_connection, return_connection
@@ -348,8 +352,10 @@ class DatabaseSync:
         # Then process query maps
         if query_map_configs:
             logger.info(f"    Scanning entire system base: {system_base_path}")
+            # Get client config for category path resolution
+            client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             self._scan_system_directory(
-                system_base_path, client_name, system_name, query_map_configs
+                system_base_path, client_name, system_name, query_map_configs, client, system_config
             )
         elif not file_based_maps:
             logger.debug(f"    No query or file-based maps found for {system_name}")
@@ -358,6 +364,20 @@ class DatabaseSync:
                             map_config: dict, system_config: dict):
         """Sync files from a file-based map to database."""
         logger.info(f"    Syncing file-based map: {map_name}")
+        
+        # Get client config for category path resolution
+        client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+        if not client_config:
+            logger.warning(f"      Client config not found for {client_name}")
+            return
+        
+        # Resolve virtual base path based on category (if present)
+        try:
+            base_path_template = resolve_virtual_base_path(client_config, system_config, map_config)
+            virtual_base = format_virtual_base_path(base_path_template, client_name, system_name)
+        except ValueError as e:
+            logger.error(f"      Error resolving virtual base path: {e}")
+            return
         
         file_spec = map_config.get('file')
         if not file_spec:
@@ -403,8 +423,7 @@ class DatabaseSync:
                 virtual_filename = os.path.basename(zip_internal_file)
                 virtual_path = os.path.join(
                     self.mount_path,
-                    client_name,
-                    system_name,
+                    virtual_base,
                     map_name,
                     virtual_filename
                 )
@@ -454,8 +473,7 @@ class DatabaseSync:
                             virtual_filename = os.path.basename(info.filename)
                             virtual_path = os.path.join(
                                 self.mount_path,
-                                client_name,
-                                system_name,
+                                virtual_base,
                                 map_name,
                                 virtual_filename
                             )
@@ -503,8 +521,7 @@ class DatabaseSync:
                 virtual_filename = os.path.basename(full_path)
                 virtual_path = os.path.join(
                     self.mount_path,
-                    client_name,
-                    system_name,
+                    virtual_base,
                     map_name,
                     virtual_filename
                 )
@@ -607,7 +624,7 @@ class DatabaseSync:
         logger.info(f"      ✓ Processed {file_count}/{total_files} files in {map_name}")
     
     def _scan_system_directory(self, base_path: str, client_name: str, system_name: str, 
-                               map_configs: List[dict]):
+                               map_configs: List[dict], client_config: dict, system_config: dict):
         """
         Scan entire system directory and match files to appropriate maps.
         
@@ -655,7 +672,7 @@ class DatabaseSync:
                             self._add_file_to_database(
                                 file_path, client_name, system_name, map_info['name'],
                                 ext, map_info['extension_map'], map_info['transforms'],
-                                preserve_exact
+                                preserve_exact, map_info['config'], client_config, system_config
                             )
                             file_count += 1
                             matched = True
@@ -844,7 +861,8 @@ class DatabaseSync:
     
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
-                             transforms: dict, preserve_exact_filenames: bool = False):
+                             transforms: dict, preserve_exact_filenames: bool = False,
+                             map_config: dict = None, client_config: dict = None, system_config: dict = None):
         """
         Add file to batch for processing.
         
@@ -857,7 +875,21 @@ class DatabaseSync:
             extension_map: Mapping of extensions (e.g., {'SFC': 'SMC'})
             transforms: Transform specifications for this extension
             preserve_exact_filenames: If True, skip duplicates instead of renaming (default False)
+            map_config: Map configuration dict (for category resolution)
+            client_config: Client configuration dict (for category resolution)
+            system_config: System configuration dict (for category resolution)
         """
+        # Resolve virtual base path based on category (if present)
+        try:
+            if client_config and system_config and map_config:
+                base_path_template = resolve_virtual_base_path(client_config, system_config, map_config)
+                virtual_base = format_virtual_base_path(base_path_template, client_name, system_name)
+            else:
+                # Fallback to default behavior (backwards compatible)
+                virtual_base = f"{client_name}/{system_name}"
+        except ValueError as e:
+            logger.error(f"Error resolving virtual base path for {map_name}: {e}")
+            virtual_base = f"{client_name}/{system_name}"
         try:
             # Track that we've seen this file
             self.seen_source_paths.add(source_path)
@@ -967,8 +999,7 @@ class DatabaseSync:
             # Build virtual path
             virtual_path = os.path.join(
                 self.mount_path,
-                client_name,
-                system_name,
+                virtual_base,
                 map_name,
                 virtual_filename
             )
