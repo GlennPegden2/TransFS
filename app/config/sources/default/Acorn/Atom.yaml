@@ -23,8 +23,21 @@ sources:
     type: ddl
     urls:
       - https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
+    folder: Software/BIOS
+    extract: true
+
+  - name: retobat_bios_files
+    type: ddl
+    urls:
+      - https://github.com/RetroBat-Official/retrobat-bios/archive/refs/heads/main.zip
+    folder: Software/ReroBat_BIOS
+    extract: true
+
     folder: Software/Utils
     extract: true
+
+
+    
 
   # MAME Software List downloader
   # Downloads verified software from Internet Archive based on MAME hash files
@@ -50,7 +63,7 @@ packs:
     name: BIOS ROMs for MAME/MESS derivatives
     description: BIOS ROMs for MAME/MESS derivatives
     estimated_size: 32k
-    sources: [MameBIOSroms]
+    sources: [MameBIOSroms,retobat_bios_files]
     supported_by: [RetroBat,Mame,Batocera,RetroPie]
     info_links:
       - label: IA Page
