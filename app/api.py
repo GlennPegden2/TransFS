@@ -2330,15 +2330,20 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                     progress_callback=progress_callback
                                 )
                                 
-                                yield f"      ✓ Downloaded {stats['downloaded']} file(s)\n"
-                                yield f"      ⏭ Skipped {stats['already_existed']} existing file(s)\n"
-                                if stats['failed'] > 0:
-                                    yield f"      ✗ Failed {stats['failed']} file(s)\n"
-                                yield f"      📊 Processed {stats['filtered_entries']} software entries\n"
+                                # Check if download actually retrieved anything
+                                if stats['downloaded'] == 0 and stats['failed'] == 0 and stats['total_entries'] == 0:
+                                    yield f"      ⚠ No software entries found for {system}_{media_type}\n"
+                                    yield "         (This may indicate a network issue fetching the MAME hash file)\n"
+                                else:
+                                    yield f"      ✓ Downloaded {stats['downloaded']} file(s)\n"
+                                    yield f"      ⏭ Skipped {stats['already_existed']} existing file(s)\n"
+                                    if stats['failed'] > 0:
+                                        yield f"      ✗ Failed {stats['failed']} file(s)\n"
+                                    yield f"      📊 Processed {stats['filtered_entries']} software entries\n"
                                 
                             except Exception as e:  # pylint: disable=broad-except
                                 yield f"      ✗ MAME download failed: {str(e)}\n"
-                                logger.error(f"MAME download error: {e}", exc_info=True)
+                                logger.error(f"MAME download error for {system}_{media_type}: {e}", exc_info=True)
                         
                         yield "\n"
                         continue
