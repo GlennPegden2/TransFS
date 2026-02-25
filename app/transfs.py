@@ -2078,18 +2078,18 @@ class TransFS(Passthrough):
                         map_config = get_map_config(map_entry)
                         if is_query_map(map_config):
                             now = int(time.time())
-                        result = {
-                            'st_atime': now,
-                            'st_ctime': now,
-                            'st_mtime': now,
-                            'st_gid': 0,
-                            'st_uid': 0,
-                            'st_mode': 0o040755,
-                            'st_nlink': 2,
-                            'st_size': 4096,
-                        }
-                        logger.info(f"GETATTR: returning virtual directory for query map {map_name}")
-                        return self._dict_to_entry_attributes(result, inode)
+                            result = {
+                                'st_atime': now,
+                                'st_ctime': now,
+                                'st_mtime': now,
+                                'st_gid': 0,
+                                'st_uid': 0,
+                                'st_mode': 0o040755,
+                                'st_nlink': 2,
+                                'st_size': 4096,
+                            }
+                            logger.info(f"GETATTR: returning virtual directory for query map {map_name}")
+                            return self._dict_to_entry_attributes(result, inode)
         
         # Check if source path was cached by readdir (major optimization - avoid re-computation)
         if xfull_path in self._source_path_cache:
