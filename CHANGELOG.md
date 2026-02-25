@@ -5,6 +5,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **MAME Source Configuration**: Fixed incorrect filter and archive URL configuration
+  - Changed `exclude_unsupported` from `true` to `false` in Atom.yaml
+  - The "supported" attribute in MAME hash files refers to emulation status in MAME, not file availability
+  - All Atom software was being filtered out because entries are marked `supported="no"` 
+  - Files should still be downloadable even when marked as unsupported in MAME
+  
 - **Pack Installation System Name Matching**: Fixed system name resolution in pack installation
   - Both client-based and client-agnostic pack installation endpoints now correctly match systems by actual name AND mapping name
   - Resolves "System not found" errors when using mapping names like "Atom" instead of actual names like "AcornAtom"
@@ -15,6 +21,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Eliminated spurious "no URL(s) configured" warnings for MAME sources
   - Pack installation now properly detects and handles media_types and filters for MAME sources
   - Downloads are performed using MAMEDownloadManager for checksummed verification
+  - Improved error handling with specific exception types (Timeout, ConnectionError, HTTPError)
+  - Added warning message when no entries are found (likely network issue)
 
 ### Added
 - **Client-Level File Maps**: New feature enabling file maps at the client directory level
