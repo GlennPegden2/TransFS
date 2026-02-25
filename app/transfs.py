@@ -204,11 +204,27 @@ class TransFS(Passthrough):
         root_parts = Path(self.root).parts
         rel_parts = path.parts[len(root_parts):]
         
-        if len(rel_parts) < 3:
+        if len(rel_parts) < 2:
             return "hierarchical"
         
         client = get_client(self.config, rel_parts)
         if not client:
+            return "hierarchical"
+        
+        # Check for client-level file maps first (e.g., /RetroBat/bios/atom.zip)
+        if len(rel_parts) >= 2:
+            potential_client_map_path = '/'.join(rel_parts[1:])
+            client_maps = client.get('maps', [])
+            client_map_entry = find_map_entry({'maps': client_maps}, potential_client_map_path)
+            if client_map_entry:
+                map_config = get_map_config(client_map_entry)
+                if map_config and isinstance(map_config, dict):
+                    file_spec = map_config.get('file', {})
+                    if isinstance(file_spec, dict) and 'zip_mode' in file_spec:
+                        return file_spec.get('zip_mode', 'hierarchical')
+        
+        # Check system-level maps (including nested maps like FDs/bios/atom.zip)
+        if len(rel_parts) < 3:
             return "hierarchical"
         
         path_template_parts = Path(client['default_target_path']).parts
@@ -216,6 +232,18 @@ class TransFS(Passthrough):
         if not system_info:
             return "hierarchical"
         
+        # First check for nested file maps (e.g., FDs/bios/atom.zip)
+        if len(rel_parts) >= 4:
+            map_path = '/'.join(rel_parts[2:])  # e.g., 'FDs/bios/atom.zip'
+            nested_map_entry = find_map_entry(system_info, map_path)
+            if nested_map_entry:
+                nested_map_config = get_map_config(nested_map_entry)
+                if nested_map_config and isinstance(nested_map_config, dict):
+                    file_spec = nested_map_config.get('file', {})
+                    if isinstance(file_spec, dict) and 'zip_mode' in file_spec:
+                        return file_spec.get('zip_mode', 'hierarchical')
+        
+        # Then check top-level map
         map_name = rel_parts[2]
         map_entry = find_map_entry(system_info, map_name)
         map_config = get_map_config(map_entry)
@@ -472,10 +500,19 @@ class TransFS(Passthrough):
         Returns tuple (client_name, system_name, map_name) or None.
         
         Example: /mnt/transfs/MiSTer/Apple-II/FDs -> ('MiSTer', 'Apple-II', 'FDs')
+        
+        Only applies to top-level map directories, not subdirectories.
+        E.g., /FDs/ -> returns info, but /FDs/bios/ -> returns None
         """
         try:
             rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
             if len(rel_parts) < 3:
+                return None
+            
+            # Only handle top-level map directories, not nested subdirectories
+            # This prevents database-only mode from applying to virtual nested directories
+            if len(rel_parts) > 3:
+                logger.debug(f"_extract_map_info: path has {len(rel_parts)} parts, skipping (nested subdirectory)")
                 return None
             
             client_name = rel_parts[0]
@@ -679,6 +716,25 @@ class TransFS(Passthrough):
                 for file_record in db_files:
                     filename = file_record.get('filename', '')
                     entries_to_send.append(('file', filename, file_record))
+            
+            # Check for nested file map virtual directories (e.g., "bios" from "FDs/bios/atom.zip")
+            # These should appear as directories in the query map directory
+            nested_map_dirs = set()
+            for map_entry in system_info.get('maps', []):
+                map_key = list(map_entry.keys())[0]
+                # Check if this map is nested under the current map (e.g., "FDs/bios/atom.zip")
+                if map_key.startswith(map_name + '/'):
+                    # Extract the immediate subdirectory (e.g., "bios" from "FDs/bios/atom.zip")
+                    remainder = map_key[len(map_name) + 1:]
+                    subdir = remainder.split('/')[0]
+                    nested_map_dirs.add(subdir)
+            
+            # Add nested map directories as virtual directories
+            if nested_map_dirs:
+                logger.info(f"READDIR_DB_ONLY: adding {len(nested_map_dirs)} nested map directories: {nested_map_dirs}")
+                for dir_name in sorted(nested_map_dirs):
+                    # Insert at beginning so directories appear first
+                    entries_to_send.insert(0, ('dir', dir_name, None))
             
             # Build system transform map for extension-based renaming
             system_transform_map = self._build_system_transform_map(path)
@@ -1906,22 +1962,55 @@ class TransFS(Passthrough):
         logger.info(f"GETATTR: full resolution for {xfull_path}")
         
         # Check for nested file map virtual directories BEFORE calling get_source_path
-        # This handles paths like /RetroBat/AcornAtom/bios where "bios/atom.zip" is the actual map
+        # This handles both system-level (e.g., /RetroBat/AcornAtom/bios) and client-level (e.g., /RetroBat/bios)
         from pathutils import find_map_entry, is_query_map, get_map_config
         path_parts = Path(xfull_path).parts
         mount_parts = Path(self.mount_path).parts
         rel_parts = path_parts[len(mount_parts):]
-        if len(rel_parts) == 3:  # /<client>/<system>/<map>
+        
+        # Check for client-level nested map directories (e.g., /RetroBat/bios where "bios/atom.zip" is a client-level map)
+        if len(rel_parts) == 2:  # /<client>/<map-or-system>
+            client_name = rel_parts[0]
+            potential_map = rel_parts[1]
+            client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if client:
+                # Check if this is a virtual directory for nested client-level maps
+                client_maps = client.get('maps', [])
+                is_virtual_dir = any(
+                    list(m.keys())[0].startswith(potential_map + '/')
+                    for m in client_maps
+                )
+                if is_virtual_dir:
+                    now = int(time.time())
+                    result = {
+                        'st_atime': now,
+                        'st_ctime': now,
+                        'st_mtime': now,
+                        'st_gid': 0,
+                        'st_uid': 0,
+                        'st_mode': 0o040755,
+                        'st_nlink': 2,
+                        'st_size': 4096,
+                    }
+                    logger.info(f"GETATTR: returning virtual directory for client-level nested map parent {potential_map}")
+                    return self._dict_to_entry_attributes(result, inode)
+        
+        # Check for system-level nested file map directories
+        if len(rel_parts) >= 3:  # /<client>/<system>/<map> or deeper like /<client>/<system>/<map>/<subdir>
             client_name = rel_parts[0]
             system_name = rel_parts[1]
-            map_name = rel_parts[2]
+            map_parts = rel_parts[2:]  # Everything after system (e.g., ['FDs', 'bios'])
+            map_path = '/'.join(map_parts)  # e.g., 'FDs/bios'
+            map_name = map_parts[0] if map_parts else ""  # e.g., 'FDs'
+            
             client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if client:
                 system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
                 if system_info:
-                    # Check if this is a virtual directory for nested file maps (e.g., "bios" from "bios/atom.zip")
+                    # Check if this is a virtual directory for nested file maps
+                    # e.g., "bios" from "bios/atom.zip" OR "FDs/bios" from "FDs/bios/atom.zip"
                     is_virtual_dir = any(
-                        list(m.keys())[0].startswith(map_name + '/')
+                        list(m.keys())[0].startswith(map_path + '/')
                         for m in system_info.get('maps', [])
                     )
                     if is_virtual_dir:
@@ -1936,14 +2025,15 @@ class TransFS(Passthrough):
                             'st_nlink': 2,
                             'st_size': 4096,
                         }
-                        logger.info(f"GETATTR: returning virtual directory for nested map parent {map_name}")
+                        logger.info(f"GETATTR: returning virtual directory for nested map parent {map_path}")
                         return self._dict_to_entry_attributes(result, inode)
                     
-                    # Also check if it's a query map directory
-                    map_entry = find_map_entry(system_info, map_name)
-                    map_config = get_map_config(map_entry)
-                    if is_query_map(map_config):
-                        now = int(time.time())
+                    # Also check if it's a query map directory (only for top-level map, not nested)
+                    if len(map_parts) == 1:
+                        map_entry = find_map_entry(system_info, map_name)
+                        map_config = get_map_config(map_entry)
+                        if is_query_map(map_config):
+                            now = int(time.time())
                         result = {
                             'st_atime': now,
                             'st_ctime': now,

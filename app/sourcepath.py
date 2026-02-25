@@ -162,6 +162,28 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if len(rel_parts) == 1:
         return config.get("filestore", "/mnt/filestorefs")
 
+    # Check for client-level file maps (e.g., /RetroBat/bios/atom.zip)
+    # These appear BEFORE the system level in the hierarchy
+    if len(rel_parts) >= 2:
+        potential_client_map_path = '/'.join(rel_parts[1:])
+        from pathutils import find_map_entry, get_map_config
+        client_maps = client.get('maps', [])
+        client_map_entry = find_map_entry({'maps': client_maps}, potential_client_map_path)
+        if client_map_entry:
+            map_config = get_map_config(client_map_entry)
+            if map_config and 'file' in map_config:
+                file_spec = map_config['file']
+                if isinstance(file_spec, dict):
+                    source_file_path = file_spec.get('path', '')
+                    filestore_root = config.get("filestore", "/mnt/filestorefs")
+                    # Construct full path: /mnt/filestorefs/Native/{path}
+                    full_path = os.path.join(filestore_root, "Native", source_file_path)
+                    logger.debug(f"DEBUG: client-level map {potential_client_map_path} -> {full_path}")
+                    
+                    # zip_mode: file means treat as opaque file, not browsable directory
+                    # Return as string path (not tuple) so it's treated as a regular file
+                    return full_path
+
     path_template_parts = Path(client['default_target_path']).parts
     system_info = get_system_info(
         client, list(rel_parts), path_template_parts
@@ -178,6 +200,31 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
             # This is a virtual query map directory - return None so GETATTR treats it as virtual
             logger.debug(f"DEBUG: {translated_path} is a query map directory, returning None")
             return None
+
+    # Check for nested file maps (e.g., FDs/bios/atom.zip)
+    # These appear as virtual nested paths like /RetroBat/AcornAtom/FDs/bios/atom.zip
+    if len(rel_parts) >= 4:
+        # Construct the map path from all parts after the system
+        map_parts = rel_parts[2:]  # e.g., ['FDs', 'bios', 'atom.zip']
+        map_path = '/'.join(map_parts)  # e.g., 'FDs/bios/atom.zip'
+        
+        # Check if there's a map entry matching this path
+        map_entry = find_map_entry(system_info, map_path)
+        if map_entry:
+            map_config = get_map_config(map_entry)
+            if map_config and 'file' in map_config:
+                file_spec = map_config['file']
+                if isinstance(file_spec, dict):
+                    source_file_path = file_spec.get('path', '')
+                    filestore_root = config.get("filestore", "/mnt/filestorefs")
+                    # Construct full path: /mnt/filestorefs/Native/{path}
+                    # The path in config already includes the full path from Native/
+                    full_path = os.path.join(filestore_root, "Native", source_file_path)
+                    logger.debug(f"DEBUG: nested file map {map_path} -> {full_path}")
+                    
+                    # zip_mode: file means treat as opaque file, not browsable directory
+                    # Return as string path so it's treated as a regular file
+                    return full_path
 
     # Try dynamic SoftwareArchives first
     dynamic_result = get_dynamic_source_path(logger, config, system_info, rel_parts)

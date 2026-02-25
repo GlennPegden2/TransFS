@@ -294,6 +294,23 @@ def parse_trans_path(config,root,full_path: str) -> list:
     if lev == 1:
         return list_systems(config, path, root_parts)
     if lev == 2:
+        # Check if this is a client-level nested map directory (e.g., /RetroBat/bios)
+        # or a system-level map listing (e.g., /RetroBat/AcornAtom)
+        client_name = path.parts[len(root_parts)]
+        potential_path = path.parts[len(root_parts) + 1]
+        client = next((c for c in config.get('clients', []) if c['name'] == client_name), None)
+        if client:
+            # Check if it's a client-level nested map
+            client_maps = client.get('maps', [])
+            is_client_nested_map = any(
+                list(m.keys())[0].startswith(potential_path + '/')
+                for m in client_maps
+            )
+            if is_client_nested_map:
+                # List contents of client-level nested map directory
+                return list_client_nested_map_entries(config, client, potential_path)
+        
+        # Otherwise, it's a system-level map listing
         return list_maps(config, path, root_parts)
     return list_dynamic_or_regular(config, path, root_parts)
 
@@ -302,16 +319,33 @@ def list_clients(config) -> list:
     return [client['name'] for client in config['clients']]
 
 def list_systems(config, path: Path, root_parts: tuple) -> list:
-    """List all systems for a client."""
+    """List all systems for a client, plus any client-level maps."""
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
+    
+    result = []
+    
+    # Add client-level maps (e.g., bios/atom.zip)
+    # For nested maps, only show the top-level directory (e.g., 'bios' from 'bios/atom.zip')
+    client_maps = client.get('maps', [])
+    seen_dirs = set()
+    for map_entry in client_maps:
+        map_name = list(map_entry.keys())[0]
+        # Extract the first component (e.g., 'bios' from 'bios/atom.zip')
+        top_level = map_name.split('/')[0]
+        if top_level not in seen_dirs:
+            result.append(top_level)
+            seen_dirs.add(top_level)
+    
+    # Add systems
     # Handle clients that don't have systems defined yet
-    if 'systems' not in client:
-        return []
-    # Return name for filesystem paths (display_name is only for UI)
-    return [system['name'] for system in client['systems']]
+    if 'systems' in client:
+        # Return name for filesystem paths (display_name is only for UI)
+        result.extend([system['name'] for system in client['systems']])
+    
+    return result
 
 def list_maps(config, path: Path, root_parts: tuple) -> list:
     """List all maps and dynamic SoftwareArchives for a system."""
@@ -424,8 +458,28 @@ def list_nested_map_entries(config, path: Path, root_parts: tuple, system: dict,
                 entries.append(remainder)
     return sorted(set(entries))
 
+def list_client_nested_map_entries(config, client: dict, parent_path: str) -> list:
+    """
+    List entries within a client-level virtual directory that contains nested maps.
+    E.g., for /RetroBat/bios, list atom.zip from 'bios/atom.zip'
+    """
+    entries = []
+    prefix = parent_path + '/'
+    for map_entry in client.get('maps', []):
+        map_name = list(map_entry.keys())[0]
+        if map_name.startswith(prefix):
+            # Extract the immediate child name
+            remainder = map_name[len(prefix):]
+            if '/' in remainder:
+                # It's a nested path; add the directory component
+                entries.append(remainder.split('/')[0])
+            else:
+                # It's a direct child file
+                entries.append(remainder)
+    return sorted(set(entries))
+
 def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
-    """List dynamic SoftwareArchives subfolders and their contents, or regular map subfolders."""
+    """List dynamic Software Archives subfolders and their contents, or regular map subfolders."""
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
@@ -439,10 +493,16 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     system = next((s for s in client['systems'] if s['name'] == system_name), None)
     if not system:
         return []
-    map_name = path.parts[len(root_parts) + 2]
+    
+    # For nested paths (e.g., /RetroBat/AcornAtom/FDs/bios), construct the full map path
+    rel_parts = path.parts[len(root_parts):]
+    map_parts = rel_parts[2:]  # Everything after client and system
+    map_path = '/'.join(map_parts)  # e.g., "FDs/bios"
+    map_name = map_parts[0] if map_parts else ""  # e.g., "FDs"
     
     # Check if this is a virtual directory containing nested maps
-    nested = list_nested_map_entries(config, path, root_parts, system, map_name)
+    # Pass the full map_path for deeper nesting
+    nested = list_nested_map_entries(config, path, root_parts, system, map_path)
     if nested:
         return nested
     

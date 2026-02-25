@@ -5,6 +5,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **Client-Level File Maps**: New feature enabling file maps at the client directory level
+  - File maps can now be defined at client level in addition to system level
+  - Example: `/mnt/transfs/RetroBat/bios/atom.zip` for shared BIOS files across all systems
+  - Supports nested map structure (e.g., `bios/atom.zip` appears as `/RetroBat/bios/` directory containing `atom.zip` file)
+  - Enables sharing common files (BIOS, ROMs, etc.) across multiple systems within a client
+  - Configure using `maps:` section at client level in client YAML files
+- **Nested File Maps Within Query Maps**: File maps can now be nested inside query map directories
+  - Enables placing static files alongside dynamic query-based content
+  - Example: `FDs/bios/atom.zip` creates virtual `bios/` subdirectory within `FDs/` query map containing BIOS file
+  - Supports arbitrary nesting depth (e.g., `FDs/bios/lr-mame/atom.zip`)
+  - Virtual directories are automatically created for nested map paths
+  - Useful for emulators that require BIOS files in specific subdirectories relative to ROM directory
 - **Query Map Structure Preservation**: New `preserve_structure` option for query maps
   - Set `preserve_structure: true` in map config to preserve source directory structure in virtual filesystem
   - Default: `false` (flattens all files into the map root)

@@ -5,16 +5,19 @@ name: RetroBat
 download_layout: source_based
 default_target_path: "{name}/{system_name}/roms/Atom/{maps}"
 
+# Client-level maps (appear at /mnt/transfs/RetroBat/)
+#maps:
+#  - bios/atom.zip:
+#      file:
+#        path: Acorn/Atom/Software/BIOS/atom.zip
+#        zip_mode: file  # Treat as a file, not a browsable directory
+
 systems: 
   - name: AcornAtom
     manufacturer: Acorn
     system_mapping_name: Atom
     local_base_path: Acorn/Atom
     maps:
-      - bios:
-          file:
-            path: Software/BIOS/atom.zip
-            unzip: true
       - HDs:
           query:
             source_dir: Software
@@ -30,6 +33,10 @@ systems:
             supports_zip: false
             supports_zaparoo: false
             preserve_exact_filenames: true
-            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
+#            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
+      - FDs/bios/atom.zip:
+          file:
+            path: Acorn/Atom/Software/BIOS/atom.zip
+            zip_mode: file  # Treat as a file, not a browsable directory
       
 
