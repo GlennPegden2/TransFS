@@ -3061,8 +3061,8 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
             sync_logger.setLevel(logging.INFO)
             
             # Create DatabaseSync instance and run full sync
-            config = read_config()
-            db_sync = DatabaseSync(config)
+            sync_config = read_config()
+            db_sync = DatabaseSync(sync_config)
             db_sync.full_sync(client_filter=client_name, system_filter=system_name)
             
             # Stream captured log output
