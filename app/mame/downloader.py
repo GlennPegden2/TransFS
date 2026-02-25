@@ -73,7 +73,8 @@ class MAMEDownloader:
         rom_file: ROMFile,
         target_folder: str,
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        force: bool = False
+        force: bool = False,
+        base_path_override: Optional[str] = None
     ) -> bool:
         """
         Download a single ROM file from a MAME software entry.
@@ -84,15 +85,19 @@ class MAMEDownloader:
         Args:
             software_entry: SoftwareEntry containing software metadata
             rom_file: ROMFile object with file metadata
-            target_folder: Target folder relative to download_root
+            target_folder: Target folder relative to base path
             progress_callback: Optional callback(bytes_downloaded, total_bytes)
             force: Force re-download even if file exists
+            base_path_override: Override download_root with this path
             
         Returns:
             True if download succeeded, False otherwise
         """
+        # Use override or default download root
+        base_path = base_path_override if base_path_override else self.download_root
+        
         # Build target path
-        target_dir = os.path.join(self.download_root, target_folder)
+        target_dir = os.path.join(base_path, target_folder)
         os.makedirs(target_dir, exist_ok=True)
         
         target_path = os.path.join(target_dir, rom_file.name)

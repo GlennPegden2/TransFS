@@ -33,11 +33,11 @@ sources:
     system: "atom"  # Matches atom_*.xml hash files in MAME repo
     media_types:
       - type: "cass"  # atom_cass.xml
-        target_folder: "Software/MAME/Cassettes"
+        folder: "Software/Sources/MAME/Cassettes"
       - type: "flop"  # atom_flop.xml
-        target_folder: "Software/MAME/Floppies"
+        folder: "Software/Sources/MAME/Floppies"
       - type: "rom"   # atom_rom.xml
-        target_folder: "Software/MAME/ROMs"
+        folder: "Software/Sources/MAME/ROMs"
     filters:
       # Optional filters to control which software is downloaded
       # publishers: ["Acornsoft", "Bug Byte"]  # Uncomment to filter by publisher

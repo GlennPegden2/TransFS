@@ -126,7 +126,8 @@ class MAMEDownloadManager:
         media_type: str,
         target_folder: str,
         filters: Optional[Dict] = None,
-        progress_callback: Optional[Callable[[str, int, int, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int, int, int], None]] = None,
+        base_path_override: Optional[str] = None
     ) -> Dict[str, any]:
         """
         Download all software for a specific system and media type.
@@ -134,12 +135,13 @@ class MAMEDownloadManager:
         Args:
             system: System name (e.g., "atom")
             media_type: Media type (e.g., "cass", "flop", "rom")
-            target_folder: Target folder relative to download_root
+            target_folder: Target folder path (relative or absolute depending on base_path_override)
             filters: Optional filters dict with keys:
                 - publishers: List of publisher names
                 - exclude_unsupported: bool
                 - year_range: tuple of (min_year, max_year)
             progress_callback: Optional callback(filename, file_num, total_files, bytes, total_bytes)
+            base_path_override: If provided, use this as the base path instead of download_root
             
         Returns:
             Dict with download statistics
@@ -153,6 +155,9 @@ class MAMEDownloadManager:
             'failed': 0,
             'downloaded_bytes': 0
         }
+        
+        # Determine the base path to use
+        base_path = base_path_override if base_path_override else self.download_root
         
         # Fetch hash file
         hash_content = self._get_hash_file(system, media_type)
@@ -185,7 +190,7 @@ class MAMEDownloadManager:
         
         self.logger.info(
             f"Downloading {total_files} files from {len(entries)} software entries "
-            f"for {system}_{media_type}"
+            f"for {system}_{media_type} to {base_path}/{target_folder}"
         )
         
         # Download files
@@ -195,7 +200,7 @@ class MAMEDownloadManager:
                 file_num += 1
                 
                 # Check if already exists
-                target_path = os.path.join(self.download_root, target_folder, rom_file.name)
+                target_path = os.path.join(base_path, target_folder, rom_file.name)
                 already_exists = os.path.exists(target_path)
                 
                 # Progress callback
@@ -223,7 +228,8 @@ class MAMEDownloadManager:
                     entry,  # Pass SoftwareEntry for nested ZIP download
                     rom_file,
                     target_folder,
-                    progress_callback=file_progress
+                    progress_callback=file_progress,
+                    base_path_override=base_path
                 )
                 
                 if success:
@@ -318,7 +324,8 @@ class MAMEDownloadManager:
                 
                 for media_config in media_types:
                     media_type = media_config.get('type')
-                    target_folder = media_config.get('target_folder')
+                    # Support both 'folder' (new) and 'target_folder' (legacy) field names
+                    target_folder = media_config.get('folder') or media_config.get('target_folder')
                     
                     if not media_type or not target_folder:
                         continue

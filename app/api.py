@@ -2306,7 +2306,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         for media_config in media_types:
                             media_type = media_config.get("type")
-                            target_folder = media_config.get("target_folder")
+                            target_folder = media_config.get("target_folder") or media_config.get("folder")
                             
                             if not media_type or not target_folder:
                                 yield f"      ⚠ Skipping invalid media_type config: {media_config}\n"
@@ -2322,12 +2322,16 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                     if bytes_dl >= total_bytes:
                                         pass  # Don't yield intermediate progress to avoid flooding
                                 
+                                # Calculate the correct base path (same as for DDL sources)
+                                mame_base_path = os.path.join(filestore, "Native", system_config.local_base_path)
+                                
                                 stats = manager.download_for_system(
                                     system,
                                     media_type,
                                     target_folder,
                                     filters,
-                                    progress_callback=progress_callback
+                                    progress_callback=progress_callback,
+                                    base_path_override=mame_base_path
                                 )
                                 
                                 # Check if download actually retrieved anything
