@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+- **Pack Installation System Name Matching**: Fixed system name resolution in pack installation
+  - Both client-based and client-agnostic pack installation endpoints now correctly match systems by actual name AND mapping name
+  - Resolves "System not found" errors when using mapping names like "Atom" instead of actual names like "AcornAtom"
+  - Enables proper pack installation for all system name variations
+  
+- **MAME Source Pack Installation**: Fixed pack installation to properly handle type:mame sources
+  - MAME sources are now correctly processed before URL normalization
+  - Eliminated spurious "no URL(s) configured" warnings for MAME sources
+  - Pack installation now properly detects and handles media_types and filters for MAME sources
+  - Downloads are performed using MAMEDownloadManager for checksummed verification
+
 ### Added
 - **Client-Level File Maps**: New feature enabling file maps at the client directory level
   - File maps can now be defined at client level in addition to system level
@@ -17,6 +29,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Supports arbitrary nesting depth (e.g., `FDs/bios/lr-mame/atom.zip`)
   - Virtual directories are automatically created for nested map paths
   - Useful for emulators that require BIOS files in specific subdirectories relative to ROM directory
+- **MAME Software List Downloader**: Integrated downloader for MAME verified software from Internet Archive
+  - Parses official MAME hash XML files from GitHub for metadata
+  - Downloads individual files from 70GB MAME collection (no need for full archive download)
+  - SHA1 checksum verification ensures file integrity
+  - Configurable filters: publisher, year range, support status
+  - Integrates as new source type (`type: mame`) in existing sources array
+  - RESTful API for programmatic access
+  - Hash file caching minimizes GitHub requests
+  - Supports all MAME systems with hash files (100+ systems)
+  - Documentation: [MAME_DOWNLOADER.md](docs/MAME_DOWNLOADER.md)
 - **Query Map Structure Preservation**: New `preserve_structure` option for query maps
   - Set `preserve_structure: true` in map config to preserve source directory structure in virtual filesystem
   - Default: `false` (flattens all files into the map root)

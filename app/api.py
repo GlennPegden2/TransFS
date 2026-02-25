@@ -2241,10 +2241,18 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
     archive_sources = config.get("archive_sources", {})
     ssl_ignore_hosts = config.get("ssl_ignore_hosts", [])
     
-    # Get the system's sources from archive_sources
+    # Get sources from both archive_sources (old) and source YAML (new)
     manufacturer_sources = archive_sources.get(system_config.manufacturer, {})
     system_sources = manufacturer_sources.get(system_config.canonical_name, {})
     available_sources = {s["name"]: s for s in system_sources.get("sources", [])}
+    
+    # Also load from source YAML (new config structure)
+    from config import read_source_config
+    source_config = read_source_config(system_config.manufacturer, system_config.canonical_name)
+    if source_config:
+        for source in source_config.get("sources", []):
+            available_sources[source["name"]] = source
+    
     base_path = os.path.join(filestore, "Native", system_config.local_base_path)
     
     async def run_and_stream():
@@ -2274,7 +2282,68 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                     
                     source_type = source.get("type")
                     
-                    # Normalize URLs (supports single url or multiple urls)
+                    # MAME sources don't have URLs - handle them first
+                    if source_type == "mame":
+                        # MAME Software List downloader
+                        from mame.manager import MAMEDownloadManager
+                        
+                        mame_config = config.get('mame', {})
+                        manager = MAMEDownloadManager(config)
+                        
+                        system = source.get("system")
+                        media_types = source.get("media_types", [])
+                        filters = source.get("filters")
+                        
+                        if not system:
+                            yield "⚠ MAME source missing 'system' field\n"
+                            continue
+                        
+                        if not media_types:
+                            yield "⚠ MAME source missing 'media_types' field\n"
+                            continue
+                        
+                        yield f"📥 Downloading '{source_name}' (MAME) - {len(media_types)} media type(s)...\n"
+                        
+                        for media_config in media_types:
+                            media_type = media_config.get("type")
+                            target_folder = media_config.get("target_folder")
+                            
+                            if not media_type or not target_folder:
+                                yield f"      ⚠ Skipping invalid media_type config: {media_config}\n"
+                                continue
+                            
+                            yield f"   🔍 Downloading MAME {system}_{media_type}...\n"
+                            
+                            try:
+                                # Download with progress callback
+                                def progress_callback(filename, file_num, total_files, bytes_dl, total_bytes):
+                                    percent = int(bytes_dl * 100 / total_bytes) if total_bytes > 0 else 0
+                                    # Only yield on completion
+                                    if bytes_dl >= total_bytes:
+                                        pass  # Don't yield intermediate progress to avoid flooding
+                                
+                                stats = manager.download_for_system(
+                                    system,
+                                    media_type,
+                                    target_folder,
+                                    filters,
+                                    progress_callback=progress_callback
+                                )
+                                
+                                yield f"      ✓ Downloaded {stats['downloaded']} file(s)\n"
+                                yield f"      ⏭ Skipped {stats['already_existed']} existing file(s)\n"
+                                if stats['failed'] > 0:
+                                    yield f"      ✗ Failed {stats['failed']} file(s)\n"
+                                yield f"      📊 Processed {stats['filtered_entries']} software entries\n"
+                                
+                            except Exception as e:  # pylint: disable=broad-except
+                                yield f"      ✗ MAME download failed: {str(e)}\n"
+                                logger.error(f"MAME download error: {e}", exc_info=True)
+                        
+                        yield "\n"
+                        continue
+                    
+                    # For other source types, normalize URLs (supports single url or multiple urls)
                     url_entries = normalize_source_urls(source)
                     if not url_entries:
                         yield f"⚠ Warning: Source '{source_name}' has no URL(s) configured\n"
@@ -2872,7 +2941,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                         yield f"      ✗ Move failed: {str(e)}\n"
                                 else:
                                     yield f"      ⚠ Source file not found: {from_name}\n"
-                        
+                    
                     else:
                         yield f"   ⚠ Source type '{source_type}' not yet supported for pack installation\n"
                 
@@ -3032,11 +3101,13 @@ async def api_install_packs_no_client(manufacturer: str, system_name: str, req: 
 
     for client in clients_config.get("clients", []):
         for system in client.get("systems", []):
+            system_actual = system.get("name")
             system_mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+            # Check both actual system name and mapping name
             if (system.get("manufacturer") == manufacturer and 
-                system_mapping_name == system_name):
+                (system_actual == system_name or system_mapping_name == system_name)):
                 client_name = client.get("name")
-                system_actual_name = system.get("name") or system_name
+                system_actual_name = system_actual
                 break
         if client_name:
             break
@@ -3539,4 +3610,165 @@ def get_system_statistics(system: str):
     
     except Exception as e:
         logger.error(f"Error getting system statistics: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+# ==================== MAME Software Downloads ====================
+
+@app.get("/mame/systems", tags=["MAME Downloads"])
+def get_mame_configured_systems():
+    """Get all systems with MAME sources configured."""
+    try:
+        from mame.manager import MAMEDownloadManager
+        
+        config = read_config()
+        manager = MAMEDownloadManager(config)
+        systems = manager.discover_systems_with_mame_sources()
+        
+        return {
+            'systems': systems,
+            'total': len(systems)
+        }
+    except Exception as e:
+        logger.error(f"Error getting MAME systems: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.get("/mame/status", tags=["MAME Downloads"])
+def get_mame_download_status():
+    """Get MAME download directory status and statistics."""
+    try:
+        from mame.manager import MAMEDownloadManager
+        
+        config = read_config()
+        manager = MAMEDownloadManager(config)
+        status = manager.get_download_status()
+        
+        return status
+    except Exception as e:
+        logger.error(f"Error getting MAME download status: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+class MAMEDownloadRequest(BaseModel):
+    """Request body for MAME downloads."""
+    system: str
+    media_type: str
+    target_folder: str
+    filters: dict = None
+
+
+@app.post("/mame/download", tags=["MAME Downloads"])
+def download_mame_software(request: MAMEDownloadRequest):
+    """
+    Download MAME software for a specific system and media type.
+    
+    Request body:
+    {
+        "system": "atom",
+        "media_type": "cass",
+        "target_folder": "Software/MAME/Cassettes",
+        "filters": {
+            "publishers": ["Acornsoft"],
+            "exclude_unsupported": true,
+            "year_range": [1980, 1990]
+        }
+    }
+    """
+    try:
+        from mame.manager import MAMEDownloadManager
+        
+        config = read_config()
+        manager = MAMEDownloadManager(config)
+        
+        stats = manager.download_for_system(
+            request.system,
+            request.media_type,
+            request.target_folder,
+            request.filters
+        )
+        
+        return {
+            'status': 'completed',
+            'stats': stats
+        }
+    except Exception as e:
+        logger.error(f"Error downloading MAME software: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.post("/mame/download-all", tags=["MAME Downloads"])
+def download_all_mame_software():
+    """Download all configured MAME software across all systems."""
+    try:
+        from mame.manager import MAMEDownloadManager
+        
+        config = read_config()
+        manager = MAMEDownloadManager(config)
+        
+        all_stats = manager.download_all_configured()
+        
+        return {
+            'status': 'completed',
+            'stats': all_stats,
+            'total_systems': len(all_stats)
+        }
+    except Exception as e:
+        logger.error(f"Error downloading all MAME software: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.get("/mame/hash/{system}/{media_type}", tags=["MAME Downloads"])
+def get_mame_hash_entries(system: str, media_type: str):
+    """
+    Get software entries from a MAME hash file without downloading.
+    
+    Useful for previewing what would be downloaded.
+    """
+    try:
+        from mame.manager import MAMEDownloadManager
+        from mame.hash_parser import MAMEHashParser
+        
+        config = read_config()
+        manager = MAMEDownloadManager(config)
+        
+        # Fetch hash file
+        hash_content = manager._get_hash_file(system, media_type)
+        if not hash_content:
+            return {'error': f'Hash file not found for {system}_{media_type}'}, 404
+        
+        # Parse entries
+        parser = MAMEHashParser()
+        entries = parser.parse_hash_file(hash_content)
+        
+        # Convert to serializable format
+        entries_data = []
+        for entry in entries:
+            entries_data.append({
+                'software_name': entry.software_name,
+                'description': entry.description,
+                'year': entry.year,
+                'publisher': entry.publisher,
+                'supported': entry.supported,
+                'interface': entry.interface,
+                'usage_info': entry.usage_info,
+                'rom_files': [
+                    {
+                        'name': rom.name,
+                        'size': rom.size,
+                        'crc': rom.crc,
+                        'sha1': rom.sha1
+                    }
+                    for rom in entry.rom_files
+                ]
+            })
+        
+        return {
+            'system': system,
+            'media_type': media_type,
+            'total_entries': len(entries),
+            'entries': entries_data
+        }
+    except Exception as e:
+        logger.error(f"Error getting MAME hash entries: {e}", exc_info=True)
         return {'error': str(e)}, 500
