@@ -247,18 +247,23 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
     manufacturer = None
     canonical_name = None
     local_base_path = None
+    actual_system_name = None
     
     for client in clients_config.get("clients", []):
         if client.get("name") == client_name:
             for system in client.get("systems", []):
-                if system.get("name") == system_name:
+                # Check both system name and system_mapping_name
+                system_actual_name = system.get("name")
+                system_mapping = system.get("system_mapping_name")
+                if system_actual_name == system_name or system_mapping == system_name:
                     manufacturer = system.get("manufacturer")
-                    canonical_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
+                    canonical_name = system_mapping or system.get("cananonical_system_name")
                     local_base_path = system.get("local_base_path")
+                    actual_system_name = system_actual_name
                     break
             break
     
-    if not manufacturer or not canonical_name or not local_base_path:
+    if not manufacturer or not canonical_name or not local_base_path or not actual_system_name:
         return None
     
     # Get packs from source config
@@ -285,7 +290,10 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
         if client.get("name") == client_name:
             client_layout = client.get("download_layout")
             for system in client.get("systems", []):
-                if system.get("name") == system_name:
+                # Check both system name and system_mapping_name
+                system_actual_name = system.get("name")
+                system_mapping = system.get("system_mapping_name")
+                if system_actual_name == system_name or system_mapping == system_name:
                     download_layout = system.get("download_layout", client_layout or "folder_based")
                     break
             break

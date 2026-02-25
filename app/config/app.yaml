@@ -32,6 +32,22 @@ database:
   pool_size: 20
   max_overflow: 10
 filestore: /mnt/filestorefs
+mame:
+  # MAME Software List downloader configuration
+  hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
+  hash_repo_branch: master
+  # IMPORTANT: archive_base_url must point to an Internet Archive collection containing MAME Software List files
+  # The files must match the filenames in the hash XML files (e.g., 747(bugbyte).hq.uef for Atom cassettes)
+  # Common collections:
+  #   - MAME Software Lists (cassettes, floppies): Search archive.org for "MAME Software List"
+  #   - MAME ROMs (arcade): Not suitable for Software Lists
+  # Example URL format: https://archive.org/download/collection-name/archive-name
+  # Internet Archive allows accessing files inside archives: /archive.zip/filename
+  archive_base_url: https://archive.org/download/mame-merged/mame-merged
+  download_root: /mnt/filestorefs/Downloads/MAME
+  verify_checksums: true
+  max_concurrent_downloads: 3
+  cache_hash_files: true
 mountpoint: /mnt/transfs
 ssl_ignore_hosts:
 - arcarc.nl

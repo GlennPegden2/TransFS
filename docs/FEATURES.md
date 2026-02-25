@@ -246,3 +246,59 @@ HDs:
 - **Caching**: Directory listings cached per-map for performance
 
 ---
+
+### 12. MAME Software List Downloader
+
+**Overview**: TransFS includes an integrated downloader for MAME Software List ROMs from the Internet Archive, automatically downloading verified software based on official MAME hash files.
+
+**Key Features**:
+- **Official MAME hash files** from GitHub for metadata
+- **Individual file downloads** from 70GB Internet Archive collection (no need to download entire archive)
+- **SHA1 checksum verification** to ensure file integrity
+- **Configurable filters** by publisher, year, and support status
+- **Hash file caching** to minimize GitHub requests
+- **RESTful API** for programmatic access
+
+**Configuration** (in source YAML files):
+```yaml
+sources:
+  - name: "Atom MAME Software"
+    type: mame
+    system: "atom"  # Matches atom_*.xml hash files
+    media_types:
+      - type: "cass"  # atom_cass.xml
+        target_folder: "Software/MAME/Cassettes"
+      - type: "flop"  # atom_flop.xml  
+        target_folder: "Software/MAME/Floppies"
+      - type: "rom"   # atom_rom.xml
+        target_folder: "Software/MAME/ROMs"
+    filters:
+      publishers: ["Acornsoft", "Bug Byte"]  # Optional
+      exclude_unsupported: true  # Skip marked as supported="no"
+      year_range: [1980, 1990]  # Optional
+```
+
+**API Endpoints**:
+- `GET /api/mame/systems` - List systems with MAME sources configured
+- `GET /api/mame/status` - Download directory statistics
+- `POST /api/mame/download` - Download specific system/media type
+- `POST /api/mame/download-all` - Download all configured software
+- `GET /api/mame/hash/{system}/{media_type}` - Preview without downloading
+
+**Download Process**:
+1. Fetch MAME hash XML from GitHub (e.g., `atom_cass.xml`)
+2. Parse software entries (description, publisher, year, checksums)
+3. Apply configured filters
+4. Download individual files from Internet Archive
+5. Verify SHA1 checksums
+6. Report statistics (downloaded, existing, failed)
+
+**Integration**:
+- Downloaded files automatically appear in database sync
+- Works with existing virtual filesystem maps
+- Supports metadata rulesets like regular sources
+- Client filtering applies normally
+
+**Documentation**: See [MAME_DOWNLOADER.md](MAME_DOWNLOADER.md) for full details.
+
+---
