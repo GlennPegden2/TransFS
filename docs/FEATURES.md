@@ -253,11 +253,27 @@ HDs:
 
 **Key Features**:
 - **Official MAME hash files** from GitHub for metadata
-- **Individual file downloads** from 70GB Internet Archive collection (no need to download entire archive)
+- **Nested ZIP extraction** from Internet Archive MAME Software List collection
 - **SHA1 checksum verification** to ensure file integrity
 - **Configurable filters** by publisher, year, and support status
 - **Hash file caching** to minimize GitHub requests
 - **RESTful API** for programmatic access
+
+**How It Works**:
+The Internet Archive stores MAME Software Lists in a nested ZIP structure:
+```
+MAME_0.228_Software_List_ROMs_merged.zip/
+  ├── atom_cass/
+  │   ├── 747.zip              (contains: 747(bugbyte).hq.uef)
+  │   ├── adventre.zip          (contains: adventure(programpower).hq.uef)
+  │   └── ...
+```
+
+The downloader:
+1. Downloads the specific software ZIP (e.g., `atom_cass/747.zip`)
+2. Extracts individual ROM files from within the ZIP
+3. Verifies SHA1 checksums on extracted files
+4. Only downloads what you need (not the entire 70GB archive)
 
 **Configuration** (in source YAML files):
 ```yaml
@@ -274,9 +290,14 @@ sources:
         target_folder: "Software/MAME/ROMs"
     filters:
       publishers: ["Acornsoft", "Bug Byte"]  # Optional
-      exclude_unsupported: true  # Skip marked as supported="no"
+      exclude_unsupported: false  # Include unsupported software (emulation status, not availability)
       year_range: [1980, 1990]  # Optional
 ```
+
+**Important Notes**:
+- The `supported="no"` attribute in MAME hash files refers to **emulation status** in MAME, not file availability
+- Set `exclude_unsupported: false` to download all software, regardless of MAME emulation status
+- Many systems have incomplete MAME emulation but fully functional files
 
 **API Endpoints**:
 - `GET /api/mame/systems` - List systems with MAME sources configured
@@ -289,9 +310,10 @@ sources:
 1. Fetch MAME hash XML from GitHub (e.g., `atom_cass.xml`)
 2. Parse software entries (description, publisher, year, checksums)
 3. Apply configured filters
-4. Download individual files from Internet Archive
-5. Verify SHA1 checksums
-6. Report statistics (downloaded, existing, failed)
+4. Download nested ZIP for each software entry from Internet Archive
+5. Extract ROM files from the ZIP
+6. Verify SHA1 checksums on extracted files
+7. Report statistics (downloaded, existing, failed)
 
 **Integration**:
 - Downloaded files automatically appear in database sync
