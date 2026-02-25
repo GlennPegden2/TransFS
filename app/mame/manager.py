@@ -220,6 +220,7 @@ class MAMEDownloadManager:
                         )
                 
                 success = self.downloader.download_file(
+                    entry,  # Pass SoftwareEntry for nested ZIP download
                     rom_file,
                     target_folder,
                     progress_callback=file_progress

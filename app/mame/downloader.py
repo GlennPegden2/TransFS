@@ -5,12 +5,14 @@ Downloads MAME software files from Internet Archive with checksum verification.
 """
 
 import os
+import io
 import hashlib
 import logging
 import requests
+import zipfile
 from typing import Optional, Callable
 from pathlib import Path
-from .hash_parser import ROMFile
+from .hash_parser import ROMFile, SoftwareEntry
 
 logger = logging.getLogger(__name__)
 
@@ -42,34 +44,46 @@ class MAMEDownloader:
         # Create download root if it doesn't exist
         os.makedirs(self.download_root, exist_ok=True)
     
-    def build_download_url(self, filename: str) -> str:
+    def build_download_url(self, softwarelist_name: str, software_name: str) -> str:
         """
-        Build download URL for a file.
+        Build download URL for a MAME software zip file.
+        
+        MAME Software Lists are organized as nested ZIPs:
+        archive.zip/atom_cass/747.zip (contains the actual ROM files)
         
         Internet Archive allows direct file access within zip archives using:
-        https://server/path/archive.zip/filename
+        https://server/path/archive.zip/subfolder/file.zip
         
         Args:
-            filename: Name of file to download
+            softwarelist_name: Software list name (e.g., "atom_cass")
+            software_name: Software name (e.g., "747")
             
         Returns:
-            Full download URL
+            Full download URL for the nested zip file
         """
-        # Internet Archive quirk: files inside zip archives can be accessed directly
-        return f"{self.archive_base_url}/{filename}"
+        from urllib.parse import quote
+        # Build path to nested zip: softwarelist/software.zip
+        nested_path = f"{softwarelist_name}/{software_name}.zip"
+        # URL encode the path (Internet Archive requires proper encoding)
+        return f"{self.archive_base_url}/{quote(nested_path, safe='')}"
     
     def download_file(
         self,
+        software_entry: SoftwareEntry,
         rom_file: ROMFile,
         target_folder: str,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         force: bool = False
     ) -> bool:
         """
-        Download a single ROM file.
+        Download a single ROM file from a MAME software entry.
+        
+        Downloads the nested ZIP file ({softwarelist}/{software}.zip),
+        extracts the ROM file from inside it, and verifies checksums.
         
         Args:
-            rom_file: ROMFile object with metadata
+            software_entry: SoftwareEntry containing software metadata
+            rom_file: ROMFile object with file metadata
             target_folder: Target folder relative to download_root
             progress_callback: Optional callback(bytes_downloaded, total_bytes)
             force: Force re-download even if file exists
@@ -91,28 +105,42 @@ class MAMEDownloader:
             else:
                 self.logger.warning(f"File exists but checksum mismatch: {rom_file.name}, re-downloading")
         
-        # Download
-        url = self.build_download_url(rom_file.name)
-        self.logger.info(f"Downloading {rom_file.name} from {url}")
+        # Build URL for nested zip file
+        url = self.build_download_url(software_entry.softwarelist_name, software_entry.software_name)
+        self.logger.info(f"Downloading {software_entry.software_name}.zip from {url}")
         
         try:
+            # Download the nested zip file
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
-            if total_size == 0:
-                total_size = rom_file.size  # Use expected size from hash
             
+            # Read zip content into memory
+            zip_content = io.BytesIO()
             downloaded = 0
             
-            with open(target_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        
-                        if progress_callback:
-                            progress_callback(downloaded, total_size)
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    zip_content.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    if progress_callback:
+                        progress_callback(downloaded, total_size if total_size > 0 else rom_file.size)
+            
+            # Extract ROM file from the zip
+            zip_content.seek(0)
+            with zipfile.ZipFile(zip_content, 'r') as zf:
+                # Find the ROM file in the zip
+                if rom_file.name not in zf.namelist():
+                    self.logger.error(f"ROM file '{rom_file.name}' not found in zip '{software_entry.software_name}.zip'")
+                    self.logger.debug(f"Available files in zip: {zf.namelist()}")
+                    return False
+                
+                # Extract to target location
+                with zf.open(rom_file.name) as rom_data:
+                    with open(target_path, 'wb') as f:
+                        f.write(rom_data.read())
             
             # Verify download
             if self.verify_checksums:
@@ -121,16 +149,36 @@ class MAMEDownloader:
                     os.remove(target_path)
                     return False
             
-            self.logger.info(f"Successfully downloaded: {rom_file.name}")
+            self.logger.info(f"Successfully downloaded and extracted: {rom_file.name}")
             return True
             
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Timeout downloading {software_entry.software_name}.zip from {url} (timeout: 30s)")
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            return False
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(f"Connection error downloading {software_entry.software_name}.zip: {e}")
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            return False
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"HTTP error downloading {software_entry.software_name}.zip: {e}")
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            return False
+        except zipfile.BadZipFile as e:
+            self.logger.error(f"Invalid zip file for {software_entry.software_name}.zip: {e}")
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            return False
         except requests.RequestException as e:
-            self.logger.error(f"Download failed for {rom_file.name}: {e}")
+            self.logger.error(f"Download failed for {software_entry.software_name}.zip: {type(e).__name__}: {e}")
             if os.path.exists(target_path):
                 os.remove(target_path)
             return False
         except Exception as e:
-            self.logger.error(f"Unexpected error downloading {rom_file.name}: {e}")
+            self.logger.error(f"Unexpected error downloading {software_entry.software_name}.zip: {type(e).__name__}: {e}")
             if os.path.exists(target_path):
                 os.remove(target_path)
             return False

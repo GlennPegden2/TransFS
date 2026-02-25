@@ -25,6 +25,7 @@ class ROMFile:
 @dataclass
 class SoftwareEntry:
     """Represents a MAME software entry from hash XML."""
+    softwarelist_name: str  # Software list name (e.g., "atom_cass")
     software_name: str  # Unique ID from <software name="">
     description: str
     year: Optional[str]
@@ -57,17 +58,20 @@ class MAMEHashParser:
             self.logger.error(f"Failed to parse XML: {e}")
             return []
         
+        # Extract software list name from root element
+        softwarelist_name = root.get('name', 'unknown')
+        
         entries = []
         
         for software in root.findall('.//software'):
-            entry = self._parse_software_entry(software)
+            entry = self._parse_software_entry(software, softwarelist_name)
             if entry:
                 entries.append(entry)
         
         self.logger.info(f"Parsed {len(entries)} software entries from hash file")
         return entries
     
-    def _parse_software_entry(self, software_elem) -> Optional[SoftwareEntry]:
+    def _parse_software_entry(self, software_elem, softwarelist_name: str) -> Optional[SoftwareEntry]:
         """Parse a single <software> element."""
         software_name = software_elem.get('name')
         if not software_name:
@@ -110,6 +114,7 @@ class MAMEHashParser:
             return None
         
         return SoftwareEntry(
+            softwarelist_name=softwarelist_name,
             software_name=software_name,
             description=description,
             year=year,

@@ -24,8 +24,9 @@ mame:
   hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
   hash_repo_branch: master
   
-  # Internet Archive MAME collection base URL
-  archive_base_url: https://ia801806.us.archive.org/12/items/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
+  # Internet Archive MAME Software List collection (NOT arcade ROMs)
+  # Files are stored in nested ZIP structure: archive.zip/{softwarelist}/{software}.zip
+  archive_base_url: https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
   
   # Local download directory
   download_root: /mnt/filestorefs/Downloads/MAME
@@ -385,24 +386,40 @@ app/mame/
 ### Download Flow
 
 1. **Fetch hash file** from GitHub (or cache)
-2. **Parse XML** to extract software entries
+2. **Parse XML** to extract software entries and software list name
 3. **Apply filters** (publisher, year, support status)
 4. **Check existing files** (skip already downloaded)
-5. **Download files** from Internet Archive
-6. **Verify checksums** (size + SHA1)
-7. **Report statistics** (downloaded, existing, failed)
+5. **Download nested ZIP** from Internet Archive (`{softwarelist}/{software}.zip`)
+6. **Extract ROM files** from downloaded ZIP
+7. **Verify checksums** (size + SHA1)
+8. **Report statistics** (downloaded, existing, failed)
 
 ### Internet Archive URL Pattern
 
-Files inside zip archives are accessed directly:
+The MAME Software List archive uses a **nested ZIP structure**:
+
 ```
-{archive_base_url}/{filename}
+MAME_0.228_Software_List_ROMs_merged.zip/
+  ├── atom_cass/
+  │   ├── 747.zip              (contains: 747(bugbyte).hq.uef)
+  │   ├── adventre.zip          (contains: adventure(programpower).hq.uef)
+  │   └── ...
+  ├── atom_flop/
+  └── ...
 ```
 
-Example:
+The downloader:
+1. Builds URL to nested ZIP: `{archive_base_url}/{softwarelist}%2F{software}.zip`
+2. Downloads the ZIP file into memory
+3. Extracts individual ROM files from the ZIP
+4. Verifies checksums on extracted files
+
+Example URL:
 ```
-https://ia801806.us.archive.org/12/items/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip/galaxian(bugbyte).hq.uef
+https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip/atom_cass%2F747.zip
 ```
+
+This downloads the `atom_cass/747.zip` file, which contains the actual ROM file `747(bugbyte).hq.uef`.
 
 ## References
 

@@ -5,6 +5,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **MAME Nested ZIP Download**: Fixed MAME downloader to handle Internet Archive's nested ZIP structure
+  - Updated download logic to download `{softwarelist}/{software}.zip` nested ZIP files
+  - Extracts individual ROM files from within the downloaded ZIP
+  - Properly URL-encodes nested paths (e.g., `atom_cass%2F747.zip`)
+  - Fixed `download_file()` method signature to accept both SoftwareEntry and ROMFile
+  - Added `softwarelist_name` field to SoftwareEntry dataclass
+  - Updated hash parser to extract software list name from XML root element
+  - Verified checksum validation works correctly with extracted files
+  - Resolves "404 Not Found" errors during MAME pack installation
+  
 - **MAME Source Configuration**: Fixed incorrect filter and archive URL configuration
   - Changed `exclude_unsupported` from `true` to `false` in Atom.yaml
   - The "supported" attribute in MAME hash files refers to emulation status in MAME, not file availability
