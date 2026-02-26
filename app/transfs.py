@@ -2371,6 +2371,59 @@ class TransFS(Passthrough):
                 logger.error(f"GETATTR: error getting attributes for {fspath}: {e}")
                 raise FUSEError(errno.ENOENT)
         
+        # Before giving up, check if this is a query map directory (virtual, no physical backing)
+        # This handles cases where get_source_path returns a path that doesn't exist
+        if isinstance(fspath, str) and not os.path.exists(fspath):
+            from pathutils import find_map_entry, is_query_map, get_map_config
+            
+            rel_path = os.path.relpath(xfull_path, self.mount_path)
+            rel_parts = [p for p in rel_path.split('/') if p and p != '.']
+            
+            # Check if this looks like a query map directory: /<client>/<category>/<system>/<map>
+            # or /<client>/<system>/<map> (without category paths)
+            if len(rel_parts) >= 3:
+                client_name = rel_parts[0]
+                client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                
+                if client:
+                    # Determine system name and map path based on whether client uses category paths
+                    has_category_paths = 'category_paths' in client
+                    
+                    if has_category_paths and len(rel_parts) >= 4:
+                        # Format: /<client>/<category>/<system>/<map>
+                        system_name = rel_parts[2]
+                        map_path = '/'.join(rel_parts[3:])
+                        map_parts = rel_parts[3:]
+                    else:
+                        # Format: /<client>/<system>/<map>
+                        system_name = rel_parts[1]
+                        map_path = '/'.join(rel_parts[2:])
+                        map_parts = rel_parts[2:]
+                    
+                    system_info = next((s for s in client.get('systems', []) if s['name'] == system_name), None)
+                    
+                    if system_info and len(map_parts) == 1:
+                        # Check if this is a query map (virtual directory)
+                        map_name = map_parts[0]
+                        map_entry = find_map_entry(system_info, map_name)
+                        map_config = get_map_config(map_entry)
+                        
+                        if is_query_map(map_config):
+                            # This is a virtual query map directory
+                            now = int(time.time())
+                            result = {
+                                'st_atime': now,
+                                'st_ctime': now,
+                                'st_mtime': now,
+                                'st_gid': 0,
+                                'st_uid': 0,
+                                'st_mode': 0o040755,
+                                'st_nlink': 2,
+                                'st_size': 4096,
+                            }
+                            logger.info(f"GETATTR: returning virtual directory for query map {map_name} (fallback)")
+                            return self._dict_to_entry_attributes(result, inode)
+        
         # If we can't handle it, raise ENOENT
         logger.error(f"GETATTR: unhandled case for inode={inode} fspath={fspath}")
         raise FUSEError(errno.ENOENT)

@@ -65,9 +65,12 @@ systems:
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
       - bios:
           category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios
-          file:
-            path: Software/BIOS/atom.zip
-            unzip: true
+          query:
+            source_dir: Software/BIOS
+            extensions:
+              - "*"
+            supports_zaparoo: false
+            preserve_exact_filenames: true
       - bios/atom.zip:
           category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios/atom.zip
           file:
