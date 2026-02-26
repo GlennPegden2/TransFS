@@ -671,7 +671,17 @@ class DatabaseSync:
                         extension_matches = ext in map_info['extensions'] or "*" in map_info['extensions']
                         
                         if extension_matches:
-                            # File extension matches this map
+                            # Check if file is under the map's source_dir
+                            source_dir = map_info['source_dir']
+                            # Normalize paths for comparison (handle both forward and back slashes)
+                            rel_path_normalized = relative_path.replace('\\', '/')
+                            source_dir_normalized = source_dir.replace('\\', '/').rstrip('/')
+                            
+                            # File must be under the source_dir to belong to this map
+                            if not rel_path_normalized.startswith(source_dir_normalized + '/'):
+                                continue  # File not in this map's directory, try next map
+                            
+                            # File extension matches this map AND it's in the right directory
                             preserve_exact = map_info.get('preserve_exact_filenames', False)
                             self._add_file_to_database(
                                 file_path, client_name, system_name, map_info['name'],
