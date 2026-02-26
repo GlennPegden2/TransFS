@@ -2198,6 +2198,39 @@ class TransFS(Passthrough):
             logger.debug("DEBUG getattr fallback: parent_path=%s, entries=%s, name=%s", parent_path, entries, name)
 
             if name in entries:
+                # Check if this is a category directory (level 2: /<client>/<category>)
+                path_parts = Path(xfull_path).parts
+                mount_parts = Path(self.mount_path).parts
+                rel_parts = path_parts[len(mount_parts):]
+                
+                if len(rel_parts) == 2:  # /<client>/<potential_category>
+                    client_name = rel_parts[0]
+                    category_name = rel_parts[1]
+                    client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+                    if client and 'category_paths' in client:
+                        # Check if this is a valid category directory
+                        category_paths = client.get('category_paths', {})
+                        # Check if the directory name appears in any category path template
+                        is_category = any(
+                            category_name in template
+                            for template in category_paths.values()
+                        )
+                        if is_category:
+                            now = int(time.time())
+                            result = {
+                                'st_atime': now,
+                                'st_ctime': now,
+                                'st_mtime': now,
+                                'st_gid': 0,
+                                'st_uid': 0,
+                                'st_mode': 0o040755,
+                                'st_nlink': 2,
+                                'st_size': 4096,
+                            }
+                            cache_getattr(xfull_path, parent_dir, result)
+                            logger.info(f"GETATTR: returning virtual directory for category {category_name}")
+                            return self._dict_to_entry_attributes(result, inode)
+                
                 # Check if it's a virtual directory (legacy ...Name... style or query map)
                 if name.startswith('...') and name.endswith('...'):
                     now = int(time.time())
