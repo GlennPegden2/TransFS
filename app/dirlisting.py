@@ -455,8 +455,13 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
             result.append(subdir)
             seen.add(subdir)
     
-    # Also add configured systems (in case database is empty or incomplete)
-    if 'systems' in client:
+    # Check if client uses category paths
+    has_category_paths = 'category_paths' in client and client['category_paths']
+    
+    # Only add configured systems if:
+    # 1. Client doesn't use category paths (legacy behavior), OR
+    # 2. Database is empty and we need fallback (but in category mode, systems should only appear under categories)
+    if not has_category_paths and 'systems' in client:
         for system in client['systems']:
             system_name = system['name']
             if system_name not in seen:
