@@ -666,7 +666,11 @@ class DatabaseSync:
                     # Try to match file to a map
                     matched = False
                     for map_info in map_configs:
-                        if ext in map_info['extensions']:
+                        # Check if extension matches: either literal match or wildcard "*"
+                        # Wildcard also matches files with no extension (only when "*" is used)
+                        extension_matches = ext in map_info['extensions'] or "*" in map_info['extensions']
+                        
+                        if extension_matches:
                             # File extension matches this map
                             preserve_exact = map_info.get('preserve_exact_filenames', False)
                             self._add_file_to_database(
