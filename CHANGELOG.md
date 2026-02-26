@@ -5,6 +5,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **Query Map Directory Access for Virtual Paths**: Fixed intermittent "No such file or directory" error for query map directories
+  - Query maps like ROMs, Tapes, FDs are purely database-driven with no physical filesystem backing
+  - Previously, when `get_source_path()` returned a non-existent physical path, `getattr()` would fall through to "unhandled case" error
+  - Added fallback logic in `getattr()` to detect query map directories with non-existent physical paths
+  - Returns virtual directory attributes (mode 0o040755) for these directories instead of raising ENOENT
+  - Ensures consistent access across category-based clients (RetroBat with ROMS/BIOS categories) and non-category clients (MiSTer)
+  - Verified all three maps (FDs, ROMs, Tapes) consistently accessible with 123+ ROM files
+  
 - **MAME Nested ZIP Download**: Fixed MAME downloader to handle Internet Archive's nested ZIP structure
   - Updated download logic to download `{softwarelist}/{software}.zip` nested ZIP files
   - Extracts individual ROM files from within the downloaded ZIP
