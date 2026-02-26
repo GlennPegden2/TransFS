@@ -417,6 +417,23 @@ def parse_trans_path(config,root,full_path: str) -> list:
     if db_subdirs:
         return db_subdirs
     
+    # If database query failed but we're at a category level, try to list systems
+    # that have maps with this category
+    if len(rel_path_parts) == 2:  # Client + Category level (e.g., RetroBat/ROMS)
+        possible_category = rel_path_parts[1]
+        result = []
+        if 'systems' in client:
+            for system in client['systems']:
+                # Check if any maps in this system have the matching category
+                for map_entry in system.get('maps', []):
+                    map_config = list(map_entry.values())[0]
+                    if isinstance(map_config, dict) and map_config.get('category') == possible_category:
+                        if system['name'] not in result:
+                            result.append(system['name'])
+                            break
+        if result:
+            return result
+    
     # Fallback to dynamic listing
     return list_dynamic_or_regular(config, path, root_parts)
 
@@ -458,9 +475,24 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
     # Check if client uses category paths
     has_category_paths = 'category_paths' in client and client['category_paths']
     
+    # If client uses category paths and database query returned nothing,
+    # fall back to listing category directories from configuration
+    if has_category_paths and not db_subdirs:
+        category_paths = client.get('category_paths', {})
+        for category_name, template in category_paths.items():
+            # Extract the category directory name from the template
+            # E.g., from "{name}/ROMS/{system_name}" extract "ROMS"
+            template_parts = template.split('/')
+            # Find the part after {name} but before {system_name}
+            for part in template_parts:
+                if part and not part.startswith('{') and not part.endswith('}'):
+                    if part not in seen:
+                        result.append(part)
+                        seen.add(part)
+                        break  # Only take the first non-variable part
+    
     # Only add configured systems if:
-    # 1. Client doesn't use category paths (legacy behavior), OR
-    # 2. Database is empty and we need fallback (but in category mode, systems should only appear under categories)
+    # 1. Client doesn't use category paths (legacy behavior)
     if not has_category_paths and 'systems' in client:
         for system in client['systems']:
             system_name = system['name']
