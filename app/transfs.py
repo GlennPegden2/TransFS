@@ -1095,17 +1095,19 @@ class TransFS(Passthrough):
                         logger.info(f"READDIR DATABASE: sent {sent_count} synthetic directory entries")
                         return
                 
-                # Otherwise, filter database entries against config
+                # Otherwise, filter database entries against config (if config specifies entries)
+                # If config_entries is empty, send all database entries (query map mode)
                 if db_entries:
-                    config_entries_set = set(config_entries)
+                    should_filter = len(config_entries) > 0
+                    config_entries_set = set(config_entries) if should_filter else set()
                     sent_count = 0
                     filtered_count = 0
                     for entry_id, (entry_name, stat_dict) in enumerate(db_entries, start=1):
                         if entry_id <= start_id:
                             continue
                         
-                        # Filter: only send entries that are allowed by config
-                        if entry_name not in config_entries_set:
+                        # Filter: only send entries that are allowed by config (if filtering is enabled)
+                        if should_filter and entry_name not in config_entries_set:
                             filtered_count += 1
                             continue
                             
