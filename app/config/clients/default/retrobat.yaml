@@ -63,16 +63,16 @@ systems:
             supports_zaparoo: false
             preserve_exact_filenames: true
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
-      - bios:
-          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios
+      - .:
+          category: bios  # Appears at /RetroBat/BIOS/AcornAtom
           query:
             source_dir: Software/BIOS/retrobat-bios-main
             extensions:
               - "*"
             supports_zaparoo: false
             preserve_exact_filenames: true
-      - bios/atom.zip:
-          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/bios/atom.zip
+      - atom.zip:
+          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/atom.zip
           file:
             path: Software/BIOS/atom.zip
             zip_mode: file  # Treat as a file, not a browsable directory
