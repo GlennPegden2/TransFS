@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import read_config
 from pathutils import (
     get_client, get_system_info, find_map_entry, get_map_config, 
-    is_query_map, get_query_config, resolve_virtual_base_path, 
+    is_query_map, is_flatten_map, get_query_config, resolve_virtual_base_path, 
     format_virtual_base_path
 )
 from transforms import build_transform_pipeline
@@ -149,6 +149,30 @@ class DatabaseSync:
                 if system.get("manufacturer") == manufacturer and system_canonical == canonical_name:
                     return system.get("download_layout", client_layout)
         return None
+
+    def _build_virtual_path(self, mount_path: str, virtual_base: str, map_name: str, 
+                            filename: str) -> str:
+        """
+        Build virtual path for a file, handling flatten maps specially.
+        
+        For flatten maps (map_name = "."), files appear directly under virtual_base.
+        For other maps, files appear under virtual_base/map_name/.
+        
+        Args:
+            mount_path: Mount point path (e.g., "/mnt/transfs")
+            virtual_base: Base viertual path (e.g., "RetroBat/BIOS/AcornAtom")
+            map_name: Name of the map (can be "." for flatten maps)
+            filename: Filename to add
+            
+        Returns:
+            Full virtual path
+        """
+        if is_flatten_map(map_name):
+            # Flatten map: files appear directly under virtual_base
+            return os.path.join(mount_path, virtual_base, filename)
+        else:
+            # Normal map: files appear under virtual_base/map_name/
+            return os.path.join(mount_path, virtual_base, map_name, filename)
 
     def _get_pack_context_for_file(self, manufacturer: str, canonical_name: str, source_path: str) -> Optional[dict]:
         system_key = f"{manufacturer}::{canonical_name}"
@@ -421,12 +445,7 @@ class DatabaseSync:
                 logger.debug(f"      Adding zip entry: {zip_internal_file} from {full_path}")
                 # Use tuple notation for zip files
                 virtual_filename = os.path.basename(zip_internal_file)
-                virtual_path = os.path.join(
-                    self.mount_path,
-                    virtual_base,
-                    map_name,
-                    virtual_filename
-                )
+                virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
                 
                 now = int(time.time())
                 
@@ -471,12 +490,7 @@ class DatabaseSync:
                                 continue  # Skip directories
                             
                             virtual_filename = os.path.basename(info.filename)
-                            virtual_path = os.path.join(
-                                self.mount_path,
-                                virtual_base,
-                                map_name,
-                                virtual_filename
-                            )
+                            virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
                             
                             now = int(time.time())
                             stat = os.stat(full_path)  # Get stats of the ZIP file
@@ -519,12 +533,7 @@ class DatabaseSync:
             try:
                 stat = os.stat(full_path)
                 virtual_filename = os.path.basename(full_path)
-                virtual_path = os.path.join(
-                    self.mount_path,
-                    virtual_base,
-                    map_name,
-                    virtual_filename
-                )
+                virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
                 
                 now = int(time.time())
                 
@@ -1011,12 +1020,7 @@ class DatabaseSync:
                     logger.info(f"      Renaming duplicate: {base_name}.{virtual_ext.lower()} → {virtual_filename}")
             
             # Build virtual path
-            virtual_path = os.path.join(
-                self.mount_path,
-                virtual_base,
-                map_name,
-                virtual_filename
-            )
+            virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
             
             now = int(time.time())
             
