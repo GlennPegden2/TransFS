@@ -257,11 +257,11 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         return dynamic_result
 
     # Handle flattened maps (.) - files appear directly in system folder
-    if len(rel_parts) >= 3:
+    if len(rel_parts) >= 4:  # client/category/system/filename
         flatten_map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == '.'), None)
         if flatten_map_entry:
             flatten_config = flatten_map_entry['.']
-            filename = rel_parts[2]
+            filename = rel_parts[3]  # For category paths: client/category/system/filename
             
             # Use query-based lookup for flattened maps
             if 'query' in flatten_config:
