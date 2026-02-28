@@ -964,6 +964,8 @@ class DatabaseSync:
                         duplicates_in_batch.append(entry)
             
             # Check database for existing files with this name in this directory
+            # IMPORTANT: Exclude the current file's source_path from duplicate check
+            # (a file shouldn't be considered a duplicate of itself on subsequent syncs)
             duplicates_in_db = []
             try:
                 # Query for exact match OR files with _N suffix pattern
@@ -972,13 +974,14 @@ class DatabaseSync:
                 query = """
                     SELECT filename FROM files 
                     WHERE client = %s AND system = %s AND map_name = %s 
+                    AND source_path != %s 
                     AND (filename = %s OR filename ~ %s)
                 """
                 # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
                 # Escape special regex characters in base_name
                 escaped_base = regex_module.escape(base_name)
                 pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
-                self.cursor.execute(query, (client_name, system_name, map_name, virtual_filename, pattern))
+                self.cursor.execute(query, (client_name, system_name, map_name, source_path, virtual_filename, pattern))
                 duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
             except Exception as e:
                 logger.warning(f"Failed to check for duplicates in DB: {e}")
