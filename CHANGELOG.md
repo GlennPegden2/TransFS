@@ -4,7 +4,45 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **Setup Clients connection profile API**: Added `/api/setup/connection-profile` to publish externally reachable SMB setup details (host, port, share, auth mode, commands).
+- **Setup Clients web tab**: Added a dedicated dashboard tab showing working SMB connection details for Windows and MiSTer clients.
+- **Dynamic Windows setup script download**: `/api/download/setup-windows` now injects host/port/share/username from the resolved setup profile.
+
+### Changed
+- **Advertised SMB endpoint (Approach B)**: Added optional compose environment overrides `SMB_ADVERTISE_HOST`, `SMB_ADVERTISE_PORT`, and `SMB_ADVERTISE_SHARE` for explicit client-facing setup values.
+- **Dev compose LAN host default**: Updated `SMB_ADVERTISE_HOST` default in compose for this environment so Setup Clients and generated scripts point to a network-reachable host.
+- **Project Housekeeping (Legacy Archival)**: Moved temporary development artifacts out of project root into `legacy/`
+  - Archived root-level one-off check/cleanup/test scripts used during feature development
+  - Archived abandoned Windows helper prototype at `legacy/tools/Tranfs_Retrobat_Config/`
+  - Kept runtime/production scripts in place (including `map_win_drive.ps1`)
+
 ### Fixed
+- **Setup Clients host fallback and script template resolution**: Fixed two setup onboarding issues for non-local clients
+  - Setup profile now avoids loopback-only hostnames and falls back to `AVAHI_HOSTNAME` (default `transfs.local`) when request host is `localhost`
+  - `/api/download/setup-windows` now searches multiple runtime-safe template paths, including `/app/setup_windows.ps1.template`
+  - Added `app/setup_windows.ps1.template` so the endpoint works correctly with the current `/app` bind mount layout
+
+- **Windows setup credential prompt reliability**: Improved script behavior when `Get-Credential` UI does not appear
+  - Added `Get-TransFSCredential` helper with fallback to console-based username/password entry
+  - Added clearer guidance when running in non-interactive hosts
+  - Replaced special bullet glyphs in credential instructions with ASCII to avoid mojibake in some terminals
+
+- **Windows setup mapping scope choice**: Added explicit mapping mode selection for non-standard SMB port setups
+  - Script now prompts for `current user` (no admin) vs `all users` (admin required)
+  - Stores `MappingScope` in registry defaults for future runs
+  - Shows clear admin guidance when all-users mapping is selected without elevation
+
+- **Windows setup write-access validation**: Fixed false-negative write checks on mapped drive root paths
+  - Script no longer hard-fails when `V:\` root is non-writable
+  - Now validates and tests write access on actual target path (`<share>\RetroBat\bios`)
+
+- **Windows setup Explorer refresh option**: Added optional Explorer restart after successful drive mapping
+  - Script now prompts to restart Explorer so newly mapped drives appear immediately in File Explorer
+  - Restart can now be queued and executed only after script completion to avoid closing setup windows launched from Explorer
+  - Uses detached PowerShell process control (`Stop-Process explorer` / `Start-Process explorer.exe`) with safe error handling
+  - Improved error message when target directory cannot be created
+
 - **Query Map Directory Access for Virtual Paths**: Fixed intermittent "No such file or directory" error for query map directories
   - Query maps like ROMs, Tapes, FDs are purely database-driven with no physical filesystem backing
   - Previously, when `get_source_path()` returned a non-existent physical path, `getattr()` would fall through to "unhandled case" error
@@ -12,6 +50,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Returns virtual directory attributes (mode 0o040755) for these directories instead of raising ENOENT
   - Ensures consistent access across category-based clients (RetroBat with ROMS/BIOS categories) and non-category clients (MiSTer)
   - Verified all three maps (FDs, ROMs, Tapes) consistently accessible with 123+ ROM files
+
+- **SMB Authenticated Access**: Fixed "Access is denied" error when connecting to SMB share with authentication
+  - Added `valid users = root` and `force user = root` directives to SMB TransFS share configuration  
+  - Dynamic configuration now automatically adds these when guest access is disabled
+  - Removed deprecated `write cache size` parameter causing Samba warnings
+  - SMB authenticated connections now work correctly from Windows clients
   
 - **MAME Nested ZIP Download**: Fixed MAME downloader to handle Internet Archive's nested ZIP structure
   - Updated download logic to download `{softwarelist}/{software}.zip` nested ZIP files
