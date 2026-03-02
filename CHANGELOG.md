@@ -28,6 +28,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added clearer guidance when running in non-interactive hosts
   - Replaced special bullet glyphs in credential instructions with ASCII to avoid mojibake in some terminals
 
+- **File-based map path resolution**: Fixed `boot.vhd` and other file-based maps not appearing in FUSE filesystem
+  - Extended `get_source_path()` in `app/sourcepath.py` to support modern `file: {path: ...}` configuration format
+  - Previously only handled legacy `default_source->source_filename` syntax
+  - Now properly handles both regular files and ZIP extraction with `unzip`/`zip_internal_file` options
+  - Resolves paths relative to system's `local_base_path` for correct physical file location
+
+- **SMB authenticated access configuration**: Fixed Windows clients denied access when using authenticated mode
+  - Added automatic injection of `valid users = root` and `force user = root` directives in `app/smb_config.py`
+  - Updated `smb.conf` to explicitly set authentication for TransFS share
+  - Removed deprecated `write cache size` parameter from SMB configuration
+  - All SMB operations now consistently run as root user to match FUSE mount permissions
+
+- **Docker startup sequence (SMB + FUSE)**: Fixed persistent "Permission denied" when SMB tried to access FUSE mount
+  - **Root cause**: SMB daemon was starting BEFORE FUSE filesystem mounted, causing `vfs_ChDir(/mnt/transfs) failed`
+  - Modified `docker-compose.yml` entrypoint to mount FUSE first, then wait for mount confirmation before starting SMB
+  - Added 30-second mountpoint validation with retry loop (`mountpoint -q /mnt/transfs`)
+  - Added error handling that exits container if FUSE fails to mount within timeout
+  - New startup order: Configure SMB → Start FUSE → Wait for mount → Start SMB services → Start web service
+
 - **Windows setup mapping scope choice**: Added explicit mapping mode selection for non-standard SMB port setups
   - Script now prompts for `current user` (no admin) vs `all users` (admin required)
   - Stores `MappingScope` in registry defaults for future runs
