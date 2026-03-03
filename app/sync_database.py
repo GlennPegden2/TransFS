@@ -1028,18 +1028,23 @@ class DatabaseSync:
                 target_virtual_dir = target_virtual_dir.rstrip('/').replace('\\', '/')
                 if relative_dir:
                     target_virtual_dir = os.path.join(target_virtual_dir, relative_dir).replace('\\', '/')
+                
+                # OPTIMIZATION: Use LIKE instead of regexp_replace to find files in the target directory
+                # This avoids expensive regex operation on every row
+                # Pattern: /path/to/dir/filename (start with dir, followed by /, then any filename)
+                dir_pattern = target_virtual_dir + '/%'
                 query = """
                     SELECT filename FROM files 
                     WHERE client = %s AND system = %s AND map_name = %s 
                     AND source_path != %s 
-                    AND regexp_replace(virtual_path, '/[^/]+$', '') = %s
+                    AND virtual_path LIKE %s
                     AND (filename = %s OR filename ~ %s)
                 """
                 # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
                 # Escape special regex characters in base_name
                 escaped_base = regex_module.escape(base_name)
                 pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
-                self.cursor.execute(query, (client_name, system_name, map_name, source_path, target_virtual_dir, virtual_filename, pattern))
+                self.cursor.execute(query, (client_name, system_name, map_name, source_path, dir_pattern, virtual_filename, pattern))
                 duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
             except Exception as e:
                 logger.warning(f"Failed to check for duplicates in DB: {e}")
