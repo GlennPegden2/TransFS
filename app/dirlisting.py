@@ -10,6 +10,11 @@ import logging
 
 logger = logging.getLogger("transfs")
 
+# Cache for empty directory queries (avoids repeated expensive table scans)
+# Maps virtual_prefix -> timestamp when cached
+_empty_subdir_cache = {}
+_EMPTY_CACHE_TTL = 5.0  # seconds
+
 
 def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
     """
@@ -31,6 +36,13 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         logger.debug(f"Skipping subdirectory query for file path: {virtual_prefix}")
         return []
     
+    # Check if we have cached empty result (avoids repeated expensive queries)
+    now = time.time()
+    if virtual_prefix in _empty_subdir_cache:
+        cache_time = _empty_subdir_cache[virtual_prefix]
+        if now - cache_time < _EMPTY_CACHE_TTL:
+            logger.info(f"CACHE HIT (empty): {virtual_prefix} (cached {now - cache_time:.1f}s ago)")
+            return []
     try:
         from db.connection import get_cursor, init_database
         from db import get_connection
@@ -138,6 +150,11 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                                         break  # Found the matching map
         except Exception as e:
             logger.warning(f"Filesystem fallback error in _get_subdirectories_from_db: {e}")
+        
+        # Cache empty results to avoid repeated expensive queries
+        if not subdirs:
+            _empty_subdir_cache[virtual_prefix] = time_module.time()
+            logger.info(f"CACHE STORE (empty): {virtual_prefix}")
         
         elapsed = time_module.time() - query_start
         if elapsed > 0.1:  # Log slow queries
