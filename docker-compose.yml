@@ -16,7 +16,9 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "max_connections=200"
+      - "max_connections=300"
+      - "-c"
+      - "shared_buffers=256MB"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U transfs"]
       interval: 5s

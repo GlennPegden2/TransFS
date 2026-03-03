@@ -36,9 +36,9 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         try:
             conn = get_connection()
             if conn is None:
-                init_database(pool_size=50, max_overflow=100)
+                init_database(pool_size=20, max_overflow=30)
         except:
-            init_database(pool_size=50, max_overflow=100)
+            init_database(pool_size=20, max_overflow=30)
         
         # Build the full path prefix, ensuring it ends with /
         if virtual_prefix.startswith('/'):

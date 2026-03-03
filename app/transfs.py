@@ -105,9 +105,9 @@ class TransFS(Passthrough):
         try:
             from db.connection import init_database as db_init_database
             # Increase pool size for concurrent FUSE operations (especially recursive directory listing)
-            # Default was 5+10=15, now 50+100=150 to handle multi-folder deletion operations
-            db_init_database(pool_size=50, max_overflow=100)
-            logger.info("Database connection initialized with pool_size=50, max_overflow=100")
+            # Default was 5+10=15, now 20+30=50 to handle multi-folder deletion without exceeding PostgreSQL limits
+            db_init_database(pool_size=20, max_overflow=30)
+            logger.info("Database connection initialized with pool_size=20, max_overflow=30")
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f"Failed to initialize database connection: {e}")
         

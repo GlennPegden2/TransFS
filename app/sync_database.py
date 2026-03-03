@@ -212,8 +212,8 @@ class DatabaseSync:
         logger.info("Initializing database connection")
         # init_database reads from environment variables set in docker-compose
         # Use larger pool for concurrent FUSE operations (especially recursive directory listing)
-        db_init_database(pool_size=50, max_overflow=100)
-        logger.info("Database schema initialized with pool_size=50, max_overflow=100")
+        db_init_database(pool_size=20, max_overflow=30)
+        logger.info("Database schema initialized with pool_size=20, max_overflow=30")
     
     def full_sync(self, client_filter: Optional[str] = None, system_filter: Optional[str] = None):
         """

@@ -740,7 +740,7 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
                 progress_queue = Queue()
                 
                 # Initialize database with larger pool for concurrent operations
-                init_database(pool_size=50, max_overflow=100)
+                init_database(pool_size=20, max_overflow=30)
                 
                 # Send initial message
                 yield f"data: {json.dumps({'status': 'starting', 'message': 'Initializing sync...'})}\n\n"
@@ -808,7 +808,7 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
         
         # Initialize database connection if needed (uses environment variables)
         # Use larger pool for concurrent operations
-        init_database(pool_size=50, max_overflow=100)
+        init_database(pool_size=20, max_overflow=30)
         
         # Create DatabaseSync instance and run full sync with filters
         db_sync = DatabaseSync(config)
