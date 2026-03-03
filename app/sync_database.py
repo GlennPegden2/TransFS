@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Batch processing configuration for performance optimization
 BATCH_SIZE = 1000  # Number of files to batch before flushing to database
+SKIP_DUPLICATE_CHECK = os.getenv("TRANSFS_SKIP_DUPLICATE_CHECK", "0") != "0"  # Disable duplicate checking for speed
 
 
 class DatabaseSync:
@@ -1020,34 +1021,38 @@ class DatabaseSync:
             # IMPORTANT: Exclude the current file's source_path from duplicate check
             # (a file shouldn't be considered a duplicate of itself on subsequent syncs)
             duplicates_in_db = []
-            try:
-                # Query for exact match OR files with _N suffix pattern
-                # This ensures we don't match "Action Man - Action Force.bin" when looking for "Action Man.bin"
-                import re as regex_module
-                target_virtual_dir = self._build_virtual_path(self.mount_path, virtual_base, map_name, "")
-                target_virtual_dir = target_virtual_dir.rstrip('/').replace('\\', '/')
-                if relative_dir:
-                    target_virtual_dir = os.path.join(target_virtual_dir, relative_dir).replace('\\', '/')
-                
-                # OPTIMIZATION: Use LIKE instead of regexp_replace to find files in the target directory
-                # This avoids expensive regex operation on every row
-                # Pattern: /path/to/dir/filename (start with dir, followed by /, then any filename)
-                dir_pattern = target_virtual_dir + '/%'
-                query = """
-                    SELECT filename FROM files 
-                    WHERE client = %s AND system = %s AND map_name = %s 
-                    AND source_path != %s 
-                    AND virtual_path LIKE %s
-                    AND (filename = %s OR filename ~ %s)
-                """
-                # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
-                # Escape special regex characters in base_name
-                escaped_base = regex_module.escape(base_name)
-                pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
-                self.cursor.execute(query, (client_name, system_name, map_name, source_path, dir_pattern, virtual_filename, pattern))
-                duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
-            except Exception as e:
-                logger.warning(f"Failed to check for duplicates in DB: {e}")
+            
+            # Skip expensive duplicate check if TRANSFS_SKIP_DUPLICATE_CHECK is enabled
+            # This speeds up bulk syncs significantly at the cost of skipping duplicate detection
+            if not SKIP_DUPLICATE_CHECK:
+                try:
+                    # Query for exact match OR files with _N suffix pattern
+                    # This ensures we don't match "Action Man - Action Force.bin" when looking for "Action Man.bin"
+                    import re as regex_module
+                    target_virtual_dir = self._build_virtual_path(self.mount_path, virtual_base, map_name, "")
+                    target_virtual_dir = target_virtual_dir.rstrip('/').replace('\\', '/')
+                    if relative_dir:
+                        target_virtual_dir = os.path.join(target_virtual_dir, relative_dir).replace('\\', '/')
+                    
+                    # OPTIMIZATION: Use LIKE instead of regexp_replace to find files in the target directory
+                    # This avoids expensive regex operation on every row
+                    # Pattern: /path/to/dir/filename (start with dir, followed by /, then any filename)
+                    dir_pattern = target_virtual_dir + '/%'
+                    query = """
+                        SELECT filename FROM files 
+                        WHERE client = %s AND system = %s AND map_name = %s 
+                        AND source_path != %s 
+                        AND virtual_path LIKE %s
+                        AND (filename = %s OR filename ~ %s)
+                    """
+                    # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
+                    # Escape special regex characters in base_name
+                    escaped_base = regex_module.escape(base_name)
+                    pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
+                    self.cursor.execute(query, (client_name, system_name, map_name, source_path, dir_pattern, virtual_filename, pattern))
+                    duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
+                except Exception as e:
+                    logger.warning(f"Failed to check for duplicates in DB: {e}")
             
             # Count total duplicates
             total_duplicates = len(duplicates_in_batch) + (1 if virtual_filename in duplicates_in_db else 0)

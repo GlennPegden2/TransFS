@@ -3072,8 +3072,12 @@ class TransFS(Passthrough):
         
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
-        # Use write path mapper to allow deletion in writable areas
+        
+        # Time the expensive operations to find bottleneck
+        t_get_path_start = time.time()
         real_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
+        t_get_path = time.time() - t_get_path_start
+        
         logger.debug("UNLINK: path=%s, real_path=%s", path, real_path)
         
         if real_path is None or not os.path.exists(real_path):
@@ -3081,11 +3085,14 @@ class TransFS(Passthrough):
             raise FUSEError(errno.ENOENT)
         
         try:
+            t_unlink_start = time.time()
             inode = os.lstat(real_path).st_ino
             os.unlink(real_path)
+            t_unlink = time.time() - t_unlink_start
+            
             elapsed = time.time() - start_time
             if elapsed > 0.1:  # Log slow operations
-                logger.info("UNLINK SLOW: %s took %.3fs", name_str, elapsed)
+                logger.info(f"UNLINK SLOW: {name_str} took {elapsed:.3f}s (get_path={t_get_path:.3f}s, unlink={t_unlink:.3f}s)")
         except OSError as exc:
             elapsed = time.time() - start_time
             logger.info("UNLINK ERROR: %s after %.3fs (errno=%s)", name_str, elapsed, exc.errno)
