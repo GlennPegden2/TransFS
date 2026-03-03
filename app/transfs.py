@@ -191,6 +191,13 @@ class TransFS(Passthrough):
         if hierarchy_level < 3:
             return False
         
+        # Exclude known physical filesystem paths from database mode
+        # BIOS folders contain physical files, not database-indexed ROM files
+        # Using database mode for these paths is wasteful (tries DB, gets 0, falls back to filesystem)
+        path_lower = path.lower()
+        if '/bios/' in path_lower or path_lower.endswith('/bios'):
+            return False
+        
         # Use database for all deep paths (Native and client paths)
         # Database results are filtered through parse_trans_path for config compliance
         return True
@@ -1535,8 +1542,28 @@ class TransFS(Passthrough):
             
             # For directories with full DirEntry cache, skip the expensive cache lookup
             if skip_cache_lookup:
-                # Fast path: we'll use DirEntry stat later
-                # NEW: Try system transform map first before expensive get_source_path
+                # Fast path: Pre-stat using DirEntry cache to avoid send-phase filesystem calls
+                # This is a HUGE optimization for all large directories (100+ files)
+                if entry_name in dir_entry_cache:
+                    # Pre-stat using DirEntry.is_dir() (fast), cache the result for send phase
+                    de = dir_entry_cache[entry_name]
+                    try:
+                        is_dir = de.is_dir(follow_symlinks=False)
+                        now = int(time.time())
+                        stat_dict = {
+                            'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                            'st_gid': 0, 'st_uid': 0,
+                            'st_mode': 0o040755 if is_dir else 0o100444,
+                            'st_nlink': 2 if is_dir else 1,
+                            'st_size': 4096 if is_dir else 0,
+                        }
+                        source_paths[entry_name] = ('cached', stat_dict)
+                        cache_hits += 1  # Count pre-caching as cache hit
+                        continue
+                    except OSError:
+                        pass  # Fall through to normal path
+                
+                # Try system transform map first before expensive get_source_path
                 if system_transform_map:
                     _, ext = os.path.splitext(entry_name)
                     ext = ext[1:].upper() if ext else ""
@@ -1603,6 +1630,9 @@ class TransFS(Passthrough):
         # Send entries with full attributes
         # Note: cache_hits was already accumulated in batch phase, don't reset it
         sent_count = 0
+        t_send_start = time.time()
+        t_attr_creation = 0.0
+        t_readdir_reply = 0.0
         
         for entry_id, entry_name in enumerate(virtual_entries, start=1):
             if entry_id <= start_id:
@@ -1912,9 +1942,12 @@ class TransFS(Passthrough):
                     logger.debug(f"READDIR: Pipeline found for {entry_name} but no output_extension")
             
             # Send entry to client
+            t_reply_start = time.time()
             if not pyfuse3.readdir_reply(token, display_name.encode('utf-8'), entry, entry_id):
+                t_readdir_reply += time.time() - t_reply_start
                 logger.info(f"READDIR: client buffer full after {sent_count} entries")
                 break
+            t_readdir_reply += time.time() - t_reply_start
             
             sent_count += 1
         
@@ -1939,10 +1972,11 @@ class TransFS(Passthrough):
                 sent_count += 1
 
         t_total = time.time() - t_start
+        t_send = time.time() - t_send_start
         hit_rate = (cache_hits / len(virtual_entries) * 100) if virtual_entries else 0
         logger.info(f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} "
                    f"cache_hits={cache_hits} hit_rate={hit_rate:.1f}% "
-                   f"parse={t_parse:.4f}s batch={t_batch:.4f}s total={t_total:.4f}s")
+                   f"parse={t_parse:.4f}s batch={t_batch:.4f}s send={t_send:.4f}s reply={t_readdir_reply:.4f}s total={t_total:.4f}s")
 
 
     async def getattr(self, inode: InodeT, ctx=None):
@@ -3068,7 +3102,7 @@ class TransFS(Passthrough):
         """Delete a file."""
         name_str = name.decode('utf-8') if isinstance(name, bytes) else name
         start_time = time.time()
-        logger.debug("UNLINK: called with name=%s", name_str)
+        logger.info(f"UNLINK START: {name_str}")
         
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
@@ -3091,8 +3125,7 @@ class TransFS(Passthrough):
             t_unlink = time.time() - t_unlink_start
             
             elapsed = time.time() - start_time
-            if elapsed > 0.1:  # Log slow operations
-                logger.info(f"UNLINK SLOW: {name_str} took {elapsed:.3f}s (get_path={t_get_path:.3f}s, unlink={t_unlink:.3f}s)")
+            logger.info(f"UNLINK COMPLETE: {name_str} total={elapsed:.3f}s get_path={t_get_path:.3f}s unlink={t_unlink:.3f}s")
         except OSError as exc:
             elapsed = time.time() - start_time
             logger.info("UNLINK ERROR: %s after %.3fs (errno=%s)", name_str, elapsed, exc.errno)
