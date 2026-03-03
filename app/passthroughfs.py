@@ -134,7 +134,18 @@ class Passthrough(pyfuse3.Operations):
                 continue
             
             log.debug(f"forgetting about inode {inode}")
-            assert inode not in self._inode_fd_map
+            
+            # Clean up any open file descriptors before forgetting inode
+            if inode in self._inode_fd_map:
+                log.warning(f"Closing open file descriptors for inode {inode} during forget")
+                fds_to_close = list(self._inode_fd_map[inode])
+                for fd in fds_to_close:
+                    try:
+                        os.close(fd)
+                    except OSError as e:
+                        log.warning(f"Error closing fd {fd} for inode {inode}: {e}")
+                del self._inode_fd_map[inode]
+            
             del self._lookup_cnt[inode]
             try:
                 del self._inode_path_map[inode]

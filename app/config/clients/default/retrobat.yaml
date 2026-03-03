@@ -7,12 +7,12 @@ default_target_path: "{name}/{system_name}/{maps}"
 
 # Category-based path templates
 # Maps with category="roms" will appear under ROMS/{system_name}
-# Maps with category="bios" will appear under BIOS/{system_name}
+# Maps with category="bios" will appear under bios/{system_name}
 category_paths:
   roms: "{name}/ROMS/{system_name}"
-  bios: "{name}/BIOS/{system_name}"
-  mame_roms: "{name}/mame/ROMS/{system_name}"
-  mame_bios: "{name}/mame/BIOS/{system_name}"
+  bios: "{name}/bios/{system_name}"
+  mame_roms: "{name}/mame/roms/{system_name}"
+  mame_bios: "{name}/mame/bios/{system_name}"
   shared_bios: "{name}/bios"  # Shared BIOS folder at client root
 
 systems: 
@@ -58,7 +58,7 @@ systems:
             preserve_exact_filenames: true
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
       - atom.zip:
-          category: bios  # Appears at /RetroBat/BIOS/AcornAtom/atom.zip
+          category: bios  # Appears at /RetroBat/bios/AcornAtom/atom.zip
           file:
             path: Software/BIOS/atom.zip
             zip_mode: file  # Treat as a file, not a browsable directory
@@ -69,13 +69,18 @@ systems:
     manufacturer: Shared
     local_base_path: Acorn/Atom  # Use Atom as base since it has the shared BIOS
     maps:
-      - bios:
+      - mame/ini/mamei.ini:
+          category: shared_bios
+          file:
+            path: Software/BIOS/mame/ini/mamei.ini
+            zip_mode: file
+      - .:
           category: shared_bios
           query:
             source_dir: Software/BIOS/retrobat-bios-main
             extensions:
               - "*"
-            preserve_structure: true  # Preserve subdirectories (mame/, dolphin-emu/, etc.)
+            preserve_structure: true
             supports_zaparoo: false
-            preserve_exact_filenames: true
+            preserve_exact_filenames: false
 

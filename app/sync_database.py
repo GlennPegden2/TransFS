@@ -211,8 +211,9 @@ class DatabaseSync:
         
         logger.info("Initializing database connection")
         # init_database reads from environment variables set in docker-compose
-        db_init_database()
-        logger.info("Database schema initialized")
+        # Use larger pool for concurrent FUSE operations (especially recursive directory listing)
+        db_init_database(pool_size=50, max_overflow=100)
+        logger.info("Database schema initialized with pool_size=50, max_overflow=100")
     
     def full_sync(self, client_filter: Optional[str] = None, system_filter: Optional[str] = None):
         """
@@ -356,6 +357,7 @@ class DatabaseSync:
                         'source_dir': query_cfg.get("source_dir", "Software"),
                         'extension_map': query_cfg.get("extension_map", {}),
                         'transforms': map_config.get("transforms", {}),
+                        'preserve_structure': query_cfg.get("preserve_structure", False),
                         'preserve_exact_filenames': query_cfg.get("preserve_exact_filenames", False)
                     })
                     logger.debug(f"    Found query map: {map_name}")
@@ -655,9 +657,19 @@ class DatabaseSync:
                         break
                 break
         
+        # Check if hidden files should be shown
+        show_hidden = self.config.get('show_hidden_files', True)
+        
         try:
-            for root, _, files in os.walk(base_path):
+            for root, dirnames, files in os.walk(base_path):
+                # Skip hidden directories if show_hidden_files is False
+                if not show_hidden:
+                    dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                
                 for filename in files:
+                    # Skip hidden files if show_hidden_files is False
+                    if not show_hidden and filename.startswith('.'):
+                        continue
                     file_path = os.path.join(root, filename)
                     relative_path = os.path.relpath(file_path, base_path)
                     
@@ -692,10 +704,14 @@ class DatabaseSync:
                             
                             # File extension matches this map AND it's in the right directory
                             preserve_exact = map_info.get('preserve_exact_filenames', False)
+                            preserve_structure = map_info.get('preserve_structure', False)
                             self._add_file_to_database(
                                 file_path, client_name, system_name, map_info['name'],
                                 ext, map_info['extension_map'], map_info['transforms'],
-                                preserve_exact, map_info['config'], client_config, system_config
+                                preserve_exact, map_info['config'], client_config, system_config,
+                                relative_path=relative_path,
+                                map_source_dir=source_dir,
+                                preserve_structure=preserve_structure
                             )
                             file_count += 1
                             matched = True
@@ -735,12 +751,22 @@ class DatabaseSync:
         last_log_time = time.monotonic()
         extensions_upper = {e.upper() for e in extensions}
         
+        # Check if hidden files should be shown
+        show_hidden = self.config.get('show_hidden_files', True)
+        
         try:
             if layout == "source_based":
                 # Recursive count
                 logger.info(f"      Counting files in {dir_path} (recursive)...")
-                for root, _, files in os.walk(dir_path):
+                for root, dirnames, files in os.walk(dir_path):
+                    # Skip hidden directories if show_hidden_files is False
+                    if not show_hidden:
+                        dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                    
                     for filename in files:
+                        # Skip hidden files if show_hidden_files is False
+                        if not show_hidden and filename.startswith('.'):
+                            continue
                         scanned += 1
                         _, ext = os.path.splitext(filename)
                         ext = ext[1:].upper() if ext else ""
@@ -835,9 +861,19 @@ class DatabaseSync:
                         break
                 break
         
+        # Check if hidden files should be shown
+        show_hidden = self.config.get('show_hidden_files', True)
+        
         try:
-            for root, _, files in os.walk(dir_path):
+            for root, dirnames, files in os.walk(dir_path):
+                # Skip hidden directories if show_hidden_files is False
+                if not show_hidden:
+                    dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                
                 for filename in files:
+                    # Skip hidden files if show_hidden_files is False
+                    if not show_hidden and filename.startswith('.'):
+                        continue
                     file_path = os.path.join(root, filename)
                     _, ext = os.path.splitext(filename)
                     ext_original = ext[1:].upper() if ext else ""
@@ -885,7 +921,9 @@ class DatabaseSync:
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
                              transforms: dict, preserve_exact_filenames: bool = False,
-                             map_config: dict = None, client_config: dict = None, system_config: dict = None):
+                             map_config: dict = None, client_config: dict = None, system_config: dict = None,
+                             relative_path: str = None, map_source_dir: str = None,
+                             preserve_structure: bool = False):
         """
         Add file to batch for processing.
         
@@ -927,6 +965,19 @@ class DatabaseSync:
             # Get file stats
             stat = os.stat(source_path)
             filename = os.path.basename(source_path)
+            relative_dir = ""
+
+            # Preserve source subdirectory structure when requested
+            # Example: source_dir=Software/BIOS/retrobat-bios-main, file=.../mame/ini/mame.ini
+            # becomes relative_dir=mame/ini
+            if preserve_structure and relative_path and map_source_dir:
+                rel_norm = relative_path.replace('\\', '/').strip('/')
+                src_norm = map_source_dir.replace('\\', '/').rstrip('/')
+                if rel_norm.startswith(src_norm + '/'):
+                    within_source = rel_norm[len(src_norm) + 1:]
+                    relative_dir = os.path.dirname(within_source).replace('\\', '/').strip('.')
+                    if relative_dir == '/':
+                        relative_dir = ""
             
             # Determine virtual extension (may be mapped)
             virtual_ext = extension_map.get(extension, extension)
@@ -949,13 +1000,15 @@ class DatabaseSync:
             
             # Handle duplicate filenames in the same directory
             # Check both the current batch AND the database for existing filenames
-            dir_key = f"{client_name}/{system_name}/{map_name}"
+            dir_key = f"{client_name}/{system_name}/{map_name}/{relative_dir}" if relative_dir else f"{client_name}/{system_name}/{map_name}"
             
             # Check in-memory batch for files with same base name (including suffixed versions)
             import re as regex_module
             duplicates_in_batch = []
             for entry in self.file_batch:
-                if f"{entry['client']}/{entry['system']}/{entry['map_name']}" == dir_key:
+                entry_dir = entry.get('relative_dir', '')
+                entry_dir_key = f"{entry['client']}/{entry['system']}/{entry['map_name']}/{entry_dir}" if entry_dir else f"{entry['client']}/{entry['system']}/{entry['map_name']}"
+                if entry_dir_key == dir_key:
                     entry_filename = entry['filename']
                     # Match exact filename OR filename_N.ext pattern
                     if (entry_filename == virtual_filename or 
@@ -971,17 +1024,22 @@ class DatabaseSync:
                 # Query for exact match OR files with _N suffix pattern
                 # This ensures we don't match "Action Man - Action Force.bin" when looking for "Action Man.bin"
                 import re as regex_module
+                target_virtual_dir = self._build_virtual_path(self.mount_path, virtual_base, map_name, "")
+                target_virtual_dir = target_virtual_dir.rstrip('/').replace('\\', '/')
+                if relative_dir:
+                    target_virtual_dir = os.path.join(target_virtual_dir, relative_dir).replace('\\', '/')
                 query = """
                     SELECT filename FROM files 
                     WHERE client = %s AND system = %s AND map_name = %s 
                     AND source_path != %s 
+                    AND regexp_replace(virtual_path, '/[^/]+$', '') = %s
                     AND (filename = %s OR filename ~ %s)
                 """
                 # Regex pattern: basename_digits.extension (e.g., "Action Man_2.bin")
                 # Escape special regex characters in base_name
                 escaped_base = regex_module.escape(base_name)
                 pattern = f"^{escaped_base}_[0-9]+\\.{virtual_ext.lower()}$"
-                self.cursor.execute(query, (client_name, system_name, map_name, source_path, virtual_filename, pattern))
+                self.cursor.execute(query, (client_name, system_name, map_name, source_path, target_virtual_dir, virtual_filename, pattern))
                 duplicates_in_db = [row[0] for row in self.cursor.fetchall()]
             except Exception as e:
                 logger.warning(f"Failed to check for duplicates in DB: {e}")
@@ -1023,7 +1081,10 @@ class DatabaseSync:
                     logger.info(f"      Renaming duplicate: {base_name}.{virtual_ext.lower()} → {virtual_filename}")
             
             # Build virtual path
-            virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
+            if relative_dir:
+                virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, os.path.join(relative_dir, virtual_filename).replace('\\', '/'))
+            else:
+                virtual_path = self._build_virtual_path(self.mount_path, virtual_base, map_name, virtual_filename)
             
             now = int(time.time())
             
@@ -1042,6 +1103,7 @@ class DatabaseSync:
                 'system': system_name,
                 'client': client_name,
                 'map_name': map_name,
+                'relative_dir': relative_dir,
                 'now': now,
             })
             

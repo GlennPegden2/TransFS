@@ -32,7 +32,7 @@ import py7zr
 import rarfile  # pylint: disable=import-error
 import requests
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from mega import Mega
 from pydantic import BaseModel
@@ -739,8 +739,8 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
                 # Create a queue for progress updates
                 progress_queue = Queue()
                 
-                # Initialize database
-                init_database()
+                # Initialize database with larger pool for concurrent operations
+                init_database(pool_size=50, max_overflow=100)
                 
                 # Send initial message
                 yield f"data: {json.dumps({'status': 'starting', 'message': 'Initializing sync...'})}\n\n"
@@ -807,7 +807,8 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
             logger.info(f"Starting database sync for filestore: {filestore_path}")
         
         # Initialize database connection if needed (uses environment variables)
-        init_database()
+        # Use larger pool for concurrent operations
+        init_database(pool_size=50, max_overflow=100)
         
         # Create DatabaseSync instance and run full sync with filters
         db_sync = DatabaseSync(config)
@@ -1894,8 +1895,9 @@ def file_metadata(path: str):
         
         try:
             # Initialize database connection pool if needed (uses environment variables)
+            # Use larger pool for concurrent FUSE operations
             try:
-                init_database()
+                init_database(pool_size=50, max_overflow=100)
             except Exception:
                 # If init fails, continue - connection pool might already be initialized
                 pass
@@ -3731,25 +3733,25 @@ def download_all_mame_software():
 def get_mame_hash_entries(system: str, media_type: str):
     """
     Get software entries from a MAME hash file without downloading.
-    
+
     Useful for previewing what would be downloaded.
     """
     try:
         from mame.manager import MAMEDownloadManager
         from mame.hash_parser import MAMEHashParser
-        
+
         config = read_config()
         manager = MAMEDownloadManager(config)
-        
+
         # Fetch hash file
         hash_content = manager._get_hash_file(system, media_type)
         if not hash_content:
             return {'error': f'Hash file not found for {system}_{media_type}'}, 404
-        
+
         # Parse entries
         parser = MAMEHashParser()
         entries = parser.parse_hash_file(hash_content)
-        
+
         # Convert to serializable format
         entries_data = []
         for entry in entries:
@@ -3771,7 +3773,7 @@ def get_mame_hash_entries(system: str, media_type: str):
                     for rom in entry.rom_files
                 ]
             })
-        
+
         return {
             'system': system,
             'media_type': media_type,
@@ -3781,3 +3783,131 @@ def get_mame_hash_entries(system: str, media_type: str):
     except Exception as e:
         logger.error(f"Error getting MAME hash entries: {e}", exc_info=True)
         return {'error': str(e)}, 500
+
+
+def _get_connection_profile(request: Request | None = None):
+    """Resolve externally reachable SMB endpoint for setup guidance and script generation."""
+    config = read_config()
+    smb_config = config.get('smb', {})
+
+    def _strip_port(hostname: str) -> str:
+        value = (hostname or '').strip()
+        if value and ':' in value and not value.startswith('['):
+            value = value.split(':', 1)[0]
+        return value
+
+    def _is_loopback(hostname: str) -> bool:
+        normalized = (hostname or '').strip().lower()
+        return normalized in {'localhost', '127.0.0.1', '::1'}
+
+    advertised_host = (os.getenv('SMB_ADVERTISE_HOST') or '').strip()
+    advertised_port = (os.getenv('SMB_ADVERTISE_PORT') or '').strip()
+    advertised_share = (os.getenv('SMB_ADVERTISE_SHARE') or '').strip()
+    avahi_hostname = (os.getenv('AVAHI_HOSTNAME') or '').strip()
+
+    host = _strip_port(advertised_host)
+    if not host and request is not None:
+        forwarded_host = (request.headers.get('x-forwarded-host') or '').split(',')[0].strip()
+        host = _strip_port(forwarded_host or (request.url.hostname or ''))
+
+    if _is_loopback(host):
+        fallback_host = _strip_port(avahi_hostname)
+        if fallback_host and not _is_loopback(fallback_host):
+            host = fallback_host
+
+    if not host:
+        host = _strip_port(avahi_hostname) or 'transfs.local'
+
+    port = advertised_port or '3445'
+    try:
+        port_num = int(str(port))
+        if port_num < 1 or port_num > 65535:
+            raise ValueError('invalid port range')
+        port = str(port_num)
+    except Exception:
+        port = '3445'
+
+    share_name = advertised_share or 'TransFS'
+    smb_username = smb_config.get('username', 'root')
+    allow_guest = bool(smb_config.get('allow_guest', False))
+
+    unc_path = f"\\\\{host}\\{share_name}"
+    requires_custom_port = port != '445'
+
+    return {
+        'host': host,
+        'port': port,
+        'share_name': share_name,
+        'unc_path': unc_path,
+        'requires_custom_port': requires_custom_port,
+        'smb_username': smb_username,
+        'allow_guest': allow_guest,
+        'source': 'env' if (advertised_host or advertised_port or advertised_share) else 'derived'
+    }
+
+
+@app.get("/setup/connection-profile", tags=["Setup"])
+def get_setup_connection_profile(request: Request):
+    """Return client setup connection details for Windows/Linux/MiSTer guidance."""
+    try:
+        profile = _get_connection_profile(request)
+
+        profile['windows_mapping_command'] = (
+            f"New-SmbMapping -LocalPath U: -RemotePath {profile['unc_path']} "
+            f"-TcpPort {profile['port']} -UserName {profile['smb_username']} -Persistent $true"
+        )
+
+        mister_opts = [
+            'rw',
+            'relatime',
+            'vers=3.1.1',
+            f"username={profile['smb_username']}",
+            'uid=0',
+            'gid=0'
+        ]
+        if profile['requires_custom_port']:
+            mister_opts.append(f"port={profile['port']}")
+
+        profile['mister_mount_example'] = (
+            f"//{profile['host']}/{profile['share_name']}/MiSTer on /media/fat/cifs "
+            f"type cifs ({','.join(mister_opts)})"
+        )
+        profile['download_script_url'] = '/api/download/setup-windows'
+
+        return profile
+    except Exception as e:
+        logger.error(f"Error building setup connection profile: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+
+
+@app.get("/download/setup-windows", tags=["Setup"])
+def download_setup_windows_script(request: Request):
+    """Download setup_windows.ps1 with values injected from the resolved connection profile."""
+    try:
+        profile = _get_connection_profile(request)
+
+        candidate_paths = [
+            Path('/app/setup_windows.ps1.template'),
+            Path(__file__).resolve().with_name('setup_windows.ps1.template'),
+            Path(__file__).resolve().parent.parent / 'setup_windows.ps1.template',
+        ]
+        template_path = next((path for path in candidate_paths if path.exists()), None)
+        if template_path is None:
+            return {'error': 'Setup script template not found'}, 404
+
+        template_content = template_path.read_text(encoding='utf-8')
+        script_content = template_content
+        script_content = script_content.replace('{{TRANSFS_SMB_USERNAME}}', profile['smb_username'])
+        script_content = script_content.replace('{{TRANSFS_SMB_HOST}}', profile['host'])
+        script_content = script_content.replace('{{TRANSFS_SMB_PORT}}', profile['port'])
+        script_content = script_content.replace('{{TRANSFS_SHARE_NAME}}', profile['share_name'])
+
+        return StreamingResponse(
+            iter([script_content]),
+            media_type="application/x-powershell",
+            headers={"Content-Disposition": "attachment; filename=setup_windows.ps1"}
+        )
+    except Exception as e:
+        logger.error(f"Error generating setup script: {e}", exc_info=True)
+        return {'error': str(e)}, 500
+

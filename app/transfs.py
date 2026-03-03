@@ -104,8 +104,10 @@ class TransFS(Passthrough):
         # Initialize database connection for queries
         try:
             from db.connection import init_database as db_init_database
-            db_init_database()
-            logger.info("Database connection initialized")
+            # Increase pool size for concurrent FUSE operations (especially recursive directory listing)
+            # Default was 5+10=15, now 50+100=150 to handle multi-folder deletion operations
+            db_init_database(pool_size=50, max_overflow=100)
+            logger.info("Database connection initialized with pool_size=50, max_overflow=100")
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f"Failed to initialize database connection: {e}")
         
@@ -644,6 +646,62 @@ class TransFS(Passthrough):
                 self._db_readdir_cache[path] = (time.time(), db_files)
             
             logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in database")
+            
+            # FILESYSTEM FALLBACK: Check for files that exist on disk but not in database
+            # This handles files created via FUSE writes that haven't been synced yet
+            if query_config:
+                source_dir = query_config.get('source_dir', '')
+                if source_dir:
+                    filestore = self.config.get('filestore', '/mnt/filestorefs')
+                    local_base = system_info.get('local_base_path', '')
+                    full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
+                    
+                    # Determine current subpath for preserve_structure mode
+                    rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
+                    subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                    current_subpath = '/'.join(subpath_parts)
+                    
+                    # Build full directory path to scan
+                    scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
+                    
+                    if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
+                        # Get existing database filenames for comparison
+                        db_filenames = {f.get('filename', '') for f in db_files}
+                        
+                        # Scan filesystem for files not in database
+                        fs_only_files = []
+                        try:
+                            show_hidden = self.config.get('show_hidden_files', True)
+                            for entry in os.scandir(scan_dir):
+                                if not show_hidden and entry.name.startswith('.'):
+                                    continue
+                                
+                                if entry.is_file():
+                                    if entry.name not in db_filenames:
+                                        # File exists on disk but not in database
+                                        try:
+                                            stat_info = entry.stat()
+                                            _, ext = os.path.splitext(entry.name)
+                                            ext_upper = ext[1:].upper() if ext else ''
+                                            
+                                            # Create a minimal file record for this filesystem file
+                                            fs_file_record = {
+                                                'filename': entry.name,
+                                                'source_path': entry.path,
+                                                'extension': ext_upper,
+                                                'size': stat_info.st_size,
+                                                'mtime': stat_info.st_mtime,
+                                            }
+                                            fs_only_files.append(fs_file_record)
+                                            logger.debug(f"READDIR_DB_ONLY: filesystem fallback found {entry.name} (not in database)")
+                                        except:
+                                            pass
+                        except Exception as e:
+                            logger.warning(f"READDIR_DB_ONLY: filesystem fallback error: {e}")
+                        
+                        if fs_only_files:
+                            logger.info(f"READDIR_DB_ONLY: filesystem fallback added {len(fs_only_files)} files not in database")
+                            db_files = list(db_files) + fs_only_files
 
             
             if not db_files:
@@ -668,19 +726,17 @@ class TransFS(Passthrough):
                     filename = file_record.get('filename', '')
                     source_path = file_record.get('source_path', '')
 
-                    # Extract relative directory parts from source_path
-                    rel_dir_parts = []
-                    if source_path and source_dir in source_path:
-                        try:
-                            parts = source_path.split('/')
-                            idx = parts.index(source_dir)
-                            relative_parts = parts[idx + 1:]
-                            if relative_parts:
-                                rel_dir_parts = relative_parts[:-1]
-                        except (ValueError, IndexError):
-                            rel_dir_parts = []
-
-                    rel_dir = '/'.join(rel_dir_parts)
+                    # Extract relative directory from source_path after source_dir.
+                    # source_dir can contain '/' (e.g., Software/BIOS/retrobat-bios-main),
+                    # so split/index by path segments is unreliable.
+                    rel_dir = ''
+                    if source_path:
+                        normalized_source = source_path.replace('\\', '/')
+                        normalized_source_dir = (source_dir or '').replace('\\', '/').strip('/')
+                        marker = f"/{normalized_source_dir}/"
+                        if marker in normalized_source:
+                            relative_after_source_dir = normalized_source.split(marker, 1)[1]
+                            rel_dir = os.path.dirname(relative_after_source_dir).replace('\\', '/').strip('/')
 
                     # Filter to the current subpath
                     if subpath:
@@ -879,24 +935,25 @@ class TransFS(Passthrough):
 
                             for file_record in db_files or []:
                                 source_path = file_record.get('source_path', '')
-                                rel_dir_parts = []
-                                if source_path and source_dir in source_path:
-                                    try:
-                                        parts = source_path.split('/')
-                                        idx = parts.index(source_dir)
-                                        relative_parts = parts[idx + 1:]
-                                        if relative_parts:
-                                            rel_dir_parts = relative_parts[:-1]
-                                    except (ValueError, IndexError):
-                                        rel_dir_parts = []
+                                rel_dir = ''
+                                if source_path:
+                                    normalized_source = source_path.replace('\\', '/')
+                                    normalized_source_dir = (source_dir or '').replace('\\', '/').strip('/')
+                                    marker = f"/{normalized_source_dir}/"
+                                    if marker in normalized_source:
+                                        relative_after_source_dir = normalized_source.split(marker, 1)[1]
+                                        rel_dir = os.path.dirname(relative_after_source_dir).replace('\\', '/').strip('/')
 
-                                rel_dir = '/'.join(rel_dir_parts)
                                 if rel_dir == subpath or rel_dir.startswith(subpath + '/'):
                                     return build_dir_stat()
 
             # Query database for this specific file
-            from db.queries import query_file_by_client_system_map_and_name
-            file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
+            # First try exact virtual_path (supports preserve_structure subpaths),
+            # then fall back to legacy client/system/map/filename lookup.
+            from db.queries import query_file_by_client_system_map_and_name, query_file_by_virtual_path
+            file_record = query_file_by_virtual_path(path)
+            if not file_record:
+                file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
             
             if not file_record:
                 logger.debug(f"GETATTR_DB_ONLY: file {filename} not found in database")
@@ -970,8 +1027,12 @@ class TransFS(Passthrough):
         
         try:
             # Query database for this specific file
-            from db.queries import query_file_by_client_system_map_and_name
-            file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
+            # First try exact virtual_path (supports preserve_structure subpaths),
+            # then fall back to legacy client/system/map/filename lookup.
+            from db.queries import query_file_by_client_system_map_and_name, query_file_by_virtual_path
+            file_record = query_file_by_virtual_path(path)
+            if not file_record:
+                file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
             
             if not file_record:
                 logger.debug(f"OPEN_DB_ONLY: file {filename} not found in database")
@@ -1053,6 +1114,9 @@ class TransFS(Passthrough):
                 # Get entries from database
                 db_entries = self.data_adapter.readdir_entries(path)
                 logger.info(f"READDIR DATABASE: got {len(db_entries) if db_entries else 0} entries from adapter")
+                
+                # NOTE: We don't filter stale entries here to avoid connection pool exhaustion
+                # Stale entries will be caught in GETATTR when individual files are accessed
                 
                 # If we have config_entries but no db_entries, or if config_entries don't look like files,
                 # create synthetic directory entries for them (handles category paths and map directories)
@@ -1357,11 +1421,14 @@ class TransFS(Passthrough):
                 # Get parent directory mtime once for cache validation
                 parent_dir_mtime = os.path.getmtime(parent_dir)
                 
+                # Check if hidden files should be shown
+                show_hidden = self.config.get('show_hidden_files', True)
+                
                 with os.scandir(parent_dir) as entries:
                     for entry in entries:
-                        # Skip hidden files (starting with .) - includes cache files
+                        # Skip hidden files (starting with .) if show_hidden_files is False
                         # Skip subdirectories that are extension folders (they'll be merged)
-                        if entry.name.startswith('.'):
+                        if not show_hidden and entry.name.startswith('.'):
                             continue
                         if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
                             continue  # Skip extension subdirs like BIN/, ROM/, A52/
@@ -1380,7 +1447,7 @@ class TransFS(Passthrough):
                 try:
                     with os.scandir(ext_subdir) as entries:
                         for entry in entries:
-                            if entry.name.startswith('.'):
+                            if not show_hidden and entry.name.startswith('.'):
                                 continue
                             if entry.name not in existing:
                                 logger.debug(f"READDIR: adding {entry.name} from extension subdir")
@@ -1998,7 +2065,21 @@ class TransFS(Passthrough):
                         TransFS._getattr_count += 1
                         TransFS._getattr_total_time += t_total
                         logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
-                        return self._dict_to_entry_attributes(stat_dict, inode)
+                        
+                        # Verify backend file still exists (prevent stale cache issues)
+                        backend_path = get_source_path(logger, self.config, self.mount_path, path)
+                        if isinstance(backend_path, str):
+                            if not os.path.exists(backend_path):
+                                logger.info(f"GETATTR DATABASE: entry found but backend file missing at {backend_path}, treating as ENOENT")
+                                stat_dict = None  # Fall through to full resolution which will return ENOENT
+                            else:
+                                return self._dict_to_entry_attributes(stat_dict, inode)
+                        elif isinstance(backend_path, tuple):
+                            # Virtual zip directory or similar - trust database
+                            return self._dict_to_entry_attributes(stat_dict, inode)
+                        else:
+                            logger.warning(f"GETATTR DATABASE: could not resolve backend path for {path}")
+                            stat_dict = None  # Fall through
                 else:
                     logger.info(f"GETATTR DATABASE: no entry found for {path}")
             except Exception as e:
@@ -2971,14 +3052,19 @@ class TransFS(Passthrough):
     async def mkdir(self, parent_inode: InodeT, name: bytes, mode, ctx):
         """Create a directory."""
         name_str = name.decode('utf-8') if isinstance(name, bytes) else name
+        logger.debug("MKDIR: called with name=%s, mode=%s", name_str, oct(mode))
+        
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
         
-        real_path = map_virtual_to_real(self.config, path)
+        # Use write path mapper for mkdir operations (allows creating in mapped write paths)
+        real_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
         if real_path is None:
+            logger.debug("MKDIR: EROFS (no write mapping)")
             raise FUSEError(errno.EROFS)
         
         os.makedirs(real_path, mode=mode, exist_ok=True)
+        logger.debug("MKDIR: created directory %s", real_path)
         attr = self._getattr(path=real_path)
         self._add_path(attr.st_ino, path)
         return attr
@@ -2990,8 +3076,9 @@ class TransFS(Passthrough):
         
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
-        real_path = map_virtual_to_real(self.config, path)
-        logger.debug("UNLINK: real_path=%s", real_path)
+        # Use write path mapper to allow deletion in writable areas
+        real_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
+        logger.debug("UNLINK: path=%s, real_path=%s", path, real_path)
         
         if real_path is None or not os.path.exists(real_path):
             logger.debug("UNLINK: ENOENT")
@@ -3005,6 +3092,36 @@ class TransFS(Passthrough):
         
         if inode in self._lookup_cnt:
             self._forget_path(inode, path)
+    async def rmdir(self, parent_inode: InodeT, name: bytes, ctx):
+        """Delete a directory."""
+        name_str = name.decode('utf-8') if isinstance(name, bytes) else name
+        logger.debug("RMDIR: called with name=%s", name_str)
+        
+        parent_path = self._inode_to_path(parent_inode)
+        path = os.path.join(parent_path, name_str)
+        # Use write path mapper to allow deletion in writable areas
+        real_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
+        logger.debug("RMDIR: path=%s, real_path=%s", path, real_path)
+        
+        if real_path is None or not os.path.exists(real_path):
+            logger.debug("RMDIR: ENOENT")
+            raise FUSEError(errno.ENOENT)
+        
+        try:
+            inode = os.lstat(real_path).st_ino
+            
+            # Check if real_path is actually a file (virtual zip directory case)
+            if os.path.isfile(real_path):
+                logger.info("RMDIR: virtual directory is actually a file (zip browsing), deleting file: %s", real_path)
+                os.unlink(real_path)
+            else:
+                os.rmdir(real_path)  # Will fail with ENOTEMPTY if directory not empty
+        except OSError as exc:
+            logger.debug("RMDIR: OSError errno=%s", exc.errno)
+            raise FUSEError(exc.errno)
+        
+        if inode in self._lookup_cnt:
+            self._forget_path(inode, path)
 
     def getxattr(self, inode: InodeT, name: str, ctx):
         """
@@ -3012,6 +3129,25 @@ class TransFS(Passthrough):
         Since we're a translation layer, we don't support xattrs.
         """
         raise FUSEError(errno.ENODATA)
+
+    async def access(self, inode: InodeT, mode: int, ctx):
+        """
+        Check if operation is allowed.
+        For a virtual filesystem, we allow all operations.
+        """
+        logger.debug("ACCESS: inode=%s mode=%s", inode, oct(mode))
+        return True
+
+    async def statfs(self, ctx):
+        """Return filesystem statistics from the underlying filestore."""
+        stat_ = pyfuse3.StatvfsData()
+        statfs = os.statvfs('/mnt/filestorefs')
+
+        for attr in ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail',
+                     'f_files', 'f_ffree', 'f_favail', 'f_namemax'):
+            setattr(stat_, attr, getattr(statfs, attr))
+
+        return stat_
 
 
 async def main_async(mount_path: str, root_path: str):
@@ -3031,8 +3167,10 @@ async def main_async(mount_path: str, root_path: str):
     fuse_options.add('fsname=transfs')
     fuse_options.add('allow_other')
     fuse_options.discard('default_permissions')
+    fuse_options.discard('ro')  # Ensure read-only is not set
 
     logger.info(f"Mounting TransFS at {mount_path} with root {root_path}")
+    logger.info(f"FUSE options: {fuse_options}")
     pyfuse3.init(fs, mount_path, fuse_options)
 
     # Start cache warmer

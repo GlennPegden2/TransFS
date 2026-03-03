@@ -1,0 +1,752 @@
+<# 
+=============================================================================
+TransFS RetroBat BIOS Setup Script
+=============================================================================
+
+This script automates the setup of RetroBat BIOS files on a TransFS share.
+
+DEFAULT CONFIGURATION (resolved by TransFS setup profile):
+  • SMB Server Host:     {{TRANSFS_SMB_HOST}}
+  • SMB Server Username: {{TRANSFS_SMB_USERNAME}}
+  • SMB Server Port:     {{TRANSFS_SMB_PORT}}
+  • Default Share Name:  {{TRANSFS_SHARE_NAME}}
+
+USAGE:
+  1. Download this script to your Windows machine
+  2. Open PowerShell as Administrator
+  3. Run: .\setup_windows.ps1
+  4. Follow the on-screen prompts
+
+For more information, visit your TransFS web UI at:
+  http://transfs.local:8000/
+  
+=============================================================================
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$RegistryRoot = "HKCU:\Software\TransFS\RetroBatSync"
+
+# Configuration defaults (from TransFS setup profile)
+$DefaultSmbHost = "{{TRANSFS_SMB_HOST}}"
+$DefaultSmbUsername = "{{TRANSFS_SMB_USERNAME}}"
+$DefaultSmbPort = "{{TRANSFS_SMB_PORT}}"
+$DefaultShareName = "{{TRANSFS_SHARE_NAME}}"
+$script:RestartExplorerAfterExit = $false
+
+function Write-Info([string]$Message) { Write-Host "[INFO] $Message" -ForegroundColor Cyan }
+function Write-Ok([string]$Message) { Write-Host "[ OK ] $Message" -ForegroundColor Green }
+function Write-WarnMsg([string]$Message) { Write-Host "[WARN] $Message" -ForegroundColor Yellow }
+function Write-ErrMsg([string]$Message) { Write-Host "[ERR ] $Message" -ForegroundColor Red }
+
+function Get-StoredSettings {
+	$result = @{}
+	
+	if (-not (Test-Path $RegistryRoot)) {
+		return $result
+	}
+
+	try {
+		$props = Get-ItemProperty -Path $RegistryRoot -ErrorAction SilentlyContinue
+		if (-not $props) {
+			return $result
+		}
+		
+		# Safely access each property using PSObject.Properties
+		$propNames = @('Mode', 'ShareRoot', 'DriveLetter', 'ServerName', 'ShareName', 'SmbPort', 'MappingScope')
+		foreach ($propName in $propNames) {
+			$propValue = $props.PSObject.Properties.Item($propName)
+			if ($propValue -ne $null) {
+				$result[$propName] = $propValue.Value
+			}
+		}
+	}
+	catch {
+		# If any error occurs reading registry, return empty defaults
+		return $result
+	}
+
+	return $result
+}
+
+function Save-StoredSettings([hashtable]$Settings) {
+	if (-not (Test-Path $RegistryRoot)) {
+		New-Item -Path $RegistryRoot -Force | Out-Null
+	}
+
+	foreach ($key in $Settings.Keys) {
+		New-ItemProperty -Path $RegistryRoot -Name $key -Value $Settings[$key] -PropertyType String -Force | Out-Null
+	}
+}
+
+function Prompt-WithDefault([string]$Prompt, [string]$Default = "") {
+	if ([string]::IsNullOrWhiteSpace($Default)) {
+		return Read-Host $Prompt
+	}
+
+	$value = Read-Host "$Prompt [$Default]"
+	if ([string]::IsNullOrWhiteSpace($value)) {
+		return $Default
+	}
+	return $value
+}
+
+function Restart-ExplorerIfRequested() {
+	Write-Info "[CHECKPOINT] Restart-ExplorerIfRequested called"
+	Write-Info ""
+	Write-Info "For the new mapped drive to be visible in Windows Explorer, it needs to be restarted."
+	$restartChoice = Prompt-WithDefault "Restart Windows Explorer after setup completes? (Y/N)" "N"
+	if ($restartChoice.ToUpperInvariant() -ne "Y") {
+		Write-Info "[CHECKPOINT] User declined Explorer restart"
+		return
+	}
+
+	$script:RestartExplorerAfterExit = $true
+	Write-Ok "Explorer restart queued for script completion."
+	Write-Info "[CHECKPOINT] Explorer restart queued for end-of-script"
+}
+
+function Invoke-PendingExplorerRestart() {
+	if (-not $script:RestartExplorerAfterExit) {
+		return
+	}
+
+	try {
+		Write-Info "[CHECKPOINT] Scheduling Explorer restart after script exit"
+		$cmd = 'Start-Sleep -Seconds 1; Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 800; Start-Process explorer.exe | Out-Null'
+		Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-Command", $cmd) | Out-Null
+		Write-Ok "Explorer restart scheduled."
+		Write-Info "[CHECKPOINT] Explorer restart scheduled in detached process"
+	}
+	catch {
+		Write-WarnMsg "Failed to schedule Explorer restart: $($_.Exception.Message)"
+		Write-WarnMsg "You can restart Explorer manually from Task Manager if needed."
+		Write-Info "[CHECKPOINT] Explorer restart scheduling failed"
+	}
+}
+
+function Get-TransFSCredential([string]$DefaultUserName) {
+	$creds = $null
+	try {
+		$creds = Get-Credential -Message "Enter TransFS SMB credentials" -UserName $DefaultUserName
+	}
+	catch {
+		$creds = $null
+	}
+
+	if ($creds) {
+		return $creds
+	}
+
+	Write-WarnMsg "Credential dialog unavailable/cancelled. Falling back to console credential entry."
+	$username = Prompt-WithDefault "Enter SMB username" $DefaultUserName
+	if ([string]::IsNullOrWhiteSpace($username)) {
+		return $null
+	}
+
+	$securePassword = Read-Host "Enter SMB password" -AsSecureString
+	if (-not $securePassword) {
+		return $null
+	}
+
+	try {
+		return New-Object System.Management.Automation.PSCredential($username, $securePassword)
+	}
+	catch {
+		return $null
+	}
+}
+
+function Remove-StaleSmbMappings([string]$LocalPath, [string]$RemotePath) {
+	try {
+		$existingMappings = @(Get-SmbMapping -ErrorAction SilentlyContinue | Where-Object {
+			$_.LocalPath -eq $LocalPath -or $_.RemotePath -eq $RemotePath
+		})
+
+		foreach ($mapping in $existingMappings) {
+			Write-Info "Removing existing SMB mapping: $($mapping.LocalPath) -> $($mapping.RemotePath)"
+			Remove-SmbMapping -LocalPath $mapping.LocalPath -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+		}
+	}
+	catch {
+		Write-WarnMsg "Could not fully clear previous SMB mappings. Continuing with new mapping attempt."
+	}
+}
+
+function New-TransFSSmbMappingWithFallback(
+	[string]$LocalPath,
+	[string]$RemotePath,
+	[int]$SmbPort,
+	[pscredential]$Credential,
+	[bool]$UseGlobalMapping,
+	[string]$ServerName,
+	[string]$DefaultUserName
+) {
+	$userCandidates = @(
+		$Credential.UserName,
+		$DefaultUserName,
+		"$ServerName\$DefaultUserName",
+		".\$DefaultUserName"
+	) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+	$lastError = $null
+
+	foreach ($candidateUser in $userCandidates) {
+		$attemptCredential = $Credential
+		if ($candidateUser -ne $Credential.UserName) {
+			$attemptCredential = New-Object System.Management.Automation.PSCredential($candidateUser, $Credential.Password)
+		}
+
+		try {
+			Write-Info "Trying SMB authentication as '$candidateUser'"
+			if ($UseGlobalMapping) {
+				New-SmbMapping -LocalPath $LocalPath -RemotePath $RemotePath -TcpPort $SmbPort -Credential $attemptCredential -Persistent $true -GlobalMapping -ErrorAction Stop | Out-Null
+			}
+			else {
+				New-SmbMapping -LocalPath $LocalPath -RemotePath $RemotePath -TcpPort $SmbPort -Credential $attemptCredential -Persistent $true -ErrorAction Stop | Out-Null
+			}
+
+			Write-Ok "Successfully authenticated as '$candidateUser'"
+			return
+		}
+		catch {
+			$lastError = $_
+			$errorText = "$_"
+			$errorMsg = $_.Exception.Message
+			$errorId = $_.FullyQualifiedErrorId
+			
+			# Check multiple error properties for authentication failures
+			if ($errorText -match 'Access is denied|Denied|0x80070005|Logon failure|Authentication|1326' -or
+			    $errorMsg -match 'Access is denied|Denied|0x80070005|Logon failure|Authentication|1326' -or
+			    $errorId -match 'Access is denied|Denied|0x80070005|Logon failure|Authentication|1326') {
+				Write-WarnMsg "Authentication failed for '$candidateUser'. Trying next credential format..."
+				continue
+			}
+			
+			# For other errors, throw immediately
+			Write-ErrMsg "Unexpected error with '$candidateUser': $errorText"
+			throw
+		}
+	}
+
+	if ($lastError) {
+		throw $lastError
+	}
+}
+
+function Select-FolderDialog([string]$Description, [string]$InitialPath = "") {
+	Add-Type -AssemblyName System.Windows.Forms | Out-Null
+	$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+	$dialog.Description = $Description
+	if (-not [string]::IsNullOrWhiteSpace($InitialPath) -and (Test-Path $InitialPath)) {
+		$dialog.SelectedPath = $InitialPath
+	}
+
+	$result = $dialog.ShowDialog()
+	if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+		return $dialog.SelectedPath
+	}
+	return $null
+}
+
+function Test-PathWritable([string]$PathToTest) {
+	try {
+		if (-not (Test-Path $PathToTest -PathType Container)) {
+			return $false
+		}
+		$testFile = Join-Path $PathToTest ("transfs_write_test_" + [guid]::NewGuid().ToString("N") + ".tmp")
+		Set-Content -Path $testFile -Value "ok" -Encoding UTF8
+		Remove-Item -Path $testFile -Force
+		return $true
+	}
+	catch {
+		return $false
+	}
+}
+
+function Test-DriveLetterAvailable([string]$Letter) {
+	$normalized = $Letter.Trim().TrimEnd(':').ToUpperInvariant()
+	if ($normalized -notmatch '^[A-Z]$') {
+		return $false
+	}
+
+	$drive = Get-PSDrive -Name $normalized -ErrorAction SilentlyContinue
+	return $null -eq $drive
+}
+
+function Ensure-DriveLetterAvailableOrOfferRemoval([string]$Letter) {
+	$normalized = $Letter.Trim().TrimEnd(':').ToUpperInvariant()
+	if ($normalized -notmatch '^[A-Z]$') {
+		Write-ErrMsg "Drive letter is invalid: $Letter"
+		return $false
+	}
+
+	$localPath = "${normalized}:"
+	$drive = Get-PSDrive -Name $normalized -ErrorAction SilentlyContinue
+	if ($null -eq $drive) {
+		return $true
+	}
+
+	$smbMapping = Get-SmbMapping -ErrorAction SilentlyContinue | Where-Object { $_.LocalPath -eq $localPath } | Select-Object -First 1
+	if ($null -eq $smbMapping) {
+		Write-ErrMsg "Drive letter is already in use and is not an SMB mapping: $localPath"
+		return $false
+	}
+
+	Write-WarnMsg "Drive letter already mapped: $localPath -> $($smbMapping.RemotePath)"
+	$removeChoice = Prompt-WithDefault "Remove this existing mapping before continuing? (Y/N)" "Y"
+	if ($removeChoice.ToUpperInvariant() -ne "Y") {
+		Write-Info "Keeping existing mapping. Choose another drive letter to continue."
+		return $false
+	}
+
+	try {
+		Remove-SmbMapping -LocalPath $localPath -Force -UpdateProfile -ErrorAction Stop | Out-Null
+		Start-Sleep -Milliseconds 250
+		Write-Ok "Removed existing mapping: $localPath"
+	}
+	catch {
+		Write-ErrMsg "Failed to remove existing mapping ${localPath}: $($_.Exception.Message)"
+		return $false
+	}
+
+	$driveAfter = Get-PSDrive -Name $normalized -ErrorAction SilentlyContinue
+	if ($null -ne $driveAfter) {
+		Write-ErrMsg "Drive letter is still in use after removal attempt: $localPath"
+		return $false
+	}
+
+	return $true
+}
+
+function Get-RetroBatInstallDir {
+	$regCandidates = @(
+		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\RetroBat" },
+		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\WOW6432Node\RetroBat" },
+		@{ Hive = "HKCU:"; SubKey = "SOFTWARE\RetroBat" }
+	)
+
+	foreach ($candidate in $regCandidates) {
+		$keyPath = Join-Path $candidate.Hive $candidate.SubKey
+		if (Test-Path $keyPath) {
+			$item = Get-ItemProperty -Path $keyPath
+			foreach ($name in @("InstallPath", "RootPath", "Path")) {
+				if ($item.PSObject.Properties.Name -contains $name) {
+					$pathValue = [string]$item.$name
+					if (-not [string]::IsNullOrWhiteSpace($pathValue) -and (Test-Path $pathValue)) {
+						if (Test-Path (Join-Path $pathValue "emulationstation\emulatorLauncher.cfg")) {
+							return $pathValue
+						}
+					}
+				}
+			}
+		}
+	}
+
+	$fallbacks = @("C:\RetroBat", "D:\RetroBat", "E:\Games\RetroBat", "E:\RetroBat")
+	foreach ($path in $fallbacks) {
+		if (Test-Path (Join-Path $path "emulationstation\emulatorLauncher.cfg")) {
+			return $path
+		}
+	}
+
+	return $null
+}
+
+function Resolve-TransFSShare([hashtable]$Defaults) {
+	# Ensure Defaults is initialized
+	if (-not $Defaults) {
+		$Defaults = @{}
+	}
+	
+	while ($true) {
+		Write-Host ""
+		Write-Host "Select TransFS path type:" -ForegroundColor White
+		Write-Host "  1) Existing mapped drive" -ForegroundColor White
+		Write-Host "  2) UNC path (standard SMB port)" -ForegroundColor White
+		Write-Host "  3) UNC path on non-standard SMB port" -ForegroundColor White
+
+		$defaultMode = if ($Defaults['Mode']) { [string]$Defaults['Mode'] } else { "3" }
+		$mode = Prompt-WithDefault "Choose 1/2/3" $defaultMode
+
+		switch ($mode) {
+			"1" {
+				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "" }
+				$useBrowser = Prompt-WithDefault "Use folder browser? (Y/N)" "Y"
+				if ($useBrowser.ToUpperInvariant() -eq "Y") {
+					$selected = Select-FolderDialog "Select mapped drive root or share folder" $defaultShareRoot
+					if ($selected) {
+						$shareRoot = $selected
+					}
+					else {
+						Write-WarnMsg "No folder selected."
+						continue
+					}
+				}
+				else {
+					$shareRoot = Prompt-WithDefault "Enter mapped drive path (example: U:\\ or U:\\TransFS)" $defaultShareRoot
+				}
+
+				if (-not (Test-Path $shareRoot -PathType Container)) {
+					Write-ErrMsg "Path does not exist: $shareRoot"
+					continue
+				}
+
+				if (-not (Test-PathWritable $shareRoot)) {
+					Write-ErrMsg "Path is not writable: $shareRoot"
+					continue
+				}
+
+				return @{
+					Mode = "1"
+					ShareRoot = (Resolve-Path $shareRoot).Path
+					DriveLetter = ""
+					ServerName = ""
+					ShareName = ""
+					SmbPort = ""
+				}
+			}
+			"2" {
+				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "\\server\share" }
+				$shareRoot = Prompt-WithDefault "Enter UNC path (example: \\server\share)" $defaultShareRoot
+
+				if ($shareRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
+					Write-ErrMsg "Invalid UNC format."
+					continue
+				}
+				if ($shareRoot -match ':[0-9]+') {
+					Write-WarnMsg "UNC with custom port requires a mapped drive. Choose option 3."
+					continue
+				}
+				if (-not (Test-Path $shareRoot -PathType Container)) {
+					Write-ErrMsg "UNC path not reachable: $shareRoot"
+					continue
+				}
+				if (-not (Test-PathWritable $shareRoot)) {
+					Write-ErrMsg "UNC path is not writable: $shareRoot"
+					continue
+				}
+
+				return @{
+					Mode = "2"
+					ShareRoot = $shareRoot.TrimEnd('\\')
+					DriveLetter = ""
+					ServerName = ""
+					ShareName = ""
+					SmbPort = ""
+				}
+			}
+			"3" {
+				Write-Info "Non-standard SMB port requires mapping to a drive letter."
+				Write-Host ""
+
+				$defaultDrive = if ($Defaults['DriveLetter']) { [string]$Defaults['DriveLetter'] } else { "U" }
+				while ($true) {
+					$driveLetter = Prompt-WithDefault "Enter unused drive letter (example: U)" $defaultDrive
+					$driveLetter = $driveLetter.Trim().TrimEnd(':').ToUpperInvariant()
+					if (-not (Ensure-DriveLetterAvailableOrOfferRemoval $driveLetter)) {
+						continue
+					}
+					break
+				}
+
+				$defaultServerName = if ($Defaults.ContainsKey("ServerName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ServerName'])) { [string]$Defaults['ServerName'] } else { $DefaultSmbHost }
+				$defaultShareName = if ($Defaults.ContainsKey("ShareName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ShareName'])) { [string]$Defaults['ShareName'] } else { $DefaultShareName }
+				$defaultSmbPort = if ($Defaults.ContainsKey("SmbPort") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['SmbPort'])) { [string]$Defaults['SmbPort'] } else { $DefaultSmbPort }
+				$defaultMappingScope = if ($Defaults.ContainsKey("MappingScope") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['MappingScope'])) { [string]$Defaults['MappingScope'] } else { "1" }
+
+				$serverName = Prompt-WithDefault "Enter SMB server name" $defaultServerName
+				$shareName = Prompt-WithDefault "Enter share name" $defaultShareName
+				$smbPort = Prompt-WithDefault "Enter SMB TCP port" $defaultSmbPort
+				Write-Host ""
+				Write-Host "Select mapping scope:" -ForegroundColor White
+				Write-Host "  1) Current user only (recommended, no admin required)" -ForegroundColor White
+				Write-Host "  2) All users (requires running PowerShell as Administrator)" -ForegroundColor White
+				$mappingScope = Prompt-WithDefault "Choose 1/2" $defaultMappingScope
+				if ($mappingScope -notin @('1', '2')) {
+					Write-ErrMsg "Invalid mapping scope. Choose 1 or 2."
+					continue
+				}
+				$useGlobalMapping = ($mappingScope -eq '2')
+
+				if ($smbPort -notmatch '^[0-9]+$') {
+					Write-ErrMsg "Port must be numeric."
+					continue
+				}
+
+				$remotePath = "\\$serverName\$shareName"
+				$localPath = "${driveLetter}:"
+
+				try {
+					Write-Info "Mapping $localPath to $remotePath on port $smbPort"
+					Remove-StaleSmbMappings -LocalPath $localPath -RemotePath $remotePath
+					Write-Host ""
+					Write-Host "Credentials Required" -ForegroundColor Cyan
+					Write-Host "  - TransFS SMB credentials (configured in app.yaml)" -ForegroundColor Gray
+					Write-Host "  - Default: $DefaultSmbUsername / <password>" -ForegroundColor Gray
+					Write-Host ""
+					$creds = Get-TransFSCredential -DefaultUserName $DefaultSmbUsername
+					
+					if (-not $creds) {
+						Write-ErrMsg "Credentials required for SMB access"
+						Write-ErrMsg "Run in an interactive PowerShell host (Terminal/Console) if prompt input is blocked."
+						continue
+					}
+
+					New-TransFSSmbMappingWithFallback -LocalPath $localPath -RemotePath $remotePath -SmbPort ([int]$smbPort) -Credential $creds -UseGlobalMapping $useGlobalMapping -ServerName $serverName -DefaultUserName $DefaultSmbUsername
+				}
+				catch {
+					if ($useGlobalMapping -and $_.Exception.Message -match 'Access is denied|Denied|0x80070005') {
+						Write-ErrMsg "All-users mapping requires local Administrator privileges."
+						Write-ErrMsg "Rerun PowerShell as Administrator, or choose mapping scope 1 (current user only)."
+						continue
+					}
+					if ($_.Exception.Message -match 'Access is denied|Denied|0x80070005|Logon failure') {
+						Write-ErrMsg "SMB authentication failed after trying multiple username formats."
+						Write-ErrMsg "Verify TransFS SMB credentials in app.yaml and re-enter the password."
+						continue
+					}
+					Write-ErrMsg "Failed to map drive: $($_.Exception.Message)"
+					continue
+				}
+
+				# Give Windows a moment to fully establish the mapping
+				Write-Info "Verifying mapped drive access..."
+				Start-Sleep -Milliseconds 500
+
+				$shareRoot = "$localPath\"
+				
+				try {
+					$pathTest = Test-Path $shareRoot -PathType Container -ErrorAction Stop
+					if (-not $pathTest) {
+						Write-ErrMsg "Mapped drive exists but is not accessible as a directory: $shareRoot"
+						Write-ErrMsg "Check TransFS SMB share configuration and permissions."
+						continue
+					}
+				}
+				catch {
+					Write-ErrMsg "Cannot access mapped drive ${shareRoot}: $($_.Exception.Message)"
+					Write-ErrMsg "The SMB mapping succeeded but the share content is not accessible."
+					Write-ErrMsg "Verify:"
+					Write-ErrMsg "  1. TransFS container is running and SMB service is active"
+					Write-ErrMsg "  2. SMB share path in smb.conf matches TransFS mount point"
+					Write-ErrMsg "  3. User '$($creds.UserName)' has read access to the share"
+					continue
+				}
+				
+				if (-not (Test-PathWritable $shareRoot)) {
+					Write-WarnMsg "Mapped drive root is not writable: $shareRoot"
+					Write-WarnMsg "Continuing - script will validate write access at the BIOS target folder."
+				}
+
+				Restart-ExplorerIfRequested
+
+				return @{
+					Mode = "3"
+					ShareRoot = $shareRoot
+					DriveLetter = $driveLetter
+					ServerName = $serverName
+					ShareName = $shareName
+					SmbPort = $smbPort
+					MappingScope = $mappingScope
+				}
+			}
+			default {
+				Write-WarnMsg "Please choose 1, 2, or 3."
+			}
+		}
+	}
+}
+
+function Copy-BiosWithProgress([string]$SourceDir, [string]$DestinationDir) {
+	$files = Get-ChildItem -Path $SourceDir -Recurse -File
+	if ($files.Count -eq 0) {
+		throw "No files found under source BIOS directory: $SourceDir"
+	}
+
+	$index = 0
+	foreach ($file in $files) {
+		$index++
+		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\\', '/')
+		$targetPath = Join-Path $DestinationDir $relative
+		$targetFolder = Split-Path -Parent $targetPath
+		
+		# Ensure target folder exists
+		if (-not (Test-Path $targetFolder)) {
+			try {
+				New-Item -Path $targetFolder -ItemType Directory -Force | Out-Null
+			}
+			catch {
+				throw "Failed to create directory '$targetFolder': $($_.Exception.Message)"
+			}
+		}
+		
+		# Check if target exists as wrong type (e.g., file when we need directory)
+		if ((Test-Path $targetPath) -and (Get-Item $targetPath).PSIsContainer) {
+			Write-Warn "Removing incorrectly created directory: $targetPath"
+			Remove-Item $targetPath -Force -Recurse
+		}
+
+		try {
+			Copy-Item -Path $file.FullName -Destination $targetPath -Force -ErrorAction Stop
+		}
+		catch {
+			throw "Failed to copy '$($file.FullName)' to '$targetPath': $($_.Exception.Message)"
+		}
+
+		$percent = [int](($index / $files.Count) * 100)
+		Write-Progress -Activity "Copying RetroBat BIOS" -Status "$index / $($files.Count): $relative" -PercentComplete $percent
+	}
+	Write-Progress -Activity "Copying RetroBat BIOS" -Completed
+}
+
+function Update-RetroBatConfig([string]$RetroBatDir, [string]$BiosPath) {
+	$configPath = Join-Path $RetroBatDir "emulationstation\emulatorLauncher.cfg"
+	if (-not (Test-Path $configPath)) {
+		throw "Cannot find emulatorLauncher.cfg at $configPath"
+	}
+
+	$backupPath = "$configPath.transfs"
+	if (-not (Test-Path $backupPath)) {
+		Copy-Item -Path $configPath -Destination $backupPath -Force
+		Write-Ok "Backup created: $backupPath"
+	}
+	else {
+		Write-Info "Backup already exists: $backupPath"
+	}
+
+	$lines = Get-Content -Path $configPath
+	$updated = $false
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		if ($lines[$i] -match '^\s*bios=') {
+			$lines[$i] = "bios=$BiosPath"
+			$updated = $true
+			break
+		}
+	}
+
+	if (-not $updated) {
+		$lines = @("bios=$BiosPath") + $lines
+	}
+
+	Set-Content -Path $configPath -Value $lines -Encoding UTF8
+	Write-Ok "Updated bios= in $configPath"
+}
+
+try {
+	Write-Host ""
+	Write-Host "TransFS RetroBat BIOS Setup" -ForegroundColor White
+	Write-Host "==========================" -ForegroundColor White
+
+	Write-Info "Loading stored settings from registry..."
+	$defaults = Get-StoredSettings
+	
+	if ($defaults['ShareRoot']) {
+		Write-Info "Found saved default share path: $($defaults['ShareRoot'])"
+	}
+
+	$shareConfig = Resolve-TransFSShare -Defaults $defaults
+	Save-StoredSettings -Settings $shareConfig
+	Write-Ok "Saved share settings to registry: HKCU\\Software\\TransFS\\RetroBatSync"
+
+	$targetBiosDir = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
+	if (Test-Path $targetBiosDir -PathType Container) {
+		Write-Info ""
+		Write-Info "Target BIOS folder already exists at: $targetBiosDir"
+		Write-Info ""
+		Write-Info "For BIOSes to work properly on the network share, we need to copy files from your local RetroBat install"
+		Write-Info "and modify 1 config file. This should be safe to do multiple times, and the config file is backed up."
+		Write-Info ""
+		$proceedWithBios = Prompt-WithDefault "Would you like to proceed with RetroBat BIOS folder setup? (Y/N)" "N"
+		if ($proceedWithBios.ToUpperInvariant() -ne "Y") {
+			Write-Info "Skipped BIOS setup."
+			exit 0
+		}
+	}
+
+	$retroBatDir = Get-RetroBatInstallDir
+	if ($retroBatDir) {
+		Write-Info "Detected RetroBat install: $retroBatDir"
+		Write-Info ""
+	}
+
+	while (-not $retroBatDir) {
+		$browse = Prompt-WithDefault "RetroBat install not auto-detected. Use folder browser? (Y/N)" "Y"
+		if ($browse.ToUpperInvariant() -eq "Y") {
+			$selected = Select-FolderDialog "Select RetroBat install folder"
+			if ($selected) {
+				$retroBatDir = $selected
+			}
+		}
+		else {
+			$retroBatDir = Read-Host "Enter full RetroBat install path"
+		}
+
+		if (-not (Test-Path (Join-Path $retroBatDir "emulationstation\emulatorLauncher.cfg"))) {
+			Write-ErrMsg "Invalid RetroBat path. emulatorLauncher.cfg not found."
+			$retroBatDir = $null
+		}
+	}
+
+	$sourceBiosDir = Join-Path $retroBatDir "bios"
+	if (-not (Test-Path $sourceBiosDir -PathType Container)) {
+		throw "RetroBat BIOS folder does not exist: $sourceBiosDir"
+	}
+
+	Write-Info "Preparing target BIOS folder..."
+	try {
+		New-Item -Path $targetBiosDir -ItemType Directory -Force | Out-Null
+	}
+	catch {
+		throw "Failed to create target BIOS folder: $targetBiosDir. $($_.Exception.Message)"
+	}
+
+	Write-Info "Verifying write access to network share..."
+	if (-not (Test-PathWritable $targetBiosDir)) {
+		throw "Target BIOS folder is not writable: $targetBiosDir"
+	}
+
+	Write-Info "Copying BIOS files (this may take a few moments)..."
+	Write-Info "  From: $sourceBiosDir"
+	Write-Info "  To:   $targetBiosDir"
+	Write-Info ""
+
+	Copy-BiosWithProgress -SourceDir $sourceBiosDir -DestinationDir $targetBiosDir
+
+	$srcCount = (Get-ChildItem -Path $sourceBiosDir -Recurse -File).Count
+	$dstCount = (Get-ChildItem -Path $targetBiosDir -Recurse -File).Count
+
+	if ($dstCount -lt $srcCount) {
+		throw "Copy verification failed. Source files: $srcCount, Destination files: $dstCount"
+	}
+
+	Write-Ok "Copy verified. Source files: $srcCount, Destination files: $dstCount"
+
+	$configuredBiosPath = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
+	$updateConfig = Prompt-WithDefault "Update local RetroBat config to use '$configuredBiosPath'? (Y/N)" "Y"
+	if ($updateConfig.ToUpperInvariant() -eq "Y") {
+		Update-RetroBatConfig -RetroBatDir $retroBatDir -BiosPath $configuredBiosPath
+	}
+	else {
+		Write-Info "Skipped config update."
+	}
+
+	Write-Host ""
+	Write-Ok "Done."
+	Write-Host ""
+	if ($script:RestartExplorerAfterExit) {
+		Write-Info "Explorer restart is queued and will run after you exit this script."
+	}
+	Write-Info "Press any key to exit..."
+	$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+	Invoke-PendingExplorerRestart
+}
+catch {
+	Write-Host ""
+	Write-ErrMsg $_.Exception.Message
+	Write-Host ""
+	Write-Info "Press any key to exit..."
+	$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+	exit 1
+}

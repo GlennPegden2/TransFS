@@ -31,7 +31,14 @@ database:
   password: transfs_pass
   pool_size: 20
   max_overflow: 10
+# SMB Server credentials and access control
+smb:
+  username: root
+  password: "1"
+  allow_guest: false  # Set to true to allow unauthenticated guest access
 filestore: /mnt/filestorefs
+# Filesystem behavior
+show_hidden_files: true  # Show hidden files (names starting with '.') - matches standard filesystem behavior
 mame:
   # MAME Software List downloader configuration
   hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash

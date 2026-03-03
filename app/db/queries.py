@@ -591,3 +591,29 @@ def query_file_by_client_system_map_and_name(
     except Exception as e:
         logger.error(f"Error querying file {client}/{system}/{map_name}/{filename}: {e}", exc_info=True)
         return None
+
+
+def query_file_by_virtual_path(virtual_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Query a single file by exact virtual path.
+
+    This avoids basename ambiguity for preserve_structure paths where files may
+    share the same filename in different subdirectories.
+    """
+    try:
+        with get_cursor(commit=False) as cursor:
+            query = """
+                SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at,
+                       client, system, map_name
+                FROM files
+                WHERE virtual_path = %s
+                LIMIT 1
+            """
+            cursor.execute(query, [virtual_path])
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+    except Exception as e:
+        logger.error(f"Error querying file by virtual_path {virtual_path}: {e}", exc_info=True)
+        return None

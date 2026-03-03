@@ -15,10 +15,10 @@ RUN echo 'user_allow_other' >> /etc/fuse.conf
 
 # Add a basic Samba config
 COPY smb.conf /etc/samba/smb.conf
+COPY smbusers /etc/samba/smbusers
 
-# Set up a Samba user (default user: smbuser, password: smbpass)
-RUN useradd -M -s /sbin/nologin smbuser && \
-    (echo "smbpass"; echo "smbpass") | smbpasswd -s -a smbuser
+# Note: Samba user credentials are configured at app startup from app.yaml
+# via app/smb_config.py, not at build time
 
 # Expose the default SMB port
 EXPOSE 445

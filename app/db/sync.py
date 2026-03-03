@@ -56,7 +56,7 @@ class FilesystemSync:
             return f"{manufacturer}/{system}"
         return None
     
-    def initial_scan(self, skip_hidden: bool = True) -> dict:
+    def initial_scan(self, skip_hidden: bool = False) -> dict:
         """
         Perform initial database population from filesystem.
         Uses batch operations and COPY for optimal performance.

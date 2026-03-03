@@ -11,8 +11,10 @@ All other tests depend on these passing.
 """
 
 import os
+import logging
 import pytest
 from pathlib import Path
+from uuid import uuid4
 import yaml
 
 
@@ -219,3 +221,71 @@ class TestFileAccessibility:
                     assert len(data) == 8, f"Failed to read 8 bytes from {boot_rom}"
             except Exception as e:
                 pytest.fail(f"Failed to read from {boot_rom}: {e}")
+
+
+class TestWriteCapabilities:
+    """Test write/delete behavior in configured writable folders."""
+
+    @staticmethod
+    def _write_and_cleanup(target_dir: Path, prefix: str):
+        """Create a temp file, verify contents, then remove it."""
+        from config import read_config
+        from sourcepath import get_source_path_for_write
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        test_file = target_dir / f"{prefix}_{uuid4().hex}.tmp"
+        payload = b"transfs-foundation-write-test"
+        logger = logging.getLogger(__name__)
+
+        config = read_config()
+        resolved_path = get_source_path_for_write(logger, config, "/mnt/transfs", str(test_file))
+        backend_file = Path(resolved_path) if resolved_path else None
+
+        try:
+            with open(test_file, "wb") as handle:
+                handle.write(payload)
+
+            transfs_exists = test_file.exists()
+            backend_exists = backend_file.exists() if backend_file else False
+            assert transfs_exists or backend_exists, (
+                f"Test file was not created in either location:\n"
+                f"TransFS path: {test_file}\n"
+                f"Backend path: {backend_file}"
+            )
+
+            read_target = test_file if transfs_exists else backend_file
+            with open(read_target, "rb") as handle:
+                read_back = handle.read()
+            assert read_back == payload, f"Unexpected file contents for {read_target}"
+        finally:
+            if test_file.exists():
+                test_file.unlink()
+            if backend_file and backend_file.exists():
+                backend_file.unlink()
+
+        assert not test_file.exists(), f"Test file was not removed from TransFS path: {test_file}"
+        if backend_file:
+            assert not backend_file.exists(), f"Test file was not removed from backend path: {backend_file}"
+
+    def test_can_write_and_cleanup_retrobat_bios_folder(self):
+        """Verify write/delete in RetroBat BIOS folder."""
+        candidates = [
+            Path("/mnt/transfs/RetroBat/bios"),
+            Path("/mnt/transfs/Retrobat/bios"),
+        ]
+        target_dir = next((path for path in candidates if path.exists()), None)
+        if target_dir is None:
+            pytest.skip("RetroBat BIOS folder not present in this environment")
+
+        self._write_and_cleanup(target_dir, "retrobat_bios")
+
+    def test_can_write_and_cleanup_mister_archimedes_folder(self):
+        """Verify write/delete in MiSTer Archimedes folder."""
+        candidates = [
+            Path("/mnt/transfs/MiSTer/Archie"),
+            Path("/mnt/transfs/MiSTer/Archimedes"),
+        ]
+        target_dir = next((path for path in candidates if path.exists()), None)
+        assert target_dir is not None, "MiSTer Archimedes folder not present in TransFS mount"
+
+        self._write_and_cleanup(target_dir, "mister_archimedes")

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Setup Clients connection profile API**: Added `/api/setup/connection-profile` to publish externally reachable SMB setup details (host, port, share, auth mode, commands).
 - **Setup Clients web tab**: Added a dedicated dashboard tab showing working SMB connection details for Windows and MiSTer clients.
 - **Dynamic Windows setup script download**: `/api/download/setup-windows` now injects host/port/share/username from the resolved setup profile.
+- **Configurable hidden file visibility**: Added `show_hidden_files` option in `app.yaml` (default: `true`) to control visibility of dotfiles
+  - Now shows hidden files by default to match standard filesystem behavior and maximize client compatibility
+  - Can be set to `false` to hide metadata files like `.DS_Store`, `.git`, etc. from emulator views
+  - Applies to directory listings in FUSE, database sync, and all virtual path resolution
+  - Resolves issue where admin tools (e.g., writability probes) failed when using hidden temp files
 
 ### Changed
 - **Advertised SMB endpoint (Approach B)**: Added optional compose environment overrides `SMB_ADVERTISE_HOST`, `SMB_ADVERTISE_PORT`, and `SMB_ADVERTISE_SHARE` for explicit client-facing setup values.
@@ -46,6 +51,26 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Added 30-second mountpoint validation with retry loop (`mountpoint -q /mnt/transfs`)
   - Added error handling that exits container if FUSE fails to mount within timeout
   - New startup order: Configure SMB → Start FUSE → Wait for mount → Start SMB services → Start web service
+
+- **FUSE access callback for SMB chdir**: Fixed SMB mapping that authenticated but failed on drive access with "Access is denied"
+  - **Root cause**: FUSE `access()` callback returned `None` instead of explicit allow, causing execute/chdir checks to fail for `/mnt/transfs`
+  - Updated `app/transfs.py` to return explicit success from `access()`
+  - Verified in-container behavior: `os.chdir('/mnt/transfs')` and `os.chdir('/mnt/transfs/MiSTer')` now succeed
+  - This directly resolves Samba `vfs_ChDir(/mnt/transfs) failed: Permission denied` during tree connect
+
+- **Windows setup script writability false-negative**: Fixed BIOS folder probe incorrectly reporting "not writable"
+  - **Root cause**: writability test created hidden temp files (`.transfs_write_test_*.tmp`) while TransFS intentionally hides dotfiles
+  - Updated writability probes to use non-hidden temp filenames (`transfs_write_test_*.tmp`)
+  - Applied to both setup script templates and `map_win_drive.ps1`
+  - This allows valid writable TransFS folders (e.g., `V:\RetroBat\bios`) to pass script validation
+
+- **Directory listing filesystem fallback for write-through visibility**: Fixed writability tests failing when written files didn't appear in directory listings
+  - **Root cause**: Query map directories fetched entries ONLY from database; FUSE-written files weren't synced yet, so appeared invisible immediately after write
+  - Windows writability tests: create temp file → list directory → verify file exists → test fails if file invisible
+  - Added filesystem fallback to `_get_subdirectories_from_db()` in `app/dirlisting.py` - merges disk files not in database
+  - Added filesystem merge to `list_query_map()` - supplements database results with files from disk
+  - Added filesystem fallback to FUSE `readdir` in `app/transfs.py` for database-backed query maps
+  - **Result**: Files written via SMB/FUSE now appear immediately in listings → writability detection now works correctly
 
 - **Windows setup mapping scope choice**: Added explicit mapping mode selection for non-standard SMB port setups
   - Script now prompts for `current user` (no admin) vs `all users` (admin required)

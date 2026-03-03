@@ -35,7 +35,7 @@
 - **Zip files**:
   - If a zip contains only one relevant file, the file is shown directly in the virtual folder (flattened).
   - If a zip contains multiple relevant files, the zip is shown as a virtual folder. Entering this folder lists the files inside the zip.
-- **Hidden files** (starting with `.`) are not shown.
+- **Hidden files** (starting with `.`) are shown by default (matching standard filesystem behavior). This can be disabled by setting `show_hidden_files: false` in `app.yaml` to hide metadata files like `.DS_Store`, `.git`, etc.
 
 ---
 
@@ -94,7 +94,23 @@
 
 ---
 
-### 11. Database-Only Architecture (Query Maps)
+### 11. Setup Clients Assistant (Web UI)
+
+- A dedicated **Setup Clients** tab provides SMB setup guidance for clients.
+- Data is sourced from `/api/setup/connection-profile` and includes:
+  - Advertised SMB host/port/share
+  - UNC path
+  - Windows PowerShell mapping command
+  - MiSTer mount example
+  - Download link for `setup_windows.ps1`
+- Endpoint values can be explicitly overridden via environment variables:
+  - `SMB_ADVERTISE_HOST`
+  - `SMB_ADVERTISE_PORT`
+  - `SMB_ADVERTISE_SHARE`
+
+---
+
+### 12. Database-Only Architecture (Query Maps)
 
 **Overview**: For query map directories (maps defined with `query` configuration), TransFS uses an optimized database-driven file access path that completely bypasses expensive filesystem scanning.
 

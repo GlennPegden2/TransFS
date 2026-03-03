@@ -12,6 +12,8 @@ from pathutils import (
     get_map_extension_map,
     is_query_map,
     get_query_config,
+    resolve_virtual_base_path,
+    format_virtual_base_path,
 )
 from filetypes import get_filetype_maps, get_filetype_transforms
 from ziptutils import get_zip_mapping
@@ -189,6 +191,66 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         client, list(rel_parts), path_template_parts
     )
     if not system_info:
+        # Fallback for category paths that intentionally omit {system_name}
+        # (e.g. shared BIOS at /RetroBat/bios/* backed by a specific system map).
+        translated_norm = str(path).replace('\\', '/')
+        filestore_root = config.get("filestore", "/mnt/filestorefs")
+        client_name = client.get('name', '')
+
+        for candidate_system in client.get('systems', []):
+            local_base_path = candidate_system.get('local_base_path')
+            if not local_base_path:
+                continue
+
+            for map_entry in candidate_system.get('maps', []):
+                map_name = list(map_entry.keys())[0]
+                map_config = map_entry.get(map_name, {})
+                if not isinstance(map_config, dict):
+                    continue
+
+                try:
+                    base_path_template = resolve_virtual_base_path(client, candidate_system, map_config)
+                    virtual_base = format_virtual_base_path(base_path_template, client_name, candidate_system.get('name', ''))
+                except Exception:
+                    continue
+
+                full_virtual_base = os.path.join(root, virtual_base).replace('\\', '/').rstrip('/')
+                if not translated_norm.startswith(full_virtual_base + '/'):
+                    continue
+
+                sub_virtual_path = translated_norm[len(full_virtual_base) + 1:]
+                if not sub_virtual_path:
+                    continue
+
+                # Direct file map under shared category path
+                if 'file' in map_config and sub_virtual_path == map_name:
+                    file_spec = map_config.get('file')
+                    if isinstance(file_spec, dict):
+                        source_file_path = file_spec.get('path', '')
+                    else:
+                        source_file_path = str(file_spec)
+                    full_path = os.path.join(
+                        filestore_root,
+                        "Native",
+                        candidate_system['local_base_path'],
+                        source_file_path,
+                    )
+                    return full_path
+
+                # Flatten query map under shared category path
+                if map_name == '.' and is_query_map(map_config):
+                    query_cfg = get_query_config(map_config) or {}
+                    source_dir = _adjust_source_dir_for_layout(query_cfg.get('source_dir', 'Software'), candidate_system)
+                    full_path = os.path.join(
+                        filestore_root,
+                        "Native",
+                        candidate_system['local_base_path'],
+                        source_dir,
+                        sub_virtual_path,
+                    )
+                    if os.path.exists(full_path):
+                        return full_path
+
         return None
 
     # Check if this is a query map directory itself (e.g., /MiSTer/AcornAtom/HDs)
@@ -257,17 +319,32 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         return dynamic_result
 
     # Handle flattened maps (.) - files appear directly in system folder
-    if len(rel_parts) >= 4:  # client/category/system/filename
+    # Support nested subpaths under flattened maps (e.g., /RetroBat/bios/mame/ini/mame.ini)
+    if len(rel_parts) >= 3:
         flatten_map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == '.'), None)
         if flatten_map_entry:
             flatten_config = flatten_map_entry['.']
-            filename = rel_parts[3]  # For category paths: client/category/system/filename
+            # Determine file subpath from remaining virtual path components
+            # For category paths this is typically rel_parts[2:] or rel_parts[3:]
+            # depending on whether system name appears in the virtual path.
+            file_subpath_parts = rel_parts[3:] if len(rel_parts) >= 4 else rel_parts[2:]
+            if system_info.get('name') in rel_parts:
+                try:
+                    system_idx = rel_parts.index(system_info.get('name'))
+                    file_subpath_parts = rel_parts[system_idx + 1:]
+                except ValueError:
+                    pass
+
+            if not file_subpath_parts:
+                return None
+
+            file_subpath = os.path.join(*file_subpath_parts)
             
             # Use query-based lookup for flattened maps
             if 'query' in flatten_config:
                 query_cfg = flatten_config['query']
                 source_dir = query_cfg.get('source_dir', 'Software')
-                logger.debug(f"Found flattened map (.), using source_dir={source_dir} for file={filename}")
+                logger.debug(f"Found flattened map (.), using source_dir={source_dir} for file={file_subpath}")
                 
                 # Build the full path in the filesystem
                 base_path = os.path.join(
@@ -276,7 +353,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                     system_info['local_base_path'],
                     source_dir
                 )
-                full_path = os.path.join(base_path, filename)
+                full_path = os.path.join(base_path, file_subpath)
                 
                 if os.path.exists(full_path):
                     logger.debug(f"Flattened map: Found file {full_path}")
@@ -992,6 +1069,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     Similar to get_source_path, but returns the mapped path even if the file doesn't exist yet.
     This is used for write operations where we need to create new files.
     Only returns regular file paths (strings), not zip mappings (tuples).
+    Supports category-based paths (e.g., /RetroBat/bios) and explicit system paths.
     """
     logger.debug(f"DEBUG: get_source_path_for_write({translated_path}) called")
 
@@ -1011,6 +1089,96 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
 
     if len(rel_parts) == 1:
         return None
+
+    # Resolve category-based and non-standard virtual bases by matching map virtual base paths.
+    # This handles paths like /RetroBat/bios/... where the category path key may be
+    # "shared_bios" but the visible directory is "bios".
+    translated_norm = str(path).replace('\\', '/').rstrip('/')
+    translated_lower = translated_norm.lower()
+    client_name = client.get('name', '')
+    filestore = config.get("filestore", "/mnt/filestorefs")
+
+    for system in client.get('systems', []):
+        local_base = system.get('local_base_path', '')
+        if not local_base:
+            continue
+
+        for map_entry in system.get('maps', []):
+            map_name = list(map_entry.keys())[0]
+            map_config = map_entry.get(map_name, {})
+            if not isinstance(map_config, dict):
+                continue
+
+            try:
+                base_path_template = resolve_virtual_base_path(client, system, map_config)
+                virtual_base = format_virtual_base_path(base_path_template, client_name, system.get('name', ''))
+            except Exception:
+                continue
+
+            full_virtual_base = os.path.join(root, virtual_base).replace('\\', '/').rstrip('/')
+            full_virtual_base_lower = full_virtual_base.lower()
+
+            if not (
+                translated_lower == full_virtual_base_lower
+                or translated_lower.startswith(full_virtual_base_lower + '/')
+            ):
+                continue
+
+            # Portion under the mapped virtual base
+            sub_virtual = translated_norm[len(full_virtual_base):].lstrip('/')
+
+            # If this named map is not embedded in the virtual base path, only match
+            # requests that explicitly target the map name.
+            if map_name and map_name != '.':
+                base_has_map = (
+                    full_virtual_base_lower == f"{root.rstrip('/').lower()}/{map_name.lower()}"
+                    or full_virtual_base_lower.endswith('/' + map_name.lower())
+                )
+                if (not base_has_map) and not (
+                    sub_virtual == map_name
+                    or sub_virtual.startswith(map_name + '/')
+                ):
+                    continue
+
+            # For named maps where the virtual base does not include the map name,
+            # strip the leading map segment from the subpath.
+            map_subpath = sub_virtual
+            if map_name and map_name != '.':
+                if map_subpath == map_name:
+                    map_subpath = ''
+                elif map_subpath.startswith(map_name + '/'):
+                    map_subpath = map_subpath[len(map_name) + 1:]
+
+            # Query map writes: map to source_dir tree.
+            if is_query_map(map_config):
+                query_cfg = get_query_config(map_config) or {}
+                source_dir = _adjust_source_dir_for_layout(query_cfg.get('source_dir', 'Software'), system)
+                base = os.path.join(filestore, "Native", local_base, source_dir)
+                result = os.path.join(base, map_subpath) if map_subpath else base
+                logger.debug(f"Returning mapped query write path: {result}")
+                return result
+
+            # File/default-source map writes.
+            file_cfg = map_config.get('file')
+            if file_cfg:
+                source_path = file_cfg.get('path') if isinstance(file_cfg, dict) else str(file_cfg)
+                base = os.path.join(filestore, "Native", local_base, source_path)
+                if map_subpath:
+                    result = os.path.join(os.path.dirname(base), map_subpath)
+                else:
+                    result = base
+                logger.debug(f"Returning mapped file write path: {result}")
+                return result
+
+            ds = map_config.get('default_source') or {}
+            if "source_filename" in ds:
+                base = os.path.join(filestore, "Native", local_base, ds["source_filename"])
+                if map_subpath:
+                    result = os.path.join(os.path.dirname(base), map_subpath)
+                else:
+                    result = base
+                logger.debug(f"Returning mapped default_source write path: {result}")
+                return result
 
     path_template_parts = Path(client['default_target_path']).parts
     system_info = get_system_info(client, list(rel_parts), path_template_parts)
@@ -1047,7 +1215,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
             break
 
     # Fallback to regular path
-    local_base = system_info.get('local_base_path', '')
+    local_base = system_info.get('local_base_path', '') if system_info else ''
     if local_base:
         result = os.path.join(
             config.get("filestore", "/mnt/filestorefs"),
@@ -1056,6 +1224,17 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
             *rel_parts[2:]
         )
         logger.debug(f"Returning fallback write path: {result}")
+        return result
+
+    # Final fallback: if we have a client but no system match, allow writes to client-based path
+    # This handles clients like RetroBat that don't have system definitions but still need write support
+    if client:
+        result = os.path.join(
+            config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            *rel_parts[1:]  # Everything after the client name
+        )
+        logger.debug(f"Returning client-based fallback write path (no system match): {result}")
         return result
 
     return None

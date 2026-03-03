@@ -22,6 +22,12 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
     Returns:
         List of unique subdirectory names at the next level
     """
+    # Skip database query for paths that are obviously files (e.g., .zip files)
+    # These shouldn't have subdirectories anyway
+    if virtual_prefix.lower().endswith(('.zip', '.7z', '.rar', '.tar', '.gz')):
+        logger.debug(f"Skipping subdirectory query for file path: {virtual_prefix}")
+        return []
+    
     try:
         from db.connection import get_cursor, init_database
         from db import get_connection
@@ -30,9 +36,9 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         try:
             conn = get_connection()
             if conn is None:
-                init_database()
+                init_database(pool_size=50, max_overflow=100)
         except:
-            init_database()
+            init_database(pool_size=50, max_overflow=100)
         
         # Build the full path prefix, ensuring it ends with /
         if virtual_prefix.startswith('/'):
@@ -75,6 +81,57 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         
         subdirs = [row['subdir'] for row in rows if row['subdir'] and row['subdir'].strip()]
         logger.debug(f"Found {len(subdirs)} subdirectories under {full_prefix}: {subdirs}")
+        
+        # NOTE: Subdirectory filtering removed to prevent connection pool exhaustion
+        # Stale entries are caught in GETATTR when accessed, which is more efficient
+        
+        # FILESYSTEM FALLBACK: Check for files/dirs on disk not yet in database
+        # This handles files created via FUSE writes that haven't been synced
+        try:
+            from pathutils import get_client
+            from config import read_config
+            
+            config = read_config()
+            
+            # Try to resolve the virtual path to a physical backend location
+            # For category paths like /RetroBat/bios, we need to find the query map's source_dir
+            rel_parts = virtual_prefix.strip('/').split('/')
+            if len(rel_parts) >= 2:
+                client_name = rel_parts[0]
+                client = get_client(config, rel_parts)
+                
+                if client:
+                    # Check all systems for querymaps with matching category
+                    potential_category = rel_parts[-1]  # e.g., "bios" from "RetroBat/bios"
+                    filestore = config.get('filestore', '/mnt/filestorefs')
+                    
+                    for system in client.get('systems', []):
+                        for map_entry in system.get('maps', []):
+                            map_config = list(map_entry.values())[0]
+                            if isinstance(map_config, dict):
+                                if map_config.get('category') == 'shared_bios' and potential_category == 'bios':
+                                    # Found the matching query map
+                                    query_config = map_config.get('query', {})
+                                    source_dir = query_config.get('source_dir', '')
+                                    if source_dir:
+                                        local_base = system.get('local_base_path', '')
+                                        full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
+                                        
+                                        if os.path.exists(full_source_dir) and os.path.isdir(full_source_dir):
+                                            # Get existing database entries for comparison
+                                            db_names = set(subdirs)
+                                            
+                                            # Scan filesystem for entries not in database
+                                            show_hidden = config.get('show_hidden_files', True)
+                                            for entry in os.scandir(full_source_dir):
+                                                if show_hidden or not entry.name.startswith('.'):
+                                                    if entry.name not in db_names:
+                                                        subdirs.append(entry.name)
+                                                        logger.debug(f"Filesystem fallback added: {entry.name}")
+                                        break  # Found the matching map
+        except Exception as e:
+            logger.warning(f"Filesystem fallback error in _get_subdirectories_from_db: {e}")
+        
         return subdirs
     
     except Exception as e:
@@ -359,6 +416,9 @@ def parse_trans_path(config,root,full_path: str) -> list:
     """
     from pathutils import get_system_info
     
+    # Check if hidden files should be shown (default True for standard filesystem behavior)
+    show_hidden = config.get('show_hidden_files', True)
+    
     path = Path(full_path)
     root_parts = Path(root).parts
     lev = len(path.parts) - len(root_parts)
@@ -590,7 +650,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
                 try:
                     files_in_source = os.listdir(flat_source_path)
                     for fname in files_in_source:
-                        if not fname.startswith('.'):
+                        if show_hidden or not fname.startswith('.'):
                             maps.append(fname)
                             mapped_names.add(fname)
                 except OSError:
@@ -820,7 +880,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 return []
             entries = set()
             for entry in os.listdir(dir_path):
-                if entry.startswith('.'):
+                if not show_hidden and entry.startswith('.'):
                     continue
                 name, ext = os.path.splitext(entry)
                 ext = ext[1:].upper() if ext else ""
@@ -847,9 +907,86 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 break
 
         if not db_entries:
-            t_func_elapsed = time.time() - t_func_start
-            logger.info(f"list_query_map END: 0 entries in {t_func_elapsed:.2f}s")
-            return []
+            # FILESYSTEM FALLBACK: Check for files on disk not yet in database
+            # This handles files created via FUSE writes that haven't been synced
+            filestore = config.get( 'filestore', '/mnt/filestorefs')
+            full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir)
+            
+            # Determine current subpath
+            current_subpath = '/'.join(subpath) if subpath else ''
+            scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
+            
+            if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
+                fs_only_files = []
+                try:
+                    for entry in os.scandir(scan_dir):
+                        if show_hidden or not entry.name.startswith('.'):
+                            if entry.is_file():
+                                try:
+                                    stat_info = entry.stat()
+                                    _, ext = os.path.splitext(entry.name)
+                                    ext_upper = ext[1:].upper() if ext else ''
+                                    
+                                    # Create a minimal file record for filesystem file
+                                    fs_file_record = {
+                                        'filename': entry.name,
+                                        'source_path': entry.path,
+                                        'extension': ext_upper,
+                                        'size': stat_info.st_size,
+                                        'mtime': stat_info.st_mtime,
+                                    }
+                                    fs_only_files.append(fs_file_record)
+                                except:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Filesystem fallback error in list_query_map: {e}")
+                
+                if fs_only_files:
+                    logger.info(f"list_query_map: filesystem fallback found {len(fs_only_files)} files not in database")
+                    db_entries = fs_only_files
+            
+            if not db_entries:
+                t_func_elapsed = time.time() - t_func_start
+                logger.info(f"list_query_map END: 0 entries in {t_func_elapsed:.2f}s")
+                return []
+        
+        # FILESYSTEM MERGE: Even if database has results, check for additional files on disk
+        # This handles files created via FUSE writes that haven't been synced yet
+        filestore = config.get('filestore', '/mnt/filestorefs')
+        full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir)
+        current_subpath = '/'.join(subpath) if subpath else ''
+        scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
+        
+        if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
+            # Get existing database filenames
+            db_filenames = {entry.get('filename', '') if isinstance(entry, dict) else str(entry) for entry in db_entries}
+            
+            fs_only_files = []
+            try:
+                for entry in os.scandir(scan_dir):
+                    if show_hidden or not entry.name.startswith('.'):
+                        if entry.is_file() and entry.name not in db_filenames:
+                            try:
+                                stat_info = entry.stat()
+                                _, ext = os.path.splitext(entry.name)
+                                ext_upper = ext[1:].upper() if ext else ''
+                                
+                                fs_file_record = {
+                                    'filename': entry.name,
+                                    'source_path': entry.path,
+                                    'extension': ext_upper,
+                                    'size': stat_info.st_size,
+                                    'mtime': stat_info.st_mtime,
+                                }
+                                fs_only_files.append(fs_file_record)
+                            except:
+                                pass
+            except Exception as e:
+                logger.warning(f"Filesystem merge error in list_query_map: {e}")
+            
+            if fs_only_files:
+                logger.info(f"list_query_map: filesystem merge added {len(fs_only_files)} files not in database")
+                db_entries = list(db_entries) + fs_only_files
 
         entries: set[str] = set()
         zip_entries: list[str] = []
@@ -1288,7 +1425,7 @@ def list_dynamic_map(
                 logger.info(f"HIER ROOT: real_ext={real_ext}, dir_path={dir_path}, listdir_path will be={dir_path}")
                 t_start = time.time()
                 listdir_path = dir_path  # Use the resolved dir_path (may be fallback folder)
-                dir_entries = [e for e in os.listdir(listdir_path) if not e.startswith('.')]
+                dir_entries = [e for e in os.listdir(listdir_path) if show_hidden or not e.startswith('.')]
                 logger.info(f"HIER ROOT: listdir returned {len(dir_entries)} entries from {listdir_path}")
                 t_listdir = time.time() - t_start
                 if t_listdir > 0.5:
@@ -1336,7 +1473,7 @@ def list_dynamic_map(
                 # Use os.scandir() instead of os.listdir() for better performance
                 # scandir returns DirEntry objects that cache stat results
                 with os.scandir(full_dir_path) as entries_iter:
-                    dir_entries = [(e.name, e.is_dir()) for e in entries_iter if not e.name.startswith('.')]
+                    dir_entries = [(e.name, e.is_dir()) for e in entries_iter if show_hidden or not e.name.startswith('.')]
                 t_listdir = time.time() - t_start
                 if t_listdir > 0.5:
                     logger.warning(f"SLOW os.scandir({full_dir_path}) took {t_listdir:.2f}s for {len(dir_entries)} entries")
@@ -1379,7 +1516,7 @@ def list_dynamic_map(
                 try:
                     with os.scandir(scan_path) as it:
                         for entry in it:
-                            if entry.name.startswith('.'):
+                            if not show_hidden and entry.name.startswith('.'):
                                 continue
                             if entry.is_dir(follow_symlinks=False):
                                 entries.add(entry.name)
@@ -1401,7 +1538,7 @@ def list_dynamic_map(
 
             # Deeper paths: never enter ZIPs, only list real filesystem
             try:
-                dir_entries = [e for e in os.listdir(dir_path) if not e.startswith('.')]
+                dir_entries = [e for e in os.listdir(dir_path) if show_hidden or not e.startswith('.')]
             except Exception:
                 continue
             for entry in dir_entries:
@@ -1420,7 +1557,7 @@ def list_dynamic_map(
         elif zip_mode == "flatten":
             # Merge ZIP contents into parent directory listing (performance warning)
             if not subpath:
-                dir_entries = [e for e in os.listdir(os.path.join(source_dir, ext_dir_name)) if not e.startswith('.')]
+                dir_entries = [e for e in os.listdir(os.path.join(source_dir, ext_dir_name)) if show_hidden or not e.startswith('.')]
                 for entry in dir_entries:
                     entry_path = os.path.join(source_dir, ext_dir_name, entry)
                     if os.path.isdir(entry_path):
@@ -1461,7 +1598,7 @@ def list_dynamic_map(
                 continue
 
             try:
-                dir_entries = [e for e in os.listdir(dir_path) if not e.startswith('.')]
+                dir_entries = [e for e in os.listdir(dir_path) if show_hidden or not e.startswith('.')]
             except Exception:
                 continue
             for entry in dir_entries:
