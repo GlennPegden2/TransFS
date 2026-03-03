@@ -26,6 +26,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Eliminates 400-800ms database queries that were repeatedly hitting the same empty directory paths
   - Performance improvement: **11,000x faster** for cached empty directory checks (1,472ms → 0.2ms)
   - Directly addresses slow deletion operations (previously ~2 items/second) during multi-folder deletes
+- **READDIR performance optimization**: Eliminated redundant `get_source_path()` calls in directory listing loop
+  - Removed per-entry `get_source_path()` call that was executing 44x for directories with 44 files
+  - Reuses cached pipeline information from source_paths dictionary instead of recalculating
+  - Falls back to system_transform_map for efficient transform lookups
+  - Performance: **3-4x faster** initial directory access (600-900ms → 145-220ms)
+  - Performance: **2x faster** subsequent directory access (100ms → 20-60ms)
+  - Dramatically improves directory traversal responsiveness in File Explorer and SMB clients
 
 ### Fixed
 - **Setup Clients host fallback and script template resolution**: Fixed two setup onboarding issues for non-local clients
