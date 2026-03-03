@@ -98,6 +98,8 @@ class TransFS(Passthrough):
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
         self._db_readdir_cache = {}  # path -> (timestamp, db_files)
         self._db_readdir_cache_ttl = 120.0  # seconds
+        self._scandir_cache = {}  # path -> (timestamp, list of entry names) for rapid rescan caching
+        self._SCANDIR_CACHE_TTL = 0.200  # 200ms TTL for scandir cache (catches rapid rescans after UNLINK)
         from config import read_config
         self.config = read_config()
         
@@ -1083,6 +1085,35 @@ class TransFS(Passthrough):
             logger.error(f"OPEN_DB_ONLY: error: {e}", exc_info=True)
             return None
 
+    def _get_cached_scandir_entries(self, directory: str) -> tuple:
+        """
+        Get directory entries with short-lived cache.
+        
+        Returns a tuple (entries_list, is_cache_hit) where:
+        - entries_list: list of entry names
+        - is_cache_hit: True if served from cache, False if fresh scan
+        
+        This dramatically speeds up rapid consecutive READDIR calls on the same directory,
+        which happens when the file manager rescans after each UNLINK operation.
+        """
+        now = time.time()
+        if directory in self._scandir_cache:
+            cached_time, cached_entries = self._scandir_cache[directory]
+            if now - cached_time < self._SCANDIR_CACHE_TTL:
+                return (cached_entries, True)  # Cache hit
+        
+        # Cache miss or expired - perform actual scandir
+        entries = []
+        try:
+            with os.scandir(directory) as dir_entries:
+                entries = [entry.name for entry in dir_entries]
+            # Cache the results
+            self._scandir_cache[directory] = (now, entries)
+        except OSError:
+            pass  # Return empty list on error
+        
+        return (entries, False)  # Cache miss
+    
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
         Read directory entries with FULL attributes (readdirplus support).
@@ -1428,7 +1459,7 @@ class TransFS(Passthrough):
         if allow_implicit_entries and os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
             existing = set(virtual_entries)
             
-            # Scan the main directory
+            # Scan the main directory (with caching for rapid rescans after UNLINK)
             try:
                 # Get parent directory mtime once for cache validation
                 parent_dir_mtime = os.path.getmtime(parent_dir)
@@ -1436,21 +1467,42 @@ class TransFS(Passthrough):
                 # Check if hidden files should be shown
                 show_hidden = self.config.get('show_hidden_files', True)
                 
-                with os.scandir(parent_dir) as entries:
-                    for entry in entries:
+                # Try to use cached scandir results if available (200ms TTL for rapid rescans)
+                cached_entry_names, is_cache_hit = self._get_cached_scandir_entries(parent_dir)
+                
+                if is_cache_hit:
+                    # Cache hit - use cached names and skip DirEntry population
+                    logger.debug(f"READDIR: scandir cache hit for {parent_dir} ({len(cached_entry_names)} entries)")
+                    for entry_name in cached_entry_names:
                         # Skip hidden files (starting with .) if show_hidden_files is False
                         # Skip subdirectories that are extension folders (they'll be merged)
-                        if not show_hidden and entry.name.startswith('.'):
+                        if not show_hidden and entry_name.startswith('.'):
                             continue
-                        if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
-                            continue  # Skip extension subdirs like BIN/, ROM/, A52/
-                        if direntry_cache_enabled:
-                            dir_entry_cache[entry.name] = entry
-                        if entry.name not in existing:
-                            virtual_entries.append(entry.name)
-                            # Cache the DirEntry object for later stat access
-                            if not direntry_cache_enabled:
+                        # Check if it's an extension subdir by trying to open it
+                        if entry_name.isupper() and 2 <= len(entry_name) <= 4:
+                            entry_path = os.path.join(parent_dir, entry_name)
+                            if os.path.isdir(entry_path):
+                                continue  # Skip extension subdirs like BIN/, ROM/, A52/
+                        if entry_name not in existing:
+                            virtual_entries.append(entry_name)
+                else:
+                    # Cache miss - use fresh scandir and populate DirEntry cache
+                    logger.debug(f"READDIR: scandir cache miss for {parent_dir}, doing full scan")
+                    with os.scandir(parent_dir) as entries:
+                        for entry in entries:
+                            # Skip hidden files (starting with .) if show_hidden_files is False
+                            # Skip subdirectories that are extension folders (they'll be merged)
+                            if not show_hidden and entry.name.startswith('.'):
+                                continue
+                            if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
+                                continue  # Skip extension subdirs like BIN/, ROM/, A52/
+                            if direntry_cache_enabled:
                                 dir_entry_cache[entry.name] = entry
+                            if entry.name not in existing:
+                                virtual_entries.append(entry.name)
+                                # Cache the DirEntry object for later stat access
+                                if not direntry_cache_enabled:
+                                    dir_entry_cache[entry.name] = entry
             except OSError as e:
                 logger.warning(f"READDIR: scandir failed for {parent_dir}: {e}")
             
@@ -3107,7 +3159,7 @@ class TransFS(Passthrough):
         parent_path = self._inode_to_path(parent_inode)
         path = os.path.join(parent_path, name_str)
         
-        # Time the expensive operations to find bottleneck
+        # Get real path first (before invalidating cache)
         t_get_path_start = time.time()
         real_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
         t_get_path = time.time() - t_get_path_start
@@ -3126,6 +3178,13 @@ class TransFS(Passthrough):
             
             elapsed = time.time() - start_time
             logger.info(f"UNLINK COMPLETE: {name_str} total={elapsed:.3f}s get_path={t_get_path:.3f}s unlink={t_unlink:.3f}s")
+            
+            # Invalidate scandir cache for the parent directory so next READDIR gets fresh data
+            # Convert virtual path to real path for cache key
+            parent_real_path = get_source_path_for_write(logger, self.config, self.mount_path, parent_path)
+            if parent_real_path and parent_real_path in self._scandir_cache:
+                del self._scandir_cache[parent_real_path]
+                logger.debug(f"UNLINK: invalidated scandir cache for {parent_real_path}")
         except OSError as exc:
             elapsed = time.time() - start_time
             logger.info("UNLINK ERROR: %s after %.3fs (errno=%s)", name_str, elapsed, exc.errno)
