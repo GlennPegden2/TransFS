@@ -1237,7 +1237,12 @@ class TransFS(Passthrough):
         
         xfull_path = path
         # Get the real source path for this directory (handles virtual mappings)
+        t_source_path_start = time.time()
         parent_source = get_source_path(logger, self.config, self.mount_path, xfull_path)
+        t_source_path = time.time() - t_source_path_start
+        if t_source_path > 0.1:
+            logger.warning(f"READDIR SLOW: get_source_path took {t_source_path:.3f}s for {xfull_path}")
+        
         if isinstance(parent_source, dict) and 'path' in parent_source:
             parent_dir = parent_source['path']
         elif isinstance(parent_source, str):
@@ -1887,24 +1892,14 @@ class TransFS(Passthrough):
             source_type, source_data = source_paths.get(entry_name, ('', None))
             pipeline = None
             
-            # First try to get source path to trigger detection with real file
-            try:
-                source_result = get_source_path(
-                    logger, self.config, parent_path, entry_name
-                )
-                if isinstance(source_result, dict) and 'transform_pipeline' in source_result:
-                    pipeline = source_result['transform_pipeline']
-            except Exception:
-                pass
-            
-            # Fall back to cached pipeline from initialization
-            if not pipeline:
-                if isinstance(source_data, dict):
-                    pipeline = source_data.get('transform_pipeline')
-                if not pipeline and system_transform_map:
-                    _, ext = os.path.splitext(entry_name)
-                    ext = ext[1:].upper() if ext else ""
-                    pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
+            # Use cached pipeline from source_paths (avoid expensive get_source_path call per entry)
+            if isinstance(source_data, dict) and 'transform_pipeline' in source_data:
+                pipeline = source_data.get('transform_pipeline')
+            elif system_transform_map:
+                # Fall back to system transform map
+                _, ext = os.path.splitext(entry_name)
+                ext = ext[1:].upper() if ext else ""
+                pipeline = system_transform_map.get(ext) or system_transform_map.get(ext.lower())
             
             if pipeline:
                 effective_ext = pipeline.get_effective_output_extension()
