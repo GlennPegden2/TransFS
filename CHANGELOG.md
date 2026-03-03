@@ -35,6 +35,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Dramatically improves directory traversal responsiveness in File Explorer and SMB clients
 
 ### Fixed
+- **Critical deletion slowness**: Fixed 100-200+ second hangs during folder deletion
+  - **Root cause**: Duplicate detection query used `regexp_replace(virtual_path, '/[^/]+$', '')` on every row
+  - Regex operations cannot use indexes, causing full table scan during deletion cascade
+  - **Solution**: Changed to `virtual_path LIKE 'target_dir/%'` which uses existing index
+  - **Performance**: Deletion now completes in seconds instead of minutes
 - **Setup Clients host fallback and script template resolution**: Fixed two setup onboarding issues for non-local clients
   - Setup profile now avoids loopback-only hostnames and falls back to `AVAHI_HOSTNAME` (default `transfs.local`) when request host is `localhost`
   - `/api/download/setup-windows` now searches multiple runtime-safe template paths, including `/app/setup_windows.ps1.template`
