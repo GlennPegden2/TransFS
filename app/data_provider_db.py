@@ -37,7 +37,7 @@ class DatabaseDataProvider(DataProvider):
         try:
             # Initialize database schema if needed
             # Use larger pool for concurrent FUSE operations
-            init_database(pool_size=20, max_overflow=30)
+            init_database(pool_size=30, max_overflow=40)
             
             # Check if we should sync on startup
             db_config = self.config.get('database', {})
