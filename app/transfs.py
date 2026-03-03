@@ -3072,6 +3072,7 @@ class TransFS(Passthrough):
     async def unlink(self, parent_inode: InodeT, name: bytes, ctx):
         """Delete a file."""
         name_str = name.decode('utf-8') if isinstance(name, bytes) else name
+        start_time = time.time()
         logger.debug("UNLINK: called with name=%s", name_str)
         
         parent_path = self._inode_to_path(parent_inode)
@@ -3087,7 +3088,12 @@ class TransFS(Passthrough):
         try:
             inode = os.lstat(real_path).st_ino
             os.unlink(real_path)
+            elapsed = time.time() - start_time
+            if elapsed > 0.1:  # Log slow operations
+                logger.info("UNLINK SLOW: %s took %.3fs", name_str, elapsed)
         except OSError as exc:
+            elapsed = time.time() - start_time
+            logger.info("UNLINK ERROR: %s after %.3fs (errno=%s)", name_str, elapsed, exc.errno)
             raise FUSEError(exc.errno)
         
         if inode in self._lookup_cnt:

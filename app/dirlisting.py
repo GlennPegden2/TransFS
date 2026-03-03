@@ -22,6 +22,9 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
     Returns:
         List of unique subdirectory names at the next level
     """
+    import time as time_module
+    query_start = time_module.time()
+    
     # Skip database query for paths that are obviously files (e.g., .zip files)
     # These shouldn't have subdirectories anyway
     if virtual_prefix.lower().endswith(('.zip', '.7z', '.rar', '.tar', '.gz')):
@@ -39,6 +42,10 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                 init_database(pool_size=30, max_overflow=40)
         except:
             init_database(pool_size=30, max_overflow=40)
+        
+        db_start = time.time() if 'time' in dir() else None
+        import time as time_module
+        db_start = time_module.time()
         
         # Build the full path prefix, ensuring it ends with /
         if virtual_prefix.startswith('/'):
@@ -132,10 +139,14 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         except Exception as e:
             logger.warning(f"Filesystem fallback error in _get_subdirectories_from_db: {e}")
         
+        elapsed = time_module.time() - query_start
+        if elapsed > 0.1:  # Log slow queries
+            logger.info(f"DB_QUERY SLOW: _get_subdirectories_from_db({virtual_prefix}) returned {len(subdirs)} subdirs in {elapsed:.3f}s")
         return subdirs
     
     except Exception as e:
-        logger.error(f"Error querying subdirectories from database for {virtual_prefix}: {e}")
+        elapsed = time_module.time() - query_start
+        logger.error(f"Error querying subdirectories from database for {virtual_prefix}: {e} (after {elapsed:.3f}s)")
         return []
 
 

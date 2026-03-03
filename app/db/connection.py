@@ -128,7 +128,16 @@ def get_connection():
     if _connection_pool is None:
         raise RuntimeError("Database not initialized. Call init_database() first.")
     
-    return _connection_pool.getconn()
+    import time as time_module
+    wait_start = time_module.time()
+    conn = _connection_pool.getconn()
+    wait_time = time_module.time() - wait_start
+    
+    # Log if we had to wait for a connection (performance indicator)
+    if wait_time > 0.01:
+        logger.debug(f"Connection pool wait: {wait_time:.3f}s (may indicate pool exhaustion)")
+    
+    return conn
 
 
 def return_connection(conn):
