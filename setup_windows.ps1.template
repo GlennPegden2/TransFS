@@ -34,20 +34,20 @@ function Test-IsAdmin {
 
 if (-not (Test-IsAdmin)) {
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+	Write-Host "===============================================================" -ForegroundColor Cyan
 	Write-Host "ADMINISTRATOR PRIVILEGES REQUIRED" -ForegroundColor Yellow
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+	Write-Host "===============================================================" -ForegroundColor Cyan
 	Write-Host ""
 	Write-Host "This script needs administrator access to configure SMB drive mapping." -ForegroundColor White
 	Write-Host ""
 	Write-Host "Why:" -ForegroundColor Cyan
-	Write-Host "  • Windows SMB client doesn't natively support custom ports in standard commands" -ForegroundColor Gray
-	Write-Host "  • TransFS Docker uses port {{TRANSFS_SMB_PORT}} (mapped from container's 445) for isolation" -ForegroundColor Gray
-	Write-Host "  • Configuring this requires system-level settings (New-SmbGlobalMapping cmdlet)" -ForegroundColor Gray
-	Write-Host "  • This is a one-time setup cost for secure network isolation" -ForegroundColor Gray
+	Write-Host "  * Windows SMB client doesn't natively support custom ports in standard commands" -ForegroundColor Gray
+	Write-Host "  * TransFS Docker uses port {{TRANSFS_SMB_PORT}} (mapped from container's 445) for isolation" -ForegroundColor Gray
+	Write-Host "  * Configuring this requires system-level settings (New-SmbGlobalMapping cmdlet)" -ForegroundColor Gray
+	Write-Host "  * This is a one-time setup cost for secure network isolation" -ForegroundColor Gray
 	Write-Host ""
-	Write-Host "Relaunching with administrator privileges..." -ForegroundColor Cyan
-	Write-Host ""
+	Write-Host "Press any key to relaunch with administrator privileges..." -ForegroundColor Cyan
+	$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 	
 	$scriptPath = $MyInvocation.MyCommand.Path
 	Start-Process powershell.exe -Verb RunAs -ArgumentList ("-NoExit", "-File", "`"$scriptPath`"") -Wait
