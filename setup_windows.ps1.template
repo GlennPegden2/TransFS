@@ -1,6 +1,6 @@
 <# 
 =============================================================================
-TransFS RetroBat BIOS Setup Script
+TransFS RetroBat Shared BIOS Copy Setup Script
 =============================================================================
 
 This script automates the setup of RetroBat BIOS files on a TransFS share.
@@ -765,7 +765,7 @@ function Update-RomPaths([string]$RetroBatDir, [string]$NativeDriveLetter) {
 
 try {
 	Write-Host ""
-	Write-Host "TransFS RetroBat BIOS Setup" -ForegroundColor White
+	Write-Host "TransFS RetroBat Shared BIOS Copy Setup" -ForegroundColor White
 	Write-Host "==========================" -ForegroundColor White
 
 	Write-Info "Loading stored settings from registry..."
@@ -787,7 +787,7 @@ try {
 		Write-Info "For BIOSes to work properly on the network share, we need to copy files from your local RetroBat install"
 		Write-Info "and modify 1 config file. This should be safe to do multiple times, and the config file is backed up."
 		Write-Info ""
-		$proceedWithBios = Prompt-WithDefault "Would you like to proceed with RetroBat BIOS folder setup? (Y/N)" "N"
+		$proceedWithBios = Prompt-WithDefault "Would you like to copy RetroBat shared BIOS files to the network share? (Y/N)" "N"
 		if ($proceedWithBios.ToUpperInvariant() -ne "Y") {
 			Write-Info "Skipped BIOS setup."
 			Write-Host ""
