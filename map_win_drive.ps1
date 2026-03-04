@@ -1,34 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Check if running as Administrator; self-elevate if needed
-function Test-IsAdmin {
-	$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-	return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-if (-not (Test-IsAdmin)) {
-	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-	Write-Host "ADMINISTRATOR PRIVILEGES REQUIRED" -ForegroundColor Yellow
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-	Write-Host ""
-	Write-Host "This script needs administrator access to configure SMB drive mapping." -ForegroundColor White
-	Write-Host ""
-	Write-Host "Why:" -ForegroundColor Cyan
-	Write-Host "  • Windows SMB client doesn't support custom ports via standard commands" -ForegroundColor Gray
-	Write-Host "  • TransFS Docker uses port 3445 (mapped from container's 445) for isolation" -ForegroundColor Gray
-	Write-Host "  • Configuring this requires system-level settings (New-SmbGlobalMapping cmdlet)" -ForegroundColor Gray
-	Write-Host "  • This is a one-time setup cost for secure network isolation" -ForegroundColor Gray
-	Write-Host ""
-	Write-Host "Relaunching with administrator privileges..." -ForegroundColor Cyan
-	Write-Host ""
-	
-	$scriptPath = $MyInvocation.MyCommand.Path
-	Start-Process powershell.exe -Verb RunAs -ArgumentList ("-NoExit", "-File", "`"$scriptPath`"") -Wait
-	exit
-}
-
 $RegistryRoot = "HKCU:\Software\TransFS\RetroBatSync"
 
 function Write-Info([string]$Message) { Write-Host "[INFO] $Message" -ForegroundColor Cyan }
