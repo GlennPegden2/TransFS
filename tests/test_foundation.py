@@ -293,8 +293,13 @@ class TestWriteCapabilities:
         self._write_and_cleanup(target_dir, "mister_archimedes")
 
 
+@pytest.mark.slow
 class TestSmbFoundation:
-    """Foundation tests that exercise read/write/delete through Samba."""
+    """Foundation tests that exercise read/write/delete through Samba.
+    
+    WARNING: These tests are known to hang when run as part of a larger test suite.
+    When working on other tests, skip SMB tests with: pytest -m "not slow"
+    """
 
     SMB_HOST_CANDIDATES = ("127.0.0.1", "localhost", "transfs")
     SMB_PORT = 445
