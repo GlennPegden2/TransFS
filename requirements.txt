@@ -14,6 +14,7 @@ mega.py
 py7zr
 psutil
 psycopg2-binary>=2.9.9
+smbprotocol>=1.13.0
 
 # Development and Testing Dependencies
 # Install with: pip install -r requirements-dev.txt

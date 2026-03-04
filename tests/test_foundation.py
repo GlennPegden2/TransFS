@@ -12,6 +12,8 @@ All other tests depend on these passing.
 
 import os
 import logging
+import hashlib
+import tempfile
 import pytest
 from pathlib import Path
 from uuid import uuid4
@@ -289,3 +291,164 @@ class TestWriteCapabilities:
         assert target_dir is not None, "MiSTer Archimedes folder not present in TransFS mount"
 
         self._write_and_cleanup(target_dir, "mister_archimedes")
+
+
+class TestSmbFoundation:
+    """Foundation tests that exercise read/write/delete through Samba."""
+
+    SMB_HOST_CANDIDATES = ("127.0.0.1", "localhost", "transfs")
+    SMB_PORT = 445
+    SMB_SHARE = "TransFS"
+    SMB_USER = "root"
+    SMB_PASSWORD = "1"
+    SMB_CLIENT_NAME = "transfs-pytest"
+    SMB_SERVER_NAME = "TRANSFS"
+
+    @classmethod
+    def _connect(cls):
+        try:
+            import smbclient
+        except ImportError:
+            pytest.skip("smbprotocol/smbclient not installed in test environment")
+
+        last_error = None
+        for host in cls.SMB_HOST_CANDIDATES:
+            try:
+                smbclient.register_session(
+                    host,
+                    username=cls.SMB_USER,
+                    password=cls.SMB_PASSWORD,
+                    port=cls.SMB_PORT,
+                )
+                smbclient.listdir(f"\\\\{host}\\{cls.SMB_SHARE}")
+                return smbclient, host
+            except Exception as error:
+                last_error = error
+
+        pytest.fail(
+            "Unable to connect to Samba for foundation tests via "
+            f"{cls.SMB_HOST_CANDIDATES}: {last_error}"
+        )
+
+    @classmethod
+    def _assert_remote_dir_exists(cls, smbclient_module, host: str, remote_dir: str) -> bool:
+        try:
+            normalized_remote_dir = remote_dir.strip('/').replace('/', '\\')
+            return smbclient_module.path.isdir(
+                f"\\\\{host}\\{cls.SMB_SHARE}\\{normalized_remote_dir}"
+            )
+        except Exception:
+            return False
+
+    @classmethod
+    def _unc_path(cls, host: str, relative_path: str = "") -> str:
+        normalized_relative = relative_path.strip('/').replace('/', '\\')
+        if not normalized_relative:
+            return f"\\\\{host}\\{cls.SMB_SHARE}"
+        return f"\\\\{host}\\{cls.SMB_SHARE}\\{normalized_relative}"
+
+    def _resolve_remote_test_dir(self, smbclient_module, host: str):
+        candidates = [
+            "RetroBat/bios",
+            "Retrobat/bios",
+            "MiSTer/Archie",
+            "MiSTer/Archimedes",
+        ]
+
+        for candidate in candidates:
+            if self._assert_remote_dir_exists(smbclient_module, host, candidate):
+                return candidate
+
+        root_unc = self._unc_path(host)
+        if smbclient_module.path.isdir(root_unc):
+            return ""
+
+        pytest.skip("No writable SMB directory found in TransFS share")
+
+    def test_smb_write_read_delete_roundtrip(self):
+        """Verify SMB share supports write, reread, and delete through Samba."""
+        smbclient_module, host = self._connect()
+        try:
+            remote_dir = self._resolve_remote_test_dir(smbclient_module, host)
+            filename = f"smb_roundtrip_{uuid4().hex}.bin"
+            remote_file_path = f"{remote_dir}/{filename}" if remote_dir else filename
+            unc_remote_file_path = self._unc_path(host, remote_file_path)
+            payload = b"transfs-smb-roundtrip-test"
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_get_path = Path(temp_dir) / "get_payload.bin"
+
+                with smbclient_module.open_file(
+                    unc_remote_file_path,
+                    mode="wb",
+                    share_access="rwd",
+                ) as remote_handle:
+                    remote_handle.write(payload)
+
+                try:
+                    with smbclient_module.open_file(
+                        unc_remote_file_path,
+                        mode="rb",
+                        share_access="rwd",
+                    ) as remote_handle:
+                        local_get_path.write_bytes(remote_handle.read())
+
+                    assert local_get_path.exists(), "SMB retrieve did not create local output file"
+                    assert local_get_path.read_bytes() == payload, "SMB readback payload mismatch"
+                finally:
+                    smbclient_module.remove(unc_remote_file_path)
+
+                    assert not smbclient_module.path.exists(unc_remote_file_path), (
+                        f"SMB test file still exists: {remote_file_path}"
+                    )
+        finally:
+            try:
+                smbclient_module.delete_session(host)
+            except Exception:
+                pass
+
+    def test_smb_can_read_large_file_over_1mb(self):
+        """Verify SMB layer can transfer files larger than 1MB without truncation."""
+        smbclient_module, host = self._connect()
+        try:
+            remote_dir = self._resolve_remote_test_dir(smbclient_module, host)
+            filename = f"smb_large_{uuid4().hex}.bin"
+            remote_file_path = f"{remote_dir}/{filename}" if remote_dir else filename
+            unc_remote_file_path = self._unc_path(host, remote_file_path)
+            payload_size_bytes = 2 * 1024 * 1024
+            expected_payload = os.urandom(payload_size_bytes)
+            expected_hash = hashlib.sha256(expected_payload).hexdigest()
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_get_path = Path(temp_dir) / "large_get.bin"
+
+                with smbclient_module.open_file(
+                    unc_remote_file_path,
+                    mode="wb",
+                    share_access="rwd",
+                ) as remote_handle:
+                    remote_handle.write(expected_payload)
+
+                try:
+                    with smbclient_module.open_file(
+                        unc_remote_file_path,
+                        mode="rb",
+                        share_access="rwd",
+                    ) as remote_handle:
+                        local_get_path.write_bytes(remote_handle.read())
+
+                    assert local_get_path.exists(), "SMB retrieve did not produce large output file"
+                    actual_size = local_get_path.stat().st_size
+                    assert actual_size == payload_size_bytes, (
+                        f"Large SMB read returned wrong size: {actual_size} != {payload_size_bytes}"
+                    )
+
+                    actual_hash = hashlib.sha256(local_get_path.read_bytes()).hexdigest()
+                    assert actual_hash == expected_hash, "Large SMB readback hash mismatch"
+                finally:
+                    smbclient_module.remove(unc_remote_file_path)
+        finally:
+            try:
+                smbclient_module.delete_session(host)
+            except Exception:
+                pass

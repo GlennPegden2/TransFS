@@ -355,288 +355,293 @@ function Get-RetroBatInstallDir {
 	return $null
 }
 
-function Resolve-TransFSShare([hashtable]$Defaults) {
-	# Ensure Defaults is initialized
+function Get-MameInstallDir {
+	# Check registry for standalone MAME installations
+	$regCandidates = @(
+		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\MAME" },
+		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\WOW6432Node\MAME" },
+		@{ Hive = "HKCU:"; SubKey = "SOFTWARE\MAME" }
+	)
+
+	foreach ($candidate in $regCandidates) {
+		$keyPath = Join-Path $candidate.Hive $candidate.SubKey
+		if (Test-Path $keyPath) {
+			$item = Get-ItemProperty -Path $keyPath
+			foreach ($name in @("InstallPath", "RootPath", "Path")) {
+				if ($item.PSObject.Properties.Name -contains $name) {
+					$pathValue = [string]$item.$name
+					if (-not [string]::IsNullOrWhiteSpace($pathValue) -and (Test-Path $pathValue)) {
+						# Look for mame.exe or mame64.exe
+						if ((Test-Path (Join-Path $pathValue "mame.exe")) -or (Test-Path (Join-Path $pathValue "mame64.exe"))) {
+							return $pathValue
+						}
+					}
+				}
+			}
+		}
+	}
+
+	# Common fallback paths for standalone MAME
+	$fallbacks = @("C:\MAME", "D:\MAME", "C:\Games\MAME", "D:\Games\MAME", "E:\MAME", "C:\Program Files\MAME", "C:\Program Files (x86)\MAME")
+	foreach ($path in $fallbacks) {
+		if ((Test-Path (Join-Path $path "mame.exe")) -or (Test-Path (Join-Path $path "mame64.exe"))) {
+			return $path
+		}
+	}
+
+	return $null
+}
+
+function Get-ConnectionConfig([hashtable]$Defaults) {
+	# Simplified connection configuration - just collect server, port, username
 	if (-not $Defaults) {
 		$Defaults = @{}
 	}
 	
-	while ($true) {
-		Write-Host ""
-		Write-Host "Select TransFS path type:" -ForegroundColor White
-		Write-Host "  1) Existing mapped drive" -ForegroundColor White
-		Write-Host "  2) UNC path (standard SMB port)" -ForegroundColor White
-		Write-Host "  3) UNC path on non-standard SMB port" -ForegroundColor White
+	Write-Host ""
+	Write-Host "TransFS Connection Configuration" -ForegroundColor White
+	Write-Host "================================" -ForegroundColor White
+	Write-Info "Enter connection details for your TransFS SMB server"
+	Write-Host ""
 
-		$defaultMode = if ($Defaults['Mode']) { [string]$Defaults['Mode'] } else { "3" }
-		$mode = Prompt-WithDefault "Choose 1/2/3" $defaultMode
+	$defaultServerName = if ($Defaults.ContainsKey("ServerName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ServerName'])) { [string]$Defaults['ServerName'] } else { $DefaultSmbHost }
+	$defaultSmbPort = if ($Defaults.ContainsKey("SmbPort") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['SmbPort'])) { [string]$Defaults['SmbPort'] } else { $DefaultSmbPort }
+	$defaultMappingScope = if ($Defaults.ContainsKey("MappingScope") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['MappingScope'])) { [string]$Defaults['MappingScope'] } else { "1" }
 
-		switch ($mode) {
-			"1" {
-				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "" }
-				$defaultNativeShareRoot = if ($Defaults['NativeShareRoot']) { [string]$Defaults['NativeShareRoot'] } else { "" }
-				$useBrowser = Prompt-WithDefault "Use folder browser? (Y/N)" "Y"
-				if ($useBrowser.ToUpperInvariant() -eq "Y") {
-					$selected = Select-FolderDialog "Select mapped drive root or share folder" $defaultShareRoot
-					if ($selected) {
-						$shareRoot = $selected
-					}
-					else {
-						Write-WarnMsg "No folder selected."
-						continue
-					}
-				}
-				else {
-					$shareRoot = Prompt-WithDefault "Enter mapped drive path (example: U:\\ or U:\\TransFS)" $defaultShareRoot
-				}
+	$serverName = Prompt-WithDefault "SMB server hostname/IP" $defaultServerName
+	$smbPort = Prompt-WithDefault "SMB TCP port" $defaultSmbPort
 
-				$nativeShareRoot = Prompt-WithDefault "Enter mapped NATIVE drive path (example: V:\\)" $defaultNativeShareRoot
+	if ($smbPort -notmatch '^[0-9]+$') {
+		Write-ErrMsg "Port must be numeric."
+		return $null
+	}
 
-				if (-not (Test-Path $shareRoot -PathType Container)) {
-					Write-ErrMsg "Path does not exist: $shareRoot"
-					continue
-				}
-				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
-					Write-ErrMsg "Native path does not exist: $nativeShareRoot"
-					continue
-				}
+	Write-Host ""
+	Write-Host "Select mapping scope:" -ForegroundColor White
+	Write-Host "  1) Current user only (recommended, no admin required)" -ForegroundColor White
+	Write-Host "  2) All users (requires running PowerShell as Administrator)" -ForegroundColor White
+	$mappingScope = Prompt-WithDefault "Choose 1/2" $defaultMappingScope
+	if ($mappingScope -notin @('1', '2')) {
+		Write-ErrMsg "Invalid mapping scope. Choose 1 or 2."
+		return $null
+	}
 
-				if (-not (Test-PathWritable $shareRoot)) {
-					Write-ErrMsg "Path is not writable: $shareRoot"
-					continue
-				}
-				if (-not (Test-PathWritable $nativeShareRoot)) {
-					Write-ErrMsg "Native path is not writable: $nativeShareRoot"
-					continue
-				}
+	Write-Host ""
+	Write-Host "Credentials Required" -ForegroundColor Cyan
+	Write-Host "  - TransFS SMB credentials (configured in app.yaml)" -ForegroundColor Gray
+	Write-Host "  - Default: $DefaultSmbUsername / <password>" -ForegroundColor Gray
+	Write-Host ""
+	$creds = Get-TransFSCredential -DefaultUserName $DefaultSmbUsername
+	
+	if (-not $creds) {
+		Write-ErrMsg "Credentials required for SMB access"
+		return $null
+	}
 
-				return @{
-					Mode = "1"
-					ShareRoot = (Resolve-Path $shareRoot).Path
-					NativeShareRoot = (Resolve-Path $nativeShareRoot).Path
-					DriveLetter = ""
-					NativeDriveLetter = ""
-					ServerName = ""
-					ShareName = ""
-					NativeShareName = ""
-					SmbPort = ""
-				}
-			}
-			"2" {
-				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "\\server\share" }
-				$defaultNativeShareRoot = if ($Defaults['NativeShareRoot']) { [string]$Defaults['NativeShareRoot'] } else { "\\server\TransFSNative" }
-				$shareRoot = Prompt-WithDefault "Enter UNC path (example: \\server\share)" $defaultShareRoot
-				$nativeShareRoot = Prompt-WithDefault "Enter UNC NATIVE path (example: \\server\TransFSNative)" $defaultNativeShareRoot
+	return @{
+		ServerName = $serverName
+		SmbPort = ([int]$smbPort)
+		MappingScope = $mappingScope
+		UseGlobalMapping = ($mappingScope -eq '2')
+		Credential = $creds
+	}
+}
 
-				if ($shareRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
-					Write-ErrMsg "Invalid UNC format."
-					continue
-				}
-				if ($nativeShareRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
-					Write-ErrMsg "Invalid native UNC format."
-					continue
-				}
-				if ($shareRoot -match ':[0-9]+') {
-					Write-WarnMsg "UNC with custom port requires a mapped drive. Choose option 3."
-					continue
-				}
-				if ($nativeShareRoot -match ':[0-9]+') {
-					Write-WarnMsg "Native UNC with custom port requires a mapped drive. Choose option 3."
-					continue
-				}
-				if (-not (Test-Path $shareRoot -PathType Container)) {
-					Write-ErrMsg "UNC path not reachable: $shareRoot"
-					continue
-				}
-				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
-					Write-ErrMsg "Native UNC path not reachable: $nativeShareRoot"
-					continue
-				}
-				if (-not (Test-PathWritable $shareRoot)) {
-					Write-ErrMsg "UNC path is not writable: $shareRoot"
-					continue
-				}
-				if (-not (Test-PathWritable $nativeShareRoot)) {
-					Write-ErrMsg "Native UNC path is not writable: $nativeShareRoot"
-					continue
-				}
+function New-TransFSDriveMapping(
+	[string]$DriveLetter,
+	[string]$VirtualPath,
+	[hashtable]$ConnectionConfig,
+	[string]$DefaultShareName
+) {
+	$driveLetter = $DriveLetter.Trim().TrimEnd(':').ToUpperInvariant()
+	
+	if (-not (Ensure-DriveLetterAvailableOrOfferRemoval $driveLetter)) {
+		return $null
+	}
 
-				return @{
-					Mode = "2"
-					ShareRoot = $shareRoot.TrimEnd('\\')
-					NativeShareRoot = $nativeShareRoot.TrimEnd('\\')
-					DriveLetter = ""
-					NativeDriveLetter = ""
-					ServerName = ""
-					ShareName = ""
-					NativeShareName = ""
-					SmbPort = ""
-				}
-			}
-			"3" {
-				Write-Info "Non-standard SMB port requires mapping to a drive letter."
-				Write-Host ""
+	$shareName = if ($DefaultShareName) { $DefaultShareName } else { $VirtualPath }
+	$remotePath = "\\$($ConnectionConfig.ServerName)\$shareName"
+	$localPath = "${driveLetter}:"
 
-				$defaultDrive = if ($Defaults['DriveLetter']) { [string]$Defaults['DriveLetter'] } else { "U" }
-				$defaultNativeDrive = if ($Defaults['NativeDriveLetter']) { [string]$Defaults['NativeDriveLetter'] } else { "V" }
-				while ($true) {
-					$driveLetter = Prompt-WithDefault "Enter unused drive letter (example: U)" $defaultDrive
-					$driveLetter = $driveLetter.Trim().TrimEnd(':').ToUpperInvariant()
-					if (-not (Ensure-DriveLetterAvailableOrOfferRemoval $driveLetter)) {
-						continue
-					}
-					break
-				}
-				while ($true) {
-					$nativeDriveLetter = Prompt-WithDefault "Enter unused NATIVE drive letter (example: V)" $defaultNativeDrive
-					$nativeDriveLetter = $nativeDriveLetter.Trim().TrimEnd(':').ToUpperInvariant()
-					if ($nativeDriveLetter -eq $driveLetter) {
-						Write-ErrMsg "Native drive letter must be different from virtual drive letter."
-						continue
-					}
-					if (-not (Ensure-DriveLetterAvailableOrOfferRemoval $nativeDriveLetter)) {
-						continue
-					}
-					break
-				}
+	try {
+		Write-Info "Mapping $localPath to $remotePath (port $($ConnectionConfig.SmbPort))"
+		Remove-StaleSmbMappings -LocalPath $localPath -RemotePath $remotePath
+		
+		New-TransFSSmbMappingWithFallback `
+			-LocalPath $localPath `
+			-RemotePath $remotePath `
+			-SmbPort $ConnectionConfig.SmbPort `
+			-Credential $ConnectionConfig.Credential `
+			-UseGlobalMapping $ConnectionConfig.UseGlobalMapping `
+			-ServerName $ConnectionConfig.ServerName `
+			-DefaultUserName $DefaultSmbUsername
+	}
+	catch {
+		if ($ConnectionConfig.UseGlobalMapping -and $_.Exception.Message -match 'Access is denied|Denied|0x80070005') {
+			Write-ErrMsg "All-users mapping requires local Administrator privileges."
+			Write-ErrMsg "Rerun PowerShell as Administrator, or select user-only mapping scope."
+			return $null
+		}
+		if ($_.Exception.Message -match 'Access is denied|Denied|0x80070005|Logon failure') {
+			Write-ErrMsg "SMB authentication failed after trying multiple username formats."
+			Write-ErrMsg "Verify TransFS SMB credentials in app.yaml and re-enter the password."
+			return $null
+		}
+		Write-ErrMsg "Failed to map drive: $($_.Exception.Message)"
+		return $null
+	}
 
-				$defaultServerName = if ($Defaults.ContainsKey("ServerName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ServerName'])) { [string]$Defaults['ServerName'] } else { $DefaultSmbHost }
-				$defaultShareName = if ($Defaults.ContainsKey("ShareName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ShareName'])) { [string]$Defaults['ShareName'] } else { $DefaultShareName }
-				if ($defaultShareName -notmatch '(?i)\\retrobat$') {
-					$defaultShareName = "$defaultShareName\RetroBat"
-				}
-				$defaultNativeShareName = if ($Defaults.ContainsKey("NativeShareName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['NativeShareName'])) { [string]$Defaults['NativeShareName'] } else { $DefaultNativeShareName }
-				$defaultSmbPort = if ($Defaults.ContainsKey("SmbPort") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['SmbPort'])) { [string]$Defaults['SmbPort'] } else { $DefaultSmbPort }
-				$defaultMappingScope = if ($Defaults.ContainsKey("MappingScope") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['MappingScope'])) { [string]$Defaults['MappingScope'] } else { "1" }
+	# Verify mapping
+	Write-Info "Verifying drive access..."
+	Start-Sleep -Milliseconds 500
 
-				$serverName = Prompt-WithDefault "Enter SMB server name" $defaultServerName
-				$shareName = Prompt-WithDefault "Enter virtual share path (example: TransFS\RetroBat)" $defaultShareName
-				$nativeShareName = Prompt-WithDefault "Enter native share name" $defaultNativeShareName
-				$smbPort = Prompt-WithDefault "Enter SMB TCP port" $defaultSmbPort
-				Write-Host ""
-				Write-Host "Select mapping scope:" -ForegroundColor White
-				Write-Host "  1) Current user only (recommended, no admin required)" -ForegroundColor White
-				Write-Host "  2) All users (requires running PowerShell as Administrator)" -ForegroundColor White
-				$mappingScope = Prompt-WithDefault "Choose 1/2" $defaultMappingScope
-				if ($mappingScope -notin @('1', '2')) {
-					Write-ErrMsg "Invalid mapping scope. Choose 1 or 2."
-					continue
-				}
-				$useGlobalMapping = ($mappingScope -eq '2')
-
-				if ($smbPort -notmatch '^[0-9]+$') {
-					Write-ErrMsg "Port must be numeric."
-					continue
-				}
-
-				$remotePath = "\\$serverName\$shareName"
-				$localPath = "${driveLetter}:"
-				$nativeRemotePath = "\\$serverName\$nativeShareName"
-				$nativeLocalPath = "${nativeDriveLetter}:"
-
-				try {
-					Write-Info "Mapping $localPath to $remotePath on port $smbPort"
-					Remove-StaleSmbMappings -LocalPath $localPath -RemotePath $remotePath
-					Write-Host ""
-					Write-Host "Credentials Required" -ForegroundColor Cyan
-					Write-Host "  - TransFS SMB credentials (configured in app.yaml)" -ForegroundColor Gray
-					Write-Host "  - Default: $DefaultSmbUsername / <password>" -ForegroundColor Gray
-					Write-Host ""
-					$creds = Get-TransFSCredential -DefaultUserName $DefaultSmbUsername
-					
-					if (-not $creds) {
-						Write-ErrMsg "Credentials required for SMB access"
-						Write-ErrMsg "Run in an interactive PowerShell host (Terminal/Console) if prompt input is blocked."
-						continue
-					}
-
-					New-TransFSSmbMappingWithFallback -LocalPath $localPath -RemotePath $remotePath -SmbPort ([int]$smbPort) -Credential $creds -UseGlobalMapping $useGlobalMapping -ServerName $serverName -DefaultUserName $DefaultSmbUsername
-				}
-				catch {
-					if ($useGlobalMapping -and $_.Exception.Message -match 'Access is denied|Denied|0x80070005') {
-						Write-ErrMsg "All-users mapping requires local Administrator privileges."
-						Write-ErrMsg "Rerun PowerShell as Administrator, or choose mapping scope 1 (current user only)."
-						continue
-					}
-					if ($_.Exception.Message -match 'Access is denied|Denied|0x80070005|Logon failure') {
-						Write-ErrMsg "SMB authentication failed after trying multiple username formats."
-						Write-ErrMsg "Verify TransFS SMB credentials in app.yaml and re-enter the password."
-						continue
-					}
-					Write-ErrMsg "Failed to map drive: $($_.Exception.Message)"
-					continue
-				}
-
-				# Give Windows a moment to fully establish the mapping
-				Write-Info "Verifying mapped drive access..."
-				Start-Sleep -Milliseconds 500
-
-				$shareRoot = "$localPath\"
-				$nativeShareRoot = "$nativeLocalPath\"
-				
-				try {
-					$pathTest = Test-Path $shareRoot -PathType Container -ErrorAction Stop
-					if (-not $pathTest) {
-						Write-ErrMsg "Mapped drive exists but is not accessible as a directory: $shareRoot"
-						Write-ErrMsg "Check TransFS SMB share configuration and permissions."
-						continue
-					}
-				}
-				catch {
-					Write-ErrMsg "Cannot access mapped drive ${shareRoot}: $($_.Exception.Message)"
-					Write-ErrMsg "The SMB mapping succeeded but the share content is not accessible."
-					Write-ErrMsg "Verify:"
-					Write-ErrMsg "  1. TransFS container is running and SMB service is active"
-					Write-ErrMsg "  2. SMB share path in smb.conf matches TransFS mount point"
-					Write-ErrMsg "  3. User '$($creds.UserName)' has read access to the share"
-					continue
-				}
-				
-				if (-not (Test-PathWritable $shareRoot)) {
-					Write-WarnMsg "Mapped drive root is not writable: $shareRoot"
-					Write-WarnMsg "Continuing - script will validate write access at the BIOS target folder."
-				}
-
-				try {
-					Write-Info "Mapping native share $nativeLocalPath to $nativeRemotePath on port $smbPort"
-					Remove-StaleSmbMappings -LocalPath $nativeLocalPath -RemotePath $nativeRemotePath
-					New-TransFSSmbMappingWithFallback -LocalPath $nativeLocalPath -RemotePath $nativeRemotePath -SmbPort ([int]$smbPort) -Credential $creds -UseGlobalMapping $useGlobalMapping -ServerName $serverName -DefaultUserName $DefaultSmbUsername
-				}
-				catch {
-					Write-ErrMsg "Failed to map native drive: $($_.Exception.Message)"
-					continue
-				}
-
-				Start-Sleep -Milliseconds 500
-				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
-					Write-ErrMsg "Native mapped drive is not accessible: $nativeShareRoot"
-					continue
-				}
-				if (-not (Test-PathWritable $nativeShareRoot)) {
-					Write-ErrMsg "Native mapped drive is not writable: $nativeShareRoot"
-					continue
-				}
-
-				Restart-ExplorerIfRequested
-
-				return @{
-					Mode = "3"
-					ShareRoot = $shareRoot
-					NativeShareRoot = $nativeShareRoot
-					DriveLetter = $driveLetter
-					NativeDriveLetter = $nativeDriveLetter
-					ServerName = $serverName
-					ShareName = $shareName
-					NativeShareName = $nativeShareName
-					SmbPort = $smbPort
-					MappingScope = $mappingScope
-				}
-			}
-			default {
-				Write-WarnMsg "Please choose 1, 2, or 3."
-			}
+	$driveRoot = "$localPath\"
+	try {
+		if (-not (Test-Path $driveRoot -PathType Container -ErrorAction Stop)) {
+			Write-ErrMsg "Mapped drive exists but is not accessible: $driveRoot"
+			return $null
 		}
 	}
+	catch {
+		Write-ErrMsg "Cannot access mapped drive ${driveRoot}: $($_.Exception.Message)"
+		return $null
+	}
+
+	Write-Ok "Successfully mapped $localPath → $remotePath"
+	return @{
+		DriveLetter = $driveLetter
+		LocalPath = $localPath
+		RemotePath = $remotePath
+		DriveRoot = $driveRoot
+		VirtualPath = $VirtualPath
+	}
+}
+
+function Offer-NativeMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
+	Write-Host ""
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "Native Filestore Mapping (Optional)" -ForegroundColor Cyan
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host ""
+	Write-Host "The Native mapping provides direct access to the filestore with NO virtual filesystem transforms." -ForegroundColor Gray
+	Write-Host "" 
+	Write-Host "Benefits:" -ForegroundColor Yellow
+	Write-Host "  • Bypass mode for maximum performance" -ForegroundColor Gray
+	Write-Host "  • Direct file browsing and upload" -ForegroundColor Gray
+	Write-Host "  • Access to raw filestore structure" -ForegroundColor Gray
+	Write-Host ""
+	Write-Host "You can map this to N: (Native) or skip if you only need virtual emulator paths." -ForegroundColor Gray
+	Write-Host ""
+
+	$defaultDrive = if ($Defaults['NativeDriveLetter']) { [string]$Defaults['NativeDriveLetter'] } else { "N" }
+	$mapNative = Prompt-WithDefault "Map Native filestore to N: drive? (Y/N)" "Y"
+	
+	if ($mapNative.ToUpperInvariant() -ne "Y") {
+		Write-Info "Skipped Native mapping."
+		return $null
+	}
+
+	$driveLetter = Prompt-WithDefault "Drive letter for Native" $defaultDrive
+	
+	$mapping = New-TransFSDriveMapping `
+		-DriveLetter $driveLetter `
+		-VirtualPath "Native" `
+		-ConnectionConfig $ConnectionConfig `
+		-DefaultShareName $DefaultNativeShareName
+
+	if ($mapping) {
+		Restart-ExplorerIfRequested
+	}
+
+	return $mapping
+}
+
+function Offer-RetroBatMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
+	$retroBatDir = Get-RetroBatInstallDir
+	
+	if (-not $retroBatDir) {
+		Write-Info "RetroBat installation not detected - skipping R: mapping."
+		return $null
+	}
+
+	Write-Host ""
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "RetroBat Mapping Detected" -ForegroundColor Cyan
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host ""
+	Write-Host "Detected RetroBat installation: $retroBatDir" -ForegroundColor Green
+	Write-Host ""
+	Write-Host "This will:" -ForegroundColor Yellow
+	Write-Host "  • Map R: drive to TransFS /RetroBat virtual filesystem" -ForegroundColor Gray
+	Write-Host "  • Optionally copy shared BIOS files to the network" -ForegroundColor Gray
+	Write-Host "  • Update RetroBat config to use the network BIOS path" -ForegroundColor Gray
+	Write-Host ""
+
+	$defaultDrive = if ($Defaults['RetroBatDriveLetter']) { [string]$Defaults['RetroBatDriveLetter'] } else { "R" }
+	$mapRetroBat = Prompt-WithDefault "Map RetroBat to R: drive? (Y/N)" "Y"
+	
+	if ($mapRetroBat.ToUpperInvariant() -ne "Y") {
+		Write-Info "Skipped RetroBat mapping."
+		return $null
+	}
+
+	$driveLetter = Prompt-WithDefault "Drive letter for RetroBat" $defaultDrive
+	
+	$mapping = New-TransFSDriveMapping `
+		-DriveLetter $driveLetter `
+		-VirtualPath "RetroBat" `
+		-ConnectionConfig $ConnectionConfig `
+		-DefaultShareName "$DefaultShareName\RetroBat"
+
+	if ($mapping) {
+		$mapping['RetroBatDir'] = $retroBatDir
+		Restart-ExplorerIfRequested
+	}
+
+	return $mapping
+}
+
+function Offer-MameMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
+	$mameDir = Get-MameInstallDir
+	
+	if (-not $mameDir) {
+		Write-Info "Standalone MAME installation not detected - skipping M: mapping."
+		return $null
+	}
+
+	Write-Host ""
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "MAME Mapping Detected" -ForegroundColor Cyan
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host ""
+	Write-Host "Detected MAME installation: $mameDir" -ForegroundColor Green
+	Write-Host ""
+	Write-Host "This will map M: drive to TransFS /Mame virtual filesystem." -ForegroundColor Yellow
+	Write-Host "Note: MAME paths are similar but distinct from RetroBat/lr-mame paths." -ForegroundColor Gray
+	Write-Host ""
+
+	$defaultDrive = if ($Defaults['MameDriveLetter']) { [string]$Defaults['MameDriveLetter'] } else { "M" }
+	$mapMame = Prompt-WithDefault "Map MAME to M: drive? (Y/N)" "Y"
+	
+	if ($mapMame.ToUpperInvariant() -ne "Y") {
+		Write-Info "Skipped MAME mapping."
+		return $null
+	}
+
+	$driveLetter = Prompt-WithDefault "Drive letter for MAME" $defaultDrive
+	
+	$mapping = New-TransFSDriveMapping `
+		-DriveLetter $driveLetter `
+		-VirtualPath "Mame" `
+		-ConnectionConfig $ConnectionConfig `
+		-DefaultShareName "$DefaultShareName\Mame"
+
+	if ($mapping) {
+		$mapping['MameDir'] = $mameDir
+		Restart-ExplorerIfRequested
+	}
+
+	return $mapping
 }
 
 function Copy-BiosWithProgress([string]$SourceDir, [string]$DestinationDir) {
@@ -765,169 +770,208 @@ function Update-RomPaths([string]$RetroBatDir, [string]$NativeDriveLetter) {
 
 try {
 	Write-Host ""
-	Write-Host "TransFS RetroBat Shared BIOS Copy Setup" -ForegroundColor White
-	Write-Host "==========================" -ForegroundColor White
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "        TransFS Windows Setup - N:/R:/M: Drive Mapping         " -ForegroundColor White
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host ""
+	Write-Info "This script will configure optional drive mappings for TransFS:"
+	Write-Host "  • N: → Native filestore (bypass, direct access)" -ForegroundColor Gray
+	Write-Host "  • R: → RetroBat virtual filesystem (if installed)" -ForegroundColor Gray
+	Write-Host "  • M: → MAME virtual filesystem (if installed)" -ForegroundColor Gray
+	Write-Host ""
 
-	Write-Info "Loading stored settings from registry..."
+	Write-Info "Loading saved settings..."
 	$defaults = Get-StoredSettings
 	
-	if ($defaults['ShareRoot']) {
-		Write-Info "Found saved default share path: $($defaults['ShareRoot'])"
+	if ($defaults['ServerName']) {
+		Write-Info "Found saved server: $($defaults['ServerName']):$($defaults['SmbPort'])"
 	}
 
-	$shareConfig = Resolve-TransFSShare -Defaults $defaults
-	Save-StoredSettings -Settings $shareConfig
-	Write-Ok "Saved share settings to registry: HKCU\\Software\\TransFS\\RetroBatSync"
-
-	$targetBiosDir = Join-Path $shareConfig['NativeShareRoot'] "Clients\RetroBat\bios"
-	if (Test-Path $targetBiosDir -PathType Container) {
-		Write-Info ""
-		Write-Info "Target BIOS folder already exists at: $targetBiosDir"
-		Write-Info ""
-		Write-Info "For BIOSes to work properly on the network share, we need to copy files from your local RetroBat install"
-		Write-Info "and modify 1 config file. This should be safe to do multiple times, and the config file is backed up."
-		Write-Info ""
-		$proceedWithBios = Prompt-WithDefault "Would you like to copy RetroBat shared BIOS files to the network share? (Y/N)" "N"
-		if ($proceedWithBios.ToUpperInvariant() -ne "Y") {
-			Write-Info "Skipped BIOS setup."
+	# Step 1: Get connection configuration
+	Write-Info "Collecting connection parameters..."
+	$connectionConfig = $null
+	while (-not $connectionConfig) {
+		$connectionConfig = Get-ConnectionConfig -Defaults $defaults
+		if (-not $connectionConfig) {
+			Write-WarnMsg "Connection configuration failed. Please try again."
 			Write-Host ""
-			Write-Ok "Done."
-			Write-Host ""
-			if ($script:RestartExplorerAfterExit) {
-				Write-Info "Explorer restart is queued and will run after you exit this script."
-			}
-			Write-Info "Press any key to exit..."
-			$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-			Invoke-PendingExplorerRestart
-			exit 0
 		}
 	}
 
-	$retroBatDir = Get-RetroBatInstallDir
-	if ($retroBatDir) {
-		Write-Info "Detected RetroBat install: $retroBatDir"
-		Write-Info ""
+	Write-Ok "Connection configured: $($connectionConfig.ServerName):$($connectionConfig.SmbPort)"
+
+	# Step 2: Offer Native mapping (optional)
+	$nativeMapping = Offer-NativeMapping -ConnectionConfig $connectionConfig -Defaults $defaults
+
+	# Step 3: Offer RetroBat mapping (optional, detection-based)
+	$retroBatMapping = Offer-RetroBatMapping -ConnectionConfig $connectionConfig -Defaults $defaults
+
+	# Step 4: Offer MAME mapping (optional, detection-based)
+	$mameMapping = Offer-MameMapping -ConnectionConfig $connectionConfig -Defaults $defaults
+
+	# Save settings
+	$settingsToSave = @{
+		ServerName = $connectionConfig.ServerName
+		SmbPort = [string]$connectionConfig.SmbPort
+		MappingScope = $connectionConfig.MappingScope
 	}
 
-	while (-not $retroBatDir) {
-		$browse = Prompt-WithDefault "RetroBat install not auto-detected. Use folder browser? (Y/N)" "Y"
-		if ($browse.ToUpperInvariant() -eq "Y") {
-			$selected = Select-FolderDialog "Select RetroBat install folder"
-			if ($selected) {
-				$retroBatDir = $selected
-			}
-		}
-		else {
-			$retroBatDir = Read-Host "Enter full RetroBat install path"
-		}
-
-		if (-not (Test-Path (Join-Path $retroBatDir "emulationstation\emulatorLauncher.cfg"))) {
-			Write-ErrMsg "Invalid RetroBat path. emulatorLauncher.cfg not found."
-			$retroBatDir = $null
-		}
+	if ($nativeMapping) {
+		$settingsToSave['NativeDriveLetter'] = $nativeMapping.DriveLetter
+		$settingsToSave['NativeShareRoot'] = $nativeMapping.DriveRoot
+	}
+	if ($retroBatMapping) {
+		$settingsToSave['RetroBatDriveLetter'] = $retroBatMapping.DriveLetter
+		$settingsToSave['ShareRoot'] = $retroBatMapping.DriveRoot
+	}
+	if ($mameMapping) {
+		$settingsToSave['MameDriveLetter'] = $mameMapping.DriveLetter
 	}
 
-	$sourceBiosDir = Join-Path $retroBatDir "bios"
-	if (-not (Test-Path $sourceBiosDir -PathType Container)) {
-		throw "RetroBat BIOS folder does not exist: $sourceBiosDir"
-	}
+	Save-StoredSettings -Settings $settingsToSave
+	Write-Ok "Saved settings to registry: HKCU\Software\TransFS\RetroBatSync"
 
-	Write-Info "Preparing target BIOS folder..."
-	try {
-		New-Item -Path $targetBiosDir -ItemType Directory -Force | Out-Null
-	}
-	catch {
-		throw "Failed to create target BIOS folder: $targetBiosDir. $($_.Exception.Message)"
-	}
-
-	Write-Info "Verifying write access to network share..."
-	if (-not (Test-PathWritable $targetBiosDir)) {
-		throw "Target BIOS folder is not writable: $targetBiosDir"
-	}
-
-	Write-Info "Copying RetroBat shared BIOS files (this may take a few moments)..."
-	Write-Info "  From: $sourceBiosDir"
-	Write-Info "  To:   $targetBiosDir"
-	Write-Info ""
-
-	Copy-BiosWithProgress -SourceDir $sourceBiosDir -DestinationDir $targetBiosDir
-
-	$srcCount = (Get-ChildItem -Path $sourceBiosDir -Recurse -File).Count
-	$dstCount = (Get-ChildItem -Path $targetBiosDir -Recurse -File).Count
-
-	if ($dstCount -lt $srcCount) {
-		throw "Copy verification failed. Source files: $srcCount, Destination files: $dstCount"
-	}
-
-	Write-Ok "Copy verified. Source files: $srcCount, Destination files: $dstCount"
-
-	Write-Host ""
-	Write-Info "Database sync will now run for RetroBat and may take a while..."
-	Write-Info "This makes the copied BIOS files available in TransFS virtual paths."
-	Write-Host ""
-
-	try {
-		$apiHost = if ($shareConfig['ServerName']) { $shareConfig['ServerName'] } else { "localhost" }
-		$apiUrl = "http://${apiHost}:8000/api/db/sync?client=RetroBat"
-		$response = Invoke-RestMethod -Uri $apiUrl -Method Post -TimeoutSec 300 -ErrorAction Stop
-
-		if ($response.success) {
-			Write-Ok "Database sync completed successfully"
-			if ($response.stats) {
-				Write-Host "  Files added: $($response.stats.files_added)" -ForegroundColor Gray
-				Write-Host "  Files updated: $($response.stats.files_updated)" -ForegroundColor Gray
-			}
-		}
-		else {
-			Write-Warn "Database sync returned non-success: $($response.message)"
-		}
-	}
-	catch {
-		Write-Warn "Failed to trigger database sync automatically: $($_.Exception.Message)"
-		Write-Info "You can run a manual sync from the TransFS web UI if needed."
-	}
-
-	# In Mode 3 (dual-drive), use native share path directly; otherwise use virtual share with RetroBat subpath logic
-	if ($shareConfig['Mode'] -eq "3") {
-		$configuredBiosPath = Join-Path $shareConfig['NativeShareRoot'] "Clients\RetroBat\bios"
-	}
-	else {
-		$virtualPathAlreadyRetrobat = ($shareConfig['ShareRoot'] -as [string]) -match '(?i)[\\/]retrobat[\\/]*$'
-		$configuredBiosRelative = if ($virtualPathAlreadyRetrobat) { "bios" } else { "RetroBat\bios" }
-		$configuredBiosPath = Join-Path $shareConfig['ShareRoot'] $configuredBiosRelative
-	}
-	$updateConfig = Prompt-WithDefault "Update local RetroBat config to use '$configuredBiosPath'? (Y/N)" "Y"
-	if ($updateConfig.ToUpperInvariant() -eq "Y") {
-		Update-RetroBatConfig -RetroBatDir $retroBatDir -BiosPath $configuredBiosPath
+	# Step 5: Handle RetroBat BIOS copy if RetroBat was mapped
+	if ($retroBatMapping -and $nativeMapping) {
 		Write-Host ""
-		$updateRomPaths = Prompt-WithDefault "Update all ROM paths in es_systems.cfg to use the native drive? (Y/N)" "Y"
-		if ($updateRomPaths.ToUpperInvariant() -eq "Y") {
-			Write-Info "Updating ROM paths..."
-			Write-Host ""
-			$nativeDriveLetter = $shareConfig['NativeDriveLetter']
-			if ($nativeDriveLetter) {
-				$pathsUpdated = Update-RomPaths -RetroBatDir $retroBatDir -NativeDriveLetter $nativeDriveLetter
-				if ($pathsUpdated) {
-					Write-Host ""
-				}
+		Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+		Write-Host "RetroBat BIOS Setup (Optional)" -ForegroundColor Cyan
+		Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+		Write-Host ""
+		Write-Info "For network BIOSes to work, we can copy files from your local RetroBat"
+		Write-Info "installation to the Native filestore and update RetroBat's config."
+		Write-Host ""
+
+		$targetBiosDir = Join-Path $nativeMapping.DriveRoot "Clients\RetroBat\bios"
+		$biosAlreadyExists = Test-Path $targetBiosDir -PathType Container
+
+		if ($biosAlreadyExists) {
+			Write-Info "BIOS folder already exists: $targetBiosDir"
+			Write-Info ""
+			$proceedWithBios = Prompt-WithDefault "Copy/update BIOS files from local RetroBat? (Y/N)" "N"
+		}
+		else {
+			$proceedWithBios = Prompt-WithDefault "Copy BIOS files from local RetroBat to network? (Y/N)" "Y"
+		}
+
+		if ($proceedWithBios.ToUpperInvariant() -eq "Y") {
+			$retroBatDir = $retroBatMapping['RetroBatDir']
+			$sourceBiosDir = Join-Path $retroBatDir "bios"
+			
+			if (-not (Test-Path $sourceBiosDir -PathType Container)) {
+				Write-WarnMsg "RetroBat BIOS folder not found: $sourceBiosDir"
 			}
 			else {
-				Write-Warn "Native drive letter not available - skipping ROM path update."
+				Write-Info "Preparing target BIOS folder..."
+				try {
+					New-Item -Path $targetBiosDir -ItemType Directory -Force | Out-Null
+				}
+				catch {
+					throw "Failed to create BIOS folder: $targetBiosDir. $($_.Exception.Message)"
+				}
+
+				if (-not (Test-PathWritable $targetBiosDir)) {
+					Write-WarnMsg "Target BIOS folder is not writable: $targetBiosDir"
+				}
+				else {
+					Write-Info "Copying BIOS files (this may take a few moments)..."
+					Write-Info "  From: $sourceBiosDir"
+					Write-Info "  To:   $targetBiosDir"
+					Write-Host ""
+
+					Copy-BiosWithProgress -SourceDir $sourceBiosDir -DestinationDir $targetBiosDir
+
+					$srcCount = (Get-ChildItem -Path $sourceBiosDir -Recurse -File).Count
+					$dstCount = (Get-ChildItem -Path $targetBiosDir -Recurse -File).Count
+
+					if ($dstCount -ge $srcCount) {
+						Write-Ok "Copy verified. Files: $srcCount → $dstCount"
+					}
+					else {
+						Write-WarnMsg "Copy may be incomplete. Source: $srcCount, Destination: $dstCount"
+					}
+
+					# Trigger database sync
+					Write-Host ""
+					Write-Info "Triggering database sync for RetroBat..."
+					try {
+						$apiUrl = "http://$($connectionConfig.ServerName):8000/api/db/sync?client=RetroBat"
+						$response = Invoke-RestMethod -Uri $apiUrl -Method Post -TimeoutSec 300 -ErrorAction Stop
+
+						if ($response.success) {
+							Write-Ok "Database sync completed"
+							if ($response.stats) {
+								Write-Host "  Files added: $($response.stats.files_added)" -ForegroundColor Gray
+								Write-Host "  Files updated: $($response.stats.files_updated)" -ForegroundColor Gray
+							}
+						}
+						else {
+							Write-WarnMsg "Sync returned: $($response.message)"
+						}
+					}
+					catch {
+						Write-WarnMsg "Failed to trigger sync automatically: $($_.Exception.Message)"
+						Write-Info "You can run a manual sync from the TransFS web UI."
+					}
+
+					# Update RetroBat config
+					Write-Host ""
+					$biosPathForConfig = Join-Path $retroBatMapping.DriveRoot "bios"
+					$updateConfig = Prompt-WithDefault "Update RetroBat config to use '$biosPathForConfig'? (Y/N)" "Y"
+					if ($updateConfig.ToUpperInvariant() -eq "Y") {
+						Update-RetroBatConfig -RetroBatDir $retroBatDir -BiosPath $biosPathForConfig
+						
+						# Offer ROM path update
+						Write-Host ""
+						$updateRomPaths = Prompt-WithDefault "Update ROM paths in es_systems.cfg to use Native drive? (Y/N)" "Y"
+						if ($updateRomPaths.ToUpperInvariant() -eq "Y") {
+							Write-Info "Updating ROM paths..."
+							Write-Host ""
+							$pathsUpdated = Update-RomPaths -RetroBatDir $retroBatDir -NativeDriveLetter $nativeMapping.DriveLetter
+							if ($pathsUpdated) {
+								Write-Host ""
+							}
+						}
+						else {
+							Write-Info "Skipped ROM path update."
+						}
+					}
+					else {
+						Write-Info "Skipped config update."
+					}
+				}
 			}
 		}
 		else {
-			Write-Info "Skipped ROM path update."
+			Write-Info "Skipped BIOS copy."
 		}
 	}
-	else {
-		Write-Info "Skipped config update."
+	elseif ($retroBatMapping -and -not $nativeMapping) {
+		Write-Host ""
+		Write-WarnMsg "RetroBat mapped but Native drive not available."
+		Write-Info "BIOS copy requires Native mapping (N:) for direct filestore access."
+		Write-Info "Re-run this script and accept Native mapping to enable BIOS copy."
 	}
 
 	Write-Host ""
-	Write-Ok "Done."
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+	Write-Host "                        Setup Complete                         " -ForegroundColor Green
+	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+	Write-Host ""
+	
+	if ($nativeMapping) {
+		Write-Ok "$($nativeMapping.DriveLetter): → Native filestore"
+	}
+	if ($retroBatMapping) {
+		Write-Ok "$($retroBatMapping.DriveLetter): → RetroBat virtual filesystem"
+	}
+	if ($mameMapping) {
+		Write-Ok "$($mameMapping.DriveLetter): → MAME virtual filesystem"
+	}
+	
 	Write-Host ""
 	if ($script:RestartExplorerAfterExit) {
-		Write-Info "Explorer restart is queued and will run after you exit this script."
+		Write-Info "Explorer restart is queued and will run when you close this window."
 	}
 	Write-Info "Press any key to exit..."
 	$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

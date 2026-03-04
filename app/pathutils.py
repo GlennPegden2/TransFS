@@ -208,11 +208,11 @@ def map_virtual_to_real(config, path, filestore_root="/mnt/filestorefs"):
 
 def find_software_archive_entry(system_info: dict) -> Optional[dict]:
     """Find the ...SoftwareArchives... entry in a system's maps."""
-    return next((m for m in system_info['maps'] if list(m.keys())[0] == "...SoftwareArchives..."), None)
+    return next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == "...SoftwareArchives..."), None)
 
 def find_map_entry(system_info: dict, map_name: str) -> Optional[dict]:
     """Find a map entry by map name."""
-    return next((m for m in system_info.get('maps', []) if list(m.keys())[0] == map_name), None)
+    return next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == map_name), None)
 
 def get_map_config(map_entry: Optional[dict]) -> Optional[dict]:
     """Return the config dict for a map entry."""

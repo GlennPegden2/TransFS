@@ -139,7 +139,7 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                     # Check client-level maps first
                     client_local_base = client.get('local_base_path', '')
                     if client_local_base:
-                        for map_entry in client.get('maps', []):
+                        for map_entry in (client.get('maps') or []):
                             map_config = list(map_entry.values())[0]
                             if isinstance(map_config, dict):
                                 if map_config.get('category') == 'shared_bios' and potential_category == 'bios':
@@ -157,7 +157,7 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                                                         logger.debug(f"Filesystem fallback added (client map): {entry.name}")
                     
                     for system in client.get('systems', []):
-                        for map_entry in system.get('maps', []):
+                        for map_entry in (system.get('maps') or []):
                             map_config = list(map_entry.values())[0]
                             if isinstance(map_config, dict):
                                 if map_config.get('category') == 'shared_bios' and potential_category == 'bios':
@@ -549,7 +549,7 @@ def parse_trans_path(config,root,full_path: str) -> list:
     # Check if this is a client-level nested map directory
     potential_map_name = path.parts[len(root_parts) + 1] if lev >= 2 else None
     if potential_map_name:
-        client_maps = client.get('maps', [])
+        client_maps = client.get('maps') or []
         is_client_nested_map = any(
             list(m.keys())[0].startswith(potential_map_name + '/')
             for m in client_maps
@@ -573,7 +573,7 @@ def parse_trans_path(config,root,full_path: str) -> list:
         if 'systems' in client:
             for system in client['systems']:
                 # Check if any maps in this system have the matching category
-                for map_entry in system.get('maps', []):
+                for map_entry in (system.get('maps') or []):
                     map_name = list(map_entry.keys())[0]
                     map_config = list(map_entry.values())[0]
                     if isinstance(map_config, dict) and map_config.get('category') == possible_category:
@@ -608,7 +608,7 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
     
     # Add client-level maps (e.g., bios/atom.zip)
     # For nested maps, only show the top-level directory (e.g., 'bios' from 'bios/atom.zip')
-    client_maps = client.get('maps', [])
+    client_maps = client.get('maps') or []
     for map_entry in client_maps:
         map_name = list(map_entry.keys())[0]
         # Extract the first component (e.g., 'bios' from 'bios/atom.zip')
@@ -697,7 +697,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
         if source_dir:
             excluded_dirs.add(source_dir)
 
-    for map_entry in system['maps']:
+    for map_entry in (system.get('maps') or []):
         map_name = list(map_entry.keys())[0]
         
         # Skip flattened maps (.) - their contents appear directly in this directory
@@ -730,7 +730,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     # Don't add implicit real files/dirs - only show explicitly mapped items
     
     # Handle flattened maps (.) - merge their contents directly into this listing
-    flatten_map_entry = next((m for m in system['maps'] if list(m.keys())[0] == '.'), None)
+    flatten_map_entry = next((m for m in (system.get('maps') or []) if list(m.keys())[0] == '.'), None)
     if flatten_map_entry:
         flatten_config = flatten_map_entry['.']
         if 'query' in flatten_config:
@@ -770,7 +770,7 @@ def list_nested_map_entries(config, path: Path, root_parts: tuple, system: dict,
     """
     entries = []
     prefix = parent_path + '/'
-    for map_entry in system['maps']:
+    for map_entry in (system.get('maps') or []):
         map_name = list(map_entry.keys())[0]
         if map_name.startswith(prefix):
             # Extract the immediate child name
@@ -790,7 +790,7 @@ def list_client_nested_map_entries(config, client: dict, parent_path: str) -> li
     """
     entries = []
     prefix = parent_path + '/'
-    for map_entry in client.get('maps', []):
+    for map_entry in (client.get('maps') or []):
         map_name = list(map_entry.keys())[0]
         if map_name.startswith(prefix):
             # Extract the immediate child name
@@ -1726,7 +1726,7 @@ def list_dynamic_map(
 
 def list_regular_map(config, path: Path, root_parts: tuple, system: dict, map_name: str) -> list:
     """List contents of a regular map subfolder."""
-    map_entry = next((m for m in system['maps'] if list(m.keys())[0] == map_name), None)
+    map_entry = next((m for m in (system.get('maps') or []) if list(m.keys())[0] == map_name), None)
     if not map_entry:
         return []
     mapdict = map_entry[map_name]

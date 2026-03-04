@@ -9,7 +9,9 @@
         // This prevents the download tab from flashing when visiting /browse/* URLs
         function getInitialTabFromURL() {
             const path = window.location.pathname;
-            if (path.startsWith('/browse/native')) {
+            if (path === '/setup' || path === '/setup/') {
+                return 'setup-clients';
+            } else if (path.startsWith('/browse/native')) {
                 return 'browse-native';
             } else if (path.startsWith('/browse/virtual')) {
                 return 'browse-virtual';
@@ -77,6 +79,7 @@
             <h2>Native File System Browser</h2>
             <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
                 <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">/mnt/filestorefs/Native</div>
+                <button id="sync-native-db-btn" onclick="syncDatabaseNative()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #9C27B0; color: white; border: none; border-radius: 3px; display: none;" title="Sync database for this native folder">🔄 Sync contents</button>
             </div>
             <div class="file-list" id="native-files">Loading...</div>
         </div>
@@ -403,8 +406,9 @@
             </div>
             <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
                 <div><strong id="test-status-text">Status</strong></div>
-                <div id="test-progress-bar" style="margin-top: 0.5em; display: none; height: 20px; background: #ddd; border-radius: 4px; overflow: hidden;">
-                    <div id="test-progress-fill" style="height: 100%; background: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                <div id="test-run-indicator" style="margin-top: 0.5em; display: none; align-items: center; gap: 0.5em; font-size: 0.95em; color: #444;">
+                    <span id="test-run-indicator-icon" style="font-size: 1.1em;">⏳</span>
+                    <span id="test-run-indicator-text">In progress</span>
                 </div>
             </div>
             <div id="test-results-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
@@ -478,23 +482,27 @@
             logDiv.scrollTop = logDiv.scrollHeight;
         }
         
-        // Show test status with optional progress bar
-        function showTestStatus(message, isRunning = false, progress = 0) {
+        // Show test status with in-progress/complete indicator
+        function showTestStatus(message, isRunning = false) {
             const statusDiv = document.getElementById('test-status');
             const statusText = document.getElementById('test-status-text');
-            const progressBar = document.getElementById('test-progress-bar');
-            const progressFill = document.getElementById('test-progress-fill');
+            const runIndicator = document.getElementById('test-run-indicator');
+            const runIndicatorIcon = document.getElementById('test-run-indicator-icon');
+            const runIndicatorText = document.getElementById('test-run-indicator-text');
 
             statusText.textContent = message;
             statusDiv.style.display = 'block';
 
             if (isRunning) {
-                progressBar.style.display = 'block';
-                if (progress > 0) {
-                    progressFill.style.width = progress + '%';
-                }
+                runIndicator.style.display = 'flex';
+                runIndicatorIcon.textContent = '⏳';
+                runIndicatorText.textContent = 'In progress';
+            } else if (message.toLowerCase().includes('completed')) {
+                runIndicator.style.display = 'flex';
+                runIndicatorIcon.textContent = '✅';
+                runIndicatorText.textContent = 'Complete';
             } else {
-                progressBar.style.display = 'none';
+                runIndicator.style.display = 'none';
             }
         }
         
@@ -517,6 +525,8 @@
                 } else if (tabName === 'browse-virtual') {
                     await checkZaparooStatus();
                     history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
+                } else if (tabName === 'setup-clients') {
+                    history.pushState({ tab: 'setup-clients' }, '', '/setup');
                 } else {
                     history.pushState({ tab: tabName }, '', '/');
                 }
@@ -1207,10 +1217,10 @@
                 
                 if (clientName) {
                     apiPath = `/api/clients/${clientName}/systems/${mappingName}/install-packs`;
-                    requestBody = { client: clientName, system: mappingName, pack_ids: packs };
+                    requestBody = { client: clientName, system: mappingName, pack_ids: packs, update_db: updateDb };
                 } else {
                     apiPath = `/api/systems/${manufacturer}/${mappingName}/install-packs`;
-                    requestBody = { pack_ids: packs };
+                    requestBody = { pack_ids: packs, update_db: updateDb };
                 }
                 
                 const response = await fetch(apiPath, {
@@ -2369,17 +2379,25 @@
                     }
                 }
                 
-                const syncDbBtn = document.getElementById('sync-db-btn');
-                try {
-                    const configResponse = await fetch('/api/config');
-                    const configData = await configResponse.json();
-                    const databaseEnabled = configData.database?.enabled || false;
-                    syncDbBtn.style.display = databaseEnabled ? 'block' : 'none';
-                } catch (e) {
-                    syncDbBtn.style.display = 'none';
-                }
+                await updateDbSyncButtonsVisibility();
             } catch (e) {
                 console.error('Failed to check cache status:', e);
+            }
+        }
+
+        async function updateDbSyncButtonsVisibility() {
+            const syncDbBtn = document.getElementById('sync-db-btn');
+            const syncNativeDbBtn = document.getElementById('sync-native-db-btn');
+            try {
+                const configResponse = await fetch('/api/config');
+                const configData = await configResponse.json();
+                const databaseEnabled = configData.database?.enabled || false;
+
+                if (syncDbBtn) syncDbBtn.style.display = databaseEnabled ? 'block' : 'none';
+                if (syncNativeDbBtn) syncNativeDbBtn.style.display = databaseEnabled ? 'block' : 'none';
+            } catch (e) {
+                if (syncDbBtn) syncDbBtn.style.display = 'none';
+                if (syncNativeDbBtn) syncNativeDbBtn.style.display = 'none';
             }
         }
 
@@ -2578,9 +2596,12 @@
             }
         }
 
-        async function syncDatabase() {
-            const path = currentVirtualPath;
-            const btn = document.getElementById('sync-db-btn');
+        async function syncDatabaseForPath(path, buttonId, reloadType) {
+            const btn = document.getElementById(buttonId);
+            if (!path || !btn) {
+                return;
+            }
+
             if (!confirm(`Rebuild database for this folder tree?\n\nPath: ${path}\n\nThis may take a while...`)) {
                 return;
             }
@@ -2596,7 +2617,7 @@
                 if (data.success) {
                     const msg = `Database synced: ${data.stats.files_added || 0} added, ${data.stats.files_updated || 0} updated in ${(data.stats.duration || 0).toFixed(2)}s`;
                     alert(`Database sync complete!\n\n${msg}`);
-                    await loadDirectory(path, 'virtual', true);
+                    await loadDirectory(path, reloadType, true);
                 } else {
                     alert(`Database sync failed: ${data.message || 'Unknown error'}`);
                 }
@@ -2607,6 +2628,14 @@
                 btn.disabled = false;
                 btn.textContent = originalText;
             }
+        }
+
+        async function syncDatabase() {
+            await syncDatabaseForPath(currentVirtualPath, 'sync-db-btn', 'virtual');
+        }
+
+        async function syncDatabaseNative() {
+            await syncDatabaseForPath(currentNativePath, 'sync-native-db-btn', 'native');
         }
 
         // =============================================
@@ -2662,9 +2691,8 @@
                     if (data.status === 'running') {
                         const summary = data.summary || {};
                         showTestStatus(
-                            `Tests running... ${summary.total || 0} tests (${summary.passed || 0} passed, ${summary.failed || 0} failed) - ${data.progress}%`,
-                            true,
-                            data.progress
+                            `Tests running... ${summary.total || 0} tests (${summary.passed || 0} passed, ${summary.failed || 0} failed)`,
+                            true
                         );
                         if (data.results && data.results.stdout) {
                             displayTestResults({ ...data, taskId: taskId });
@@ -3316,6 +3344,7 @@
             await loadSetupClients();
             await loadLastTestResults();
             await updateAdvancedOptionsVisibility();
+            await updateDbSyncButtonsVisibility();
         });
 
         async function updateAdvancedOptionsVisibility() {

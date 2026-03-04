@@ -24,6 +24,11 @@ async def browse_virtual(request: Request, path: str):
     """Serve the main page for virtual filesystem browsing with URL routing."""
     return templates.TemplateResponse("index_complete.html", {"request": request})
 
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request):
+    """Serve the Setup Clients configuration page."""
+    return templates.TemplateResponse("index_complete.html", {"request": request})
+
 # For running directly with: python -m uvicorn main:app
 if __name__ == "__main__":
     import uvicorn

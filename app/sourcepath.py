@@ -214,7 +214,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         client_name = client.get('name', '')
 
         if client_local_base:
-            for map_entry in client.get('maps', []):
+            for map_entry in (client.get('maps') or []):
                 map_name = list(map_entry.keys())[0]
                 map_config = map_entry.get(map_name, {})
                 if not isinstance(map_config, dict):
@@ -290,7 +290,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
             if not local_base_path:
                 continue
 
-            for map_entry in candidate_system.get('maps', []):
+            for map_entry in (candidate_system.get('maps') or []):
                 map_name = list(map_entry.keys())[0]
                 map_config = map_entry.get(map_name, {})
                 if not isinstance(map_config, dict):
@@ -409,7 +409,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     # Handle flattened maps (.) - files appear directly in system folder
     # Support nested subpaths under flattened maps (e.g., /RetroBat/bios/mame/ini/mame.ini)
     if len(rel_parts) >= 3:
-        flatten_map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == '.'), None)
+        flatten_map_entry = next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == '.'), None)
         if flatten_map_entry:
             flatten_config = flatten_map_entry['.']
             # Determine file subpath from remaining virtual path components
@@ -458,7 +458,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         # Try progressively longer paths to find a matching map
         for i in range(len(map_path_parts), 0, -1):
             map_name = '/'.join(map_path_parts[:i])
-            map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
+            map_entry = next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == map_name), None)
             if not map_entry:
                 continue
             mapdict = map_entry[map_name]
@@ -572,7 +572,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if len(rel_parts) >= 3:
         requested_dir = rel_parts[2]
         # Look for any map that starts with requested_dir/
-        nested_maps = [m for m in system_info['maps'] if list(m.keys())[0].startswith(f"{requested_dir}/")]
+        nested_maps = [m for m in (system_info.get('maps') or []) if list(m.keys())[0].startswith(f"{requested_dir}/")]
         if nested_maps:
             # Found nested maps under this directory
             # Return the first nested map as a virtual directory
@@ -590,7 +590,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         for i in range(len(map_path_parts), 0, -1):
             potential_path = '/'.join(map_path_parts[:i])
             # Check all maps for one with ../ prefix that matches after normalization
-            for map_entry in system_info.get('maps', []):
+            for map_entry in (system_info.get('maps') or []):
                 map_name = list(map_entry.keys())[0]
                 if is_parent_level_map(map_name):
                     normalized = normalize_map_name(map_name)
@@ -796,7 +796,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
 
     # Dynamic ...SoftwareArchives... mappings require the special entry
-    if "...SoftwareArchives..." not in [list(m.keys())[0] for m in system_info['maps']]:
+    if "...SoftwareArchives..." not in [list(m.keys())[0] for m in (system_info.get('maps') or [])]:
         return None
 
     sa_entry = find_software_archive_entry(system_info)
@@ -1007,7 +1007,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
 
     map_name = rel_parts[system_idx + 1]
-    map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
+    map_entry = next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == map_name), None)
     if not map_entry:
         return None
     mapdict = map_entry[map_name]
@@ -1235,7 +1235,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     # Resolve client-level maps first (global maps under client root)
     client_local_base = client.get('local_base_path', '')
     if client_local_base:
-        for map_entry in client.get('maps', []):
+        for map_entry in (client.get('maps') or []):
             map_name = list(map_entry.keys())[0]
             map_config = map_entry.get(map_name, {})
             if not isinstance(map_config, dict):
@@ -1288,7 +1288,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
         if not local_base:
             continue
 
-        for map_entry in system.get('maps', []):
+        for map_entry in (system.get('maps') or []):
             map_name = list(map_entry.keys())[0]
             map_config = map_entry.get(map_name, {})
             if not isinstance(map_config, dict):
@@ -1375,7 +1375,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
         map_path_parts = rel_parts[2:]
         for i in range(len(map_path_parts), 0, -1):
             map_name = '/'.join(map_path_parts[:i])
-            map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
+            map_entry = next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == map_name), None)
             if not map_entry:
                 continue
             mapdict = map_entry[map_name]

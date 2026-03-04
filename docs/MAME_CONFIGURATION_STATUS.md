@@ -104,7 +104,7 @@ All files downloaded, extracted, and verified successfully!
 
 ## Additional Notes
 
-- The MAME downloader caches hash files in `/app/config/mame_cache/`
+- The MAME downloader caches hash files in `/mnt/filestorefs/Native/Clients/Mame/mame_cache/`
 - Hash files are only fetched once, then cached locally
-- To force refetch, delete cached files: `rm -rf /app/config/mame_cache/*.xml`
+- To force refetch, delete cached files: `rm -rf /mnt/filestorefs/Native/Clients/Mame/mame_cache/*.xml`
 - Downloaded files go to: `/mnt/filestorefs/Downloads/MAME/Software/MAME/Cassettes/`

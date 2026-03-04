@@ -296,7 +296,7 @@ If verification fails, the file is deleted and marked as failed in statistics.
 
 ## Caching
 
-Hash files are cached in `app/config/mame_cache/` to minimize GitHub requests:
+Hash files are cached in `/mnt/filestorefs/Native/Clients/Mame/mame_cache/` to minimize GitHub requests:
 - First request fetches from GitHub
 - Subsequent requests use cached copy
 - Configure with `cache_hash_files: true` in `app.yaml`
@@ -353,7 +353,7 @@ Warning: `SHA1 mismatch for {filename}`
 **Cause**: Downloaded file is corrupt or archive version doesn't match hash file version.
 
 **Solution**: 
-1. Delete cached hash file: `rm app/config/mame_cache/{system}_{media_type}.xml`
+1. Delete cached hash file: `rm /mnt/filestorefs/Native/Clients/Mame/mame_cache/{system}_{media_type}.xml`
 2. Re-download
 
 ## Limitations

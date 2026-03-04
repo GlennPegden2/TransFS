@@ -4,17 +4,73 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+- **YAML null handling in virtual directory detection**: Fixed crash when YAML config has `maps:` set to null/empty. Code now uses `.get('maps') or []` pattern to handle None values returned from YAML parsing.
+
 ### Added
+- **Browse Native "Sync contents" action**: Added a button in the Browse Native tab to trigger database sync for the current native folder path directly from the UI.
+- **SMB-layer foundation tests**: Added `TestSmbFoundation` class in `tests/test_foundation.py` with two comprehensive SMB protocol tests
+  - `test_smb_write_read_delete_roundtrip`: End-to-end write/read/delete validation over SMB share
+  - `test_smb_can_read_large_file_over_1mb`: Large file (2MB) integrity test with size and SHA256 hash verification
+  - Added `smbprotocol>=1.13.0` dependency for SMB2/SMB3 protocol testing
+  - Tests dynamically fall back to share root when expected subdirectories are absent
+- **Startup hot-path pre-warming**: Added `app/startup_prewarm.py` to pre-load critical paths before FUSE mount completes
+  - Reduces cold-start delays from 550-760ms to sub-millisecond (0.6-1.0ms) on frequently-accessed paths
+  - Configuration in `app/config/app.yaml` via `startup_prewarm` section
+  - Pre-builds recursive filename indexes for large source directories (eliminates 8+ second cold-start delays)
+  - Configurable hot paths and subdirectory prewarm behavior
+- **Enhanced recursive filename indexing**: Comprehensive logging and extended TTL in `app/sourcepath.py`
+  - Cache hits/misses, scan time, and file count logging
+  - Increased TTL from 30s to 900s (15 minutes) to avoid repeated expensive scans
+  - Pre-warming eliminates silent delays on first file access (e.g., joeblade.dsk 8.8-second scan issue)
 - **Setup Clients connection profile API**: Added `/api/setup/connection-profile` to publish externally reachable SMB setup details (host, port, share, auth mode, commands).
 - **Setup Clients web tab**: Added a dedicated dashboard tab showing working SMB connection details for Windows and MiSTer clients.
 - **Dynamic Windows setup script download**: `/api/download/setup-windows` now injects host/port/share/username from the resolved setup profile.
+- **N:/R:/M: drive mapping architecture**: Redesigned `setup_windows.ps1.template` with purpose-specific drive letter mappings
+  - **N:** → `/Native` - Direct filestore access (bypass mode) with optional mapping
+  - **R:** → `/RetroBat` - Auto-detected RetroBat installation with virtual filesystem mapping
+  - **M:** → `/Mame` - Auto-detected standalone MAME installation with virtual filesystem mapping
+  - Added `Get-MameInstallDir` function for standalone MAME detection (registry + common install paths)
+  - Simplified connection configuration with `Get-ConnectionConfig` replacing complex mode selection
+  - Modular mapping functions (`Offer-NativeMapping`, `Offer-RetroBatMapping`, `Offer-MameMapping`)
+  - Each mapping is optional and detection-based (Native always offered, RetroBat/Mame only if installed)
+  - RetroBat BIOS copy now requires Native mapping for direct filestore write access
+  - Improved UX with clear visual separators and explanatory text for each mapping option
 - **Configurable hidden file visibility**: Added `show_hidden_files` option in `app.yaml` (default: `true`) to control visibility of dotfiles
   - Now shows hidden files by default to match standard filesystem behavior and maximize client compatibility
   - Can be set to `false` to hide metadata files like `.DS_Store`, `.git`, etc. from emulator views
   - Applies to directory listings in FUSE, database sync, and all virtual path resolution
   - Resolves issue where admin tools (e.g., writability probes) failed when using hidden temp files
 
+### Performance
+- **Startup prewarm optimization**: Added cached config-entry parsing and DB-entry reuse for database-mode `readdir` in `app/transfs.py`
+  - Reduces repeated expensive adapter and parse calls
+  - Pre-loads critical paths (RetroBat/bios, AcornAtom maps) before FUSE mount
+- **Recursive filename scan optimization**: Replaced repeated recursive scans with indexed lookup caches
+  - Applied in `app/sourcepath.py` and `app/dirlisting.py` for flattened query fallback and ZIP discovery
+  - Increased subdirectory query cache TTL to reduce repeated startup/browse DB load
+- **PostgreSQL prefix-like index**: Added `idx_files_virtual_path_like` with `text_pattern_ops` in `app/db/schema.py`
+  - Accelerates `virtual_path LIKE 'prefix%'` lookups used by subdirectory discovery
+- **Subdirectory SQL optimization**: Optimized to compute prefix substring once via CTE in `app/dirlisting.py`
+- **Database connection pooling**: Increased from 15 to 150 total connections (50 pool size + 100 max overflow)
+  - Prevents "connection pool exhausted" errors during recursive directory operations
+  - PostgreSQL server connection limit increased from 100 to 200 connections
+  - Fixes multi-folder deletion operations that were previously blocked
+
 ### Changed
+- **SMB create/read lookup consistency**: Fixed `lookup()` path resolution to use the virtual mount context and added writable-path existence fallback so newly created SMB files are immediately discoverable for read/delete operations.
+- **MAME hash cache relocated out of config**: Cache files now live under `/mnt/filestorefs/Native/Clients/Mame/mame_cache` (configurable via `mame.hash_cache_dir`) instead of `app/config/mame_cache`, with automatic migration of existing cached XML files.
+- **MAME cache path visibility**: Startup now logs the effective MAME hash cache directory (or that caching is disabled) to make runtime behavior explicit.
+- **Test Results run status UX**: Replaced coarse percentage progress bar with an explicit run-state indicator (`In progress` / `Complete`) and removed misleading percent text during test execution.
+- **Downloader action semantics fixed**: "Install/Download Only" no longer triggers automatic database sync; only "Install & Update DB" runs download + sync in one action.
+- **Setup Clients tab URL routing**: Clicking Setup Clients now updates the browser route to `/setup` (instead of `/`) for direct linking and consistent navigation.
+- **Pack downloader log destination visibility**: Downloader install stream now prints native mount destination paths (base path and per-source destination folders) so the UI log shows exactly where files are written.
+- **Docker startup sequence optimization**: Updated `docker-compose.yml` to start Samba immediately after FUSE launch
+  - Extended FUSE mount timeout from 30s to 120s to accommodate slow prewarm operations
+  - Changed mount failure from hard error (`exit 1`) to warning, allowing service continuation
+  - Prevents premature container exits that blocked SMB-level validation
+  - Samba now starts before FUSE readiness checks complete
+- **Removed hardcoded "Native" virtual client folder**: Removed from `/mnt/transfs` root since we now use separate SMB shares (TransFS virtual + TransFSNative native) for filesystem access
 - **RetroBat/Acorn Atom directory listing performance**: Hardened `readdir` caching and query-map path resolution to reduce repeated expensive lookups during emulator probe bursts.
   - Added cached config-entry parsing for database-mode `readdir` calls in `app/transfs.py`.
   - Reused database `readdir` results in main database-mode path via `_db_readdir_cache` instead of re-querying adapter each call.
@@ -24,30 +80,54 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Advertised SMB endpoint (Approach B)**: Added optional compose environment overrides `SMB_ADVERTISE_HOST`, `SMB_ADVERTISE_PORT`, and `SMB_ADVERTISE_SHARE` for explicit client-facing setup values.
 - **Dev compose LAN host default**: Updated `SMB_ADVERTISE_HOST` default in compose for this environment so Setup Clients and generated scripts point to a network-reachable host.
 - **Project Housekeeping (Legacy Archival)**: Moved temporary development artifacts out of project root into `legacy/`
+- **Linux platform file layout**: Moved Samba runtime assets from repo root into `platform/linux/` (`smb.conf`, `smbusers`) and updated build/runtime scripts (`Dockerfile`, `run_local.sh`) to use the new paths.
 - **Client-level global maps support**: Added runtime support for client-level `maps` + `local_base_path` so shared content (e.g., `Native/Clients/RetroBat/bios`) can be mapped once per client and merged with system-specific mappings (e.g., `atom.zip`) under `/RetroBat/bios`
 - **Dual-share SMB architecture**: Added a dedicated native SMB share (`TransFSNative`) and removed the `Native` bind-mount into `/mnt/transfs`, separating virtual and native access at the share level.
 - **Windows setup dual-drive flow**: Updated setup profile/script generation and both setup templates to capture, validate, persist, and reuse separate virtual/native drive mappings (including distinct share names and drive letters).
 - **Windows virtual mapping path correction**: Setup profile and scripts now target `\\<host>\TransFS\RetroBat` for the virtual Windows mapping (instead of share root), and BIOS config path generation avoids duplicate `RetroBat` segments.
 - **Setup Clients native visibility**: Updated the Setup Clients tab to display native share name and native Windows mapping command alongside the existing virtual SMB details.
+- **Native/Clients and Native/Systems architecture**: Added config-time normalization in `app/config.py` so system `local_base_path` and source `base_path` resolve to `Systems/...` without requiring immediate YAML rewrites
+
+### Removed
+- **Hardcoded Native virtual directory**: Removed bind-mount of `Native` into `/mnt/transfs` root
+  - Now use dedicated SMB shares: `TransFS` (virtual) and `TransFSNative` (native)
+- **Redundant SharedBIOS system**: Removed from `app/config/clients/default/retrobat.yaml`
+  - Consolidated BIOS file mappings into client-level maps for cleaner configuration
 
 ### Fixed
+- **TransFS crash on client directories with `maps: null`**: Hardened map iteration across `app/dirlisting.py`, `app/sourcepath.py`, `app/pathutils.py`, and `app/transfs.py` to treat null map collections as empty lists.
+  - Fixes Trio/FUSE crash `TypeError: 'NoneType' object is not iterable` during `READDIR` on paths like `/mnt/transfs/Mame`.
+  - Prevents unmount/connection-abort behavior when client or system map lists are omitted or explicitly null in config.
+- **joeblade.dsk lookup performance**: Fixed 8.8-second silent delay on first access caused by recursive scan of 5,406 files in Software/Sources directory
+  - Now resolved with startup pre-warming and longer cache TTL (900s)
+  - Pre-builds recursive filename indexes for large directories at startup
+- **Shared BIOS zip map rendering**: Fixed zip-mode resolution for category-level mapped files (e.g., `/RetroBat/bios/atom.zip`)
+  - Now honors `file.zip_mode: file` configuration
+  - Items exposed as regular files instead of virtual directories
+- **RetroBat query-map file open pathing**: Fixed category-based map file resolution for query maps (e.g., `/RetroBat/ROMS/AcornAtom/Tapes/*.uef`)
+  - Lookups now resolve against configured query `source_dir` with flattened recursive fallback
+  - Prevents incorrect fallback paths like `.../Atom/Tapes/...`
+- **RetroBat BIOS deep category-path visibility**: Fixed `/RetroBat/bios/mame/ini` directory listing initialization
+  - Correctly discovers and exposes deep paths including files like `mame.ini`
+  - Previously appeared empty due to initialization issue
 - **Windows setup BIOS copy PowerShell syntax error**: Fixed `TrimStart()` method calls in map_win_drive.ps1 and setup_windows.ps1 templates - changed from `TrimStart('\\')` to `TrimStart('\')` to correctly pass a single backslash character instead of an escaped string, resolving "Cannot convert value "\\" to type "System.Char"" error during RetroBat BIOS folder setup
 - **Windows setup BIOS copy error handling**: Added comprehensive error handling to `map_win_drive.ps1` Copy-BiosWithProgress function to catch and report individual file copy failures (permissions, locked files, long paths) instead of silently continuing
 - **Windows setup BIOS copy verification diagnostics**: Enhanced verification logic to identify and display specific missing files when copy count mismatch occurs, making it easier to diagnose which file failed and why
 - **Windows setup native BIOS path**: Setup scripts copy BIOS to `V:\Clients\RetroBat\bios` (matching retrobat.yaml client-level local_base_path) so files appear in virtual mount via client-level query map
-- **Windows setup dual-drive config prompt**: Mode 3 (dual-drive) config prompt shows full native client path (`V:\Clients\RetroBat\bios`) matching where files are copied
+  - Updated RetroBat setup PowerShell templates to copy to correct physical location while configuring virtual path
+  - Added automatic database synchronization after BIOS copy completion
+  - Fixed Mode 3 (dual-drive) config prompt to reference full client path (`V:\Clients\RetroBat\bios`)
 - **Windows setup ROM paths migration**: Added optional post-BIOS update flow to migrate all ROM paths in `es_systems.cfg` from relative (`../roms`) to network share paths (`V:\roms`), with backup and rollback support
-- **Shared BIOS zip map rendering**: Fixed zip-mode resolution for category-level mapped files (e.g., `/RetroBat/bios/atom.zip`) so `file.zip_mode: file` is honored and the item is exposed as a regular file instead of a virtual directory
-- **RetroBat query-map file open pathing**: Fixed category-based map file resolution for query maps (e.g., `/RetroBat/ROMS/AcornAtom/Tapes/*.uef`) so lookups resolve against configured query `source_dir` (with flattened recursive fallback) instead of incorrect fallback paths like `.../Atom/Tapes/...`
-- **RetroBat BIOS path mapping**: Fixed map_win_drive.ps1 to copy BIOS files to correct physical location (Native\Clients\RetroBat\bios) while configuring RetroBat to use virtual path (RetroBat\bios)
-- **RetroBat BIOS database sync**: Added automatic database synchronization after BIOS copy completion to ensure files are immediately available in TransFS virtual filesystem
-- **Downloadable Windows setup RetroBat BIOS path**: Fixed setup script templates to keep copying BIOS files to Native\Clients\RetroBat\bios while updating emulatorLauncher.cfg to use RetroBat\bios (virtual path)
-- **Downloadable Windows setup post-copy sync**: Added user notice and automatic RetroBat-targeted database sync after BIOS copy completes
-- **RetroBat BIOS mame/ini visibility**: Fixed deep category-path directory listing initialization so `/RetroBat/bios/mame/ini` is correctly discovered and exposed (including `mame.ini`) instead of appearing empty
 - **TransFS release crash (KeyError)**: Hardened file-handle teardown in `app/transfs.py` `release()` to handle duplicate/reordered release events and shared inode scenarios without crashing the Trio FUSE loop
 - **SMB 0KB mapped file metadata**: Fixed `readdir` fast-path cached stat construction in `app/transfs.py` to use real file sizes from `DirEntry.stat()` instead of reporting non-directory entries as `0` bytes
 - **TransFS readdir crash (UnboundLocalError)**: Fixed `app/transfs.py` `readdir` fast-path to avoid `stat` name shadowing (`UnboundLocalError: local variable 'stat' referenced before assignment`) during `readdirplus`
-- **SMB auth/guest parity across shares**: Updated SMB config mutation logic so guest/auth settings are consistently applied to both `TransFS` and `TransFSNative` shares.
+- **SMB auth/guest parity across shares**: Updated SMB config mutation logic so guest/auth settings are consistently applied to both `TransFS` and `TransFSNative` shares
+- **Samba FUSE compatibility**: Added delete veto files settings to `smb.conf` for improved FUSE-backed file deletion operations
+- **Windows setup write-access validation**: Fixed false-negative write checks on mapped drive root paths
+  - Script no longer hard-fails when `V:\` root is non-writable (Mode 3 dual-drive)
+  - Now validates and tests write access on actual target path (`<share>\RetroBat\bios`)
+  - Changed mapped drive root writability check from hard error to warning
+  - Preserved strict validation at BIOS destination path
   - Archived root-level one-off check/cleanup/test scripts used during feature development
   - Archived abandoned Windows helper prototype at `legacy/tools/Tranfs_Retrobat_Config/`
   - Kept runtime/production scripts in place (including `map_win_drive.ps1`)

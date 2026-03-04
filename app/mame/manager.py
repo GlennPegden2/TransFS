@@ -6,6 +6,7 @@ Orchestrates MAME software downloads based on configuration.
 
 import os
 import json
+import shutil
 import logging
 from typing import List, Dict, Optional, Callable
 from pathlib import Path
@@ -47,6 +48,7 @@ class MAMEDownloadManager:
         self.verify_checksums = mame_config.get('verify_checksums', True)
         self.max_concurrent = mame_config.get('max_concurrent_downloads', 3)
         self.cache_hash_files = mame_config.get('cache_hash_files', True)
+        filestore_root = config.get('filestore', '/mnt/filestorefs')
         
         # Initialize components
         self.parser = MAMEHashParser(logger_instance=self.logger)
@@ -57,10 +59,45 @@ class MAMEDownloadManager:
             logger_instance=self.logger
         )
         
-        # Hash file cache directory
-        self.cache_dir = os.path.join(os.path.dirname(__file__), '..', 'config', 'mame_cache')
+        # Hash file cache directory (runtime data belongs in filestore, not config)
+        default_cache_dir = os.path.join(filestore_root, 'Native', 'Clients', 'Mame', 'mame_cache')
+        self.cache_dir = mame_config.get('hash_cache_dir', default_cache_dir)
+        self.legacy_cache_dir = os.path.join(os.path.dirname(__file__), '..', 'config', 'mame_cache')
         if self.cache_hash_files:
             os.makedirs(self.cache_dir, exist_ok=True)
+            self._migrate_legacy_hash_cache()
+            self.logger.info(f"MAME hash cache directory: {os.path.abspath(self.cache_dir)}")
+        else:
+            self.logger.info("MAME hash file caching disabled (cache_hash_files=false)")
+
+    def _migrate_legacy_hash_cache(self) -> None:
+        """Migrate legacy hash cache files from app/config/mame_cache to filestore."""
+        legacy_dir = os.path.abspath(self.legacy_cache_dir)
+        new_dir = os.path.abspath(self.cache_dir)
+
+        if legacy_dir == new_dir or not os.path.isdir(legacy_dir):
+            return
+
+        moved = 0
+        for filename in os.listdir(legacy_dir):
+            if not filename.lower().endswith('.xml'):
+                continue
+
+            src = os.path.join(legacy_dir, filename)
+            dst = os.path.join(new_dir, filename)
+            if os.path.exists(dst):
+                continue
+
+            try:
+                shutil.copy2(src, dst)
+                moved += 1
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.warning(f"Failed to migrate legacy hash cache file {filename}: {exc}")
+
+        if moved > 0:
+            self.logger.info(
+                f"Migrated {moved} MAME hash cache file(s) from {legacy_dir} to {new_dir}"
+            )
     
     def discover_systems_with_mame_sources(self) -> List[Dict]:
         """

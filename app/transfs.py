@@ -215,7 +215,7 @@ class TransFS(Passthrough):
             if now - cached_at < self._lookup_parent_entries_ttl:
                 return entries
 
-        entries = set(parse_trans_path(self.config, self.root, parent_path))
+        entries = set(parse_trans_path(self.config, self.mount_path, parent_path))
         self._lookup_parent_entries_cache[parent_path] = (now, entries)
         return entries
 
@@ -248,7 +248,7 @@ class TransFS(Passthrough):
         # Check for client-level file maps first (e.g., /RetroBat/bios/atom.zip)
         if len(rel_parts) >= 2:
             potential_client_map_path = '/'.join(rel_parts[1:])
-            client_maps = client.get('maps', [])
+            client_maps = client.get('maps') or []
             client_map_entry = find_map_entry({'maps': client_maps}, potential_client_map_path)
             if client_map_entry:
                 map_config = get_map_config(client_map_entry)
@@ -267,7 +267,7 @@ class TransFS(Passthrough):
         if len(rel_parts) == 3:
             virtual_rel = '/'.join(rel_parts)
             for candidate_system in client.get('systems', []):
-                for map_entry in candidate_system.get('maps', []):
+                for map_entry in (candidate_system.get('maps') or []):
                     map_name = list(map_entry.keys())[0]
                     map_config = map_entry.get(map_name, {})
                     if not isinstance(map_config, dict):
@@ -600,7 +600,7 @@ class TransFS(Passthrough):
                 return None
             
             # Check if map exists
-            map_entry = next((m for m in system_info.get('maps', []) if list(m.keys())[0] == map_name), None)
+            map_entry = next((m for m in (system_info.get('maps') or []) if list(m.keys())[0] == map_name), None)
             if not map_entry:
                 logger.debug(f"_extract_map_info: map {map_name} not found in {system_name}")
                 return None
@@ -843,7 +843,7 @@ class TransFS(Passthrough):
             # Check for nested file map virtual directories (e.g., "bios" from "FDs/bios/atom.zip")
             # These should appear as directories in the query map directory
             nested_map_dirs = set()
-            for map_entry in system_info.get('maps', []):
+            for map_entry in (system_info.get('maps') or []):
                 map_key = list(map_entry.keys())[0]
                 # Check if this map is nested under the current map (e.g., "FDs/bios/atom.zip")
                 if map_key.startswith(map_name + '/'):
@@ -1387,7 +1387,7 @@ class TransFS(Passthrough):
                         if not is_query_map_dir and not is_unzipped_file_map_dir:
                             is_nested_file_map_dir = any(
                                 list(m.keys())[0].startswith(map_name + '/')
-                                for m in system_info.get('maps', [])
+                                for m in (system_info.get('maps') or [])
                             )
                             if is_nested_file_map_dir:
                                 logger.info(f"READDIR: detected nested file map virtual directory: {map_name}")
@@ -2239,7 +2239,7 @@ class TransFS(Passthrough):
             if client:
                 # Check ALL systems for a file map with this name and category
                 for system in client.get('systems', []):
-                    for map_entry in system.get('maps', []):
+                    for map_entry in (system.get('maps') or []):
                         map_name = list(map_entry.keys())[0]
                         map_config = list(map_entry.values())[0]
                         if (isinstance(map_config, dict) and
@@ -2261,7 +2261,7 @@ class TransFS(Passthrough):
             client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if client:
                 # Check if this is a virtual directory for nested client-level maps
-                client_maps = client.get('maps', [])
+                client_maps = client.get('maps') or []
                 is_virtual_dir = any(
                     list(m.keys())[0].startswith(potential_map + '/')
                     for m in client_maps
@@ -2297,7 +2297,7 @@ class TransFS(Passthrough):
                     # e.g., "bios" from "bios/atom.zip" OR "FDs/bios" from "FDs/bios/atom.zip"
                     is_virtual_dir = any(
                         list(m.keys())[0].startswith(map_path + '/')
-                        for m in system_info.get('maps', [])
+                        for m in (system_info.get('maps') or [])
                     )
                     if is_virtual_dir:
                         now = int(time.time())
@@ -2503,7 +2503,7 @@ class TransFS(Passthrough):
                             # Check if this is a virtual directory for nested file maps (e.g., "bios" from "bios/atom.zip")
                             is_virtual_dir = any(
                                 list(m.keys())[0].startswith(map_name + '/')
-                                for m in system_info.get('maps', [])
+                                for m in (system_info.get('maps') or [])
                             )
                             if is_virtual_dir:
                                 now = int(time.time())
@@ -2795,6 +2795,10 @@ class TransFS(Passthrough):
                         self._fd_inode_map[fd] = inode
                         self._inode_fd_map[inode] = fd
                         self._fd_open_count[fd] = 1
+
+                        parent_path = self._normalize_to_virtual_path(os.path.dirname(path))
+                        self._lookup_parent_entries_cache.pop(parent_path, None)
+
                         logger.info("OPEN: created new file, fd=%s", fd)
                         return pyfuse3.FileInfo(fh=fd)
                     except Exception as e:
@@ -3112,7 +3116,7 @@ class TransFS(Passthrough):
             return await self.getattr(pyfuse3.ROOT_INODE, ctx)
 
         # Try to get source path (handles virtual translation)
-        source_path = get_source_path(logger, self.config, self.root, path)
+        source_path = get_source_path(logger, self.config, self.mount_path, path)
         logger.info(f"LOOKUP: source_path={source_path}")
 
         # Generate inode for this path
@@ -3168,6 +3172,15 @@ class TransFS(Passthrough):
                 logger.info(f"LOOKUP: SUCCESS - transformed file, synthetic_inode={synthetic_inode}")
                 self._increment_lookup_count(synthetic_inode)
                 return await self.getattr(synthetic_inode, ctx)
+
+        # Fallback for writable paths: allow lookup of physically created files
+        # even when parse_trans_path caches haven't listed them yet.
+        writable_path = get_source_path_for_write(logger, self.config, self.mount_path, path)
+        if writable_path and os.path.exists(writable_path):
+            self._add_path(synthetic_inode, path)
+            logger.info(f"LOOKUP: SUCCESS - writable fallback path exists: {writable_path}")
+            self._increment_lookup_count(synthetic_inode)
+            return await self.getattr(synthetic_inode, ctx)
 
         # Check if it's a virtual directory/file by checking if it would be listed
         parent_entries = self._get_parent_entries_for_lookup(parent_path)
@@ -3233,6 +3246,9 @@ class TransFS(Passthrough):
             self._inode_fd_map[attr.st_ino] = fd
             self._fd_inode_map[fd] = attr.st_ino
             self._fd_open_count[fd] = 1
+
+            normalized_parent = self._normalize_to_virtual_path(parent_path)
+            self._lookup_parent_entries_cache.pop(normalized_parent, None)
             return (pyfuse3.FileInfo(fh=fd), attr)
         except Exception as e:
             logger.debug("CREATE: Exception %s", e)

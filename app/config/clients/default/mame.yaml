@@ -1,7 +1,67 @@
-# MAME Client Configuration
+# Mame Client Configuration
 # Defines system mappings and file organization for MAME emulator
+# Unlike retrobat, by default it doesn't really distinguish between ROMs and BIOS - everything is just "ROMs" ao we can share bios files under roms
 
-name: Mame
+name: MAME
+download_layout: source_based
 default_target_path: "{name}/{system_name}/{maps}"
 
-systems: []
+
+
+# Client-level base path for client infrastructure files (e.g., downloaded BIOS)
+local_base_path: Clients/Mame
+
+# Category-based path templates
+# Maps with category="roms" will appear under ROMS/{system_name}
+# Maps with category="bios" will appear under bios/{system_name}
+# Maps with category="shared_bios" will appear under bios (no system subdirectory)
+category_paths:
+  roms: "{name}/ROMS/{system_name}"
+  biosroms: "{name}/ROMS/"
+
+# Client-level maps (apply globally to all systems in this client)
+# These files appear at /RetroBat/bios/* regardless of system
+maps: []
+
+systems: 
+  - name: AcornAtom
+    manufacturer: Acorn
+    system_mapping_name: Atom
+    local_base_path: Acorn/Atom
+    maps:
+      - FDs:
+          category: roms  
+          query:
+            source_dir: Software/Sources
+            extensions:
+#              - ATM
+              - DSK
+            supports_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+      - ROMs: # As in Software EPROMS
+          category: roms  
+          query:
+            source_dir: Software/Sources
+            extensions:
+              - ROM
+            supports_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+      - Tapes:
+          category: roms  
+          query:
+            source_dir: Software/Sources
+            extensions:
+              - UEF
+            supports_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+
+      - atom.zip:
+          category: biosroms 
+          file:
+            path: Software/BIOS/atom.zip
+            zip_mode: file  # Treat as a file, not a browsable directory
+
+

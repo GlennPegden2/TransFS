@@ -39,10 +39,10 @@ config_sets:
   active_client_config: default
   active_source_config: default
 database:
-  auto_sync: true
+  auto_sync: false
   enabled: true
   mode: enabled
-  sync_on_startup: true
+  sync_on_startup: false
   # PostgreSQL connection (environment variables override these)
   host: postgres
   port: 5432

@@ -383,12 +383,14 @@ class PackInstallRequest(BaseModel):
     system: str
     pack_ids: list[str]  # List of pack IDs to install
     skip_existing: bool = True  # Deduplicate - skip files that already exist
+    update_db: bool = True  # Run database sync after install
 
 
 class PackInstallRequestNoClient(BaseModel):
     """Request model for client-agnostic pack installation."""
     pack_ids: list[str]  # List of pack IDs to install
     skip_existing: bool = True  # Deduplicate - skip files that already exist
+    update_db: bool = True  # Run database sync after install
 
 
 @app.get("/logs", response_class=PlainTextResponse, tags=["System"])
@@ -2269,6 +2271,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
             yield f"Installing pack: {pack.name}\n"
             yield f"Description: {pack.description}\n"
             yield f"Estimated size: {pack.estimated_size}\n"
+            yield f"Native mount base path: {base_path}\n"
             yield f"{'='*60}\n\n"
             
             # Download sources referenced by this pack
@@ -2313,7 +2316,9 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                 yield f"      ⚠ Skipping invalid media_type config: {media_config}\n"
                                 continue
                             
+                            mame_dest_dir = os.path.join(mame_base_path, target_folder)
                             yield f"   🔍 Downloading MAME {system}_{media_type}...\n"
+                            yield f"      📂 Destination: {mame_dest_dir}\n"
                             
                             try:
                                 # Download with progress callback
@@ -2366,6 +2371,12 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                             download_layout=system_config.download_layout,
                             base_path_rel=system_config.local_base_path,
                         )
+
+                    destination_dirs = sorted({os.path.join(base_path, entry["folder"]) for entry in url_entries})
+                    if destination_dirs:
+                        yield "   📂 Destination path(s):\n"
+                        for destination_dir in destination_dirs:
+                            yield f"      - {destination_dir}\n"
                     
                     # Handle rename at source level (applied after all URLs downloaded)
                     source_rename_pairs = source.get("rename")
@@ -3043,51 +3054,54 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
         yield "\n" + "=" * 60 + "\n"
         yield "All selected packs processed\n"
         
-        # Run database sync at the end of pack installation
-        try:
-            yield "\n" + "=" * 60 + "\n"
-            yield "🔄 Starting database synchronization...\n"
-            yield "=" * 60 + "\n\n"
-            
-            # Flush to ensure header is sent immediately
-            sys.stdout.flush()
-            sys.stderr.flush()
-            
-            # Set up logging to capture sync output
-            log_capture = io.StringIO()
-            log_handler = logging.StreamHandler(log_capture)
-            log_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(message)s')
-            log_handler.setFormatter(formatter)
-            
-            # Add handler to sync_database logger
-            sync_logger = logging.getLogger('sync_database')
-            sync_logger.addHandler(log_handler)
-            sync_logger.setLevel(logging.INFO)
-            
-            # Create DatabaseSync instance and run full sync
-            sync_config = read_config()
-            db_sync = DatabaseSync(sync_config)
-            db_sync.full_sync(client_filter=client_name, system_filter=system_name)
-            
-            # Stream captured log output
-            sync_output = log_capture.getvalue()
-            if sync_output:
-                for line in sync_output.split('\n'):
-                    if line.strip():
-                        yield f"  {line}\n"
-            else:
-                yield "  (sync completed with no log output)\n"
-            
-            # Remove handler
-            sync_logger.removeHandler(log_handler)
-            log_handler.close()
-            
-            yield "\n" + "=" * 60 + "\n"
-            yield "✓ Database synchronization completed\n"
-            yield "=" * 60 + "\n"
-        except Exception as e:  # pylint: disable=broad-except
-            yield f"\n✗ Database synchronization failed: {str(e)}\n"
+        if req.update_db:
+            # Run database sync at the end of pack installation
+            try:
+                yield "\n" + "=" * 60 + "\n"
+                yield "🔄 Starting database synchronization...\n"
+                yield "=" * 60 + "\n\n"
+                
+                # Flush to ensure header is sent immediately
+                sys.stdout.flush()
+                sys.stderr.flush()
+                
+                # Set up logging to capture sync output
+                log_capture = io.StringIO()
+                log_handler = logging.StreamHandler(log_capture)
+                log_handler.setLevel(logging.INFO)
+                formatter = logging.Formatter('%(message)s')
+                log_handler.setFormatter(formatter)
+                
+                # Add handler to sync_database logger
+                sync_logger = logging.getLogger('sync_database')
+                sync_logger.addHandler(log_handler)
+                sync_logger.setLevel(logging.INFO)
+                
+                # Create DatabaseSync instance and run full sync
+                sync_config = read_config()
+                db_sync = DatabaseSync(sync_config)
+                db_sync.full_sync(client_filter=client_name, system_filter=system_name)
+                
+                # Stream captured log output
+                sync_output = log_capture.getvalue()
+                if sync_output:
+                    for line in sync_output.split('\n'):
+                        if line.strip():
+                            yield f"  {line}\n"
+                else:
+                    yield "  (sync completed with no log output)\n"
+                
+                # Remove handler
+                sync_logger.removeHandler(log_handler)
+                log_handler.close()
+                
+                yield "\n" + "=" * 60 + "\n"
+                yield "✓ Database synchronization completed\n"
+                yield "=" * 60 + "\n"
+            except Exception as e:  # pylint: disable=broad-except
+                yield f"\n✗ Database synchronization failed: {str(e)}\n"
+        else:
+            yield "\nDB synchronization skipped (Install/Download Only selected)\n"
     
     return StreamingResponse(run_and_stream(), media_type="text/plain")
 
@@ -3130,6 +3144,7 @@ async def api_install_packs_no_client(manufacturer: str, system_name: str, req: 
         system=system_actual_name,
         pack_ids=req.pack_ids,
         skip_existing=req.skip_existing,
+        update_db=req.update_db,
     )
 
     return await api_install_packs(client_name, system_actual_name, full_request)

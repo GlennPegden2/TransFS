@@ -10,7 +10,7 @@
 #SOURCE COUNTROL
 
   github is source control.
-  Changlog.md should be updated with a summary of changes after each successful code change task, and should be commited to github with the code changes.
+  CHANGELOG.md should be updated with a summary of changes after each successful code change task, and should be commited to github with the code changes.
   API changes shouldadditionally be documented in swaggere/heredoc/openapi.json, and any new features should be documented in FEATURES.md.
   remind the user to commit periodically, after sucessful code change tasks (when the problems are solved)
   Encourage the user to push/sync whenever the test suite is passing, to ensure work is saved and shared.

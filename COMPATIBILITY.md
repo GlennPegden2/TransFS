@@ -5,10 +5,10 @@ This table tracks which systems are supported on which emulator platforms, along
 | System             | MiSTer | Mame | RetroPie | RetroBat | Zaparoo Launch | Notes |
 |--------------------|--------|------|----------|----------|-------|
 | Acorn Archimedes   | ✅ ADF, HDF |   |          |          | ❌        | Mister: See notes on how to configure HDs on the archie, they wont boot without cmos config      |
-| Acorn Atom         | ✅ VHD      |   |          |          | ✅         | Shift F10 launches the StarDot collection |
+| Acorn Atom         | ✅ VHD      |   |          | ✅ UEF, DSK          | ✅         | Shift F10 to load |
 | Acorn BBC Micro    | ✅ VHD, MMB |   |          |          | ✅         |       |
 | Acorn Electron     | ✅ VHD, MMB, UEF | |      |          | ✅         |       |
-| Amstrad CPC        | ✅ DSK, CTD, Exx, ROM      |   |          |          | ✅         | Mister takes ages to boot, partly because it looks for 255 files tht normally won't exist |
+| Amstrad CPC        | ✅ DSK, CTD, Exx, ROM      |   |          |          | ✅         | MiSTer takes ages to boot, partly because it looks for 255 files tht normally won't exist |
 | Amstrad PCW        | ✅ DSK      |   |          |          |       | ✅         |
 | Apple I           |            |   |          |          |       |          |
 | Apple II           |  ✅ DSK, PO, DO, HDV, 2MG (via transform to HDV          |   |          |          |  ✅ (except HDVs)     | Self boot HDVs need a soft reset to boot. Many images don't seem to work for some reasons         |

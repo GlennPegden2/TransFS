@@ -14,8 +14,8 @@ RUN mkdir /mnt/transfs && chmod 755 /mnt/transfs
 RUN echo 'user_allow_other' >> /etc/fuse.conf
 
 # Add a basic Samba config
-COPY smb.conf /etc/samba/smb.conf
-COPY smbusers /etc/samba/smbusers
+COPY platform/linux/smb.conf /etc/samba/smb.conf
+COPY platform/linux/smbusers /etc/samba/smbusers
 
 # Note: Samba user credentials are configured at app startup from app.yaml
 # via app/smb_config.py, not at build time
