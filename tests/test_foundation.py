@@ -314,6 +314,12 @@ class TestSmbFoundation:
         last_error = None
         for host in cls.SMB_HOST_CANDIDATES:
             try:
+                # Clean up any existing session first
+                try:
+                    smbclient.delete_session(host)
+                except Exception:
+                    pass
+                
                 smbclient.register_session(
                     host,
                     username=cls.SMB_USER,
@@ -324,6 +330,11 @@ class TestSmbFoundation:
                 return smbclient, host
             except Exception as error:
                 last_error = error
+                # Try to clean up any partial session
+                try:
+                    smbclient.delete_session(host)
+                except Exception:
+                    pass
 
         pytest.fail(
             "Unable to connect to Samba for foundation tests via "
