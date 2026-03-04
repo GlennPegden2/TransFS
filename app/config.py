@@ -4,6 +4,32 @@ from dataclasses import dataclass
 from typing import Optional
 from functools import lru_cache
 
+
+def _normalize_native_local_base_path(local_base_path: Optional[str]) -> str:
+    """Normalize system local base paths under Native/Systems for new architecture."""
+    normalized = (local_base_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    if lower.startswith("systems/") or lower.startswith("clients/"):
+        return normalized
+
+    return f"Systems/{normalized}"
+
+
+def _normalize_source_base_path(base_path: Optional[str]) -> str:
+    """Normalize source base_path under Native/Systems for new architecture."""
+    normalized = (base_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    if lower.startswith("systems/") or lower.startswith("clients/"):
+        return normalized
+
+    return f"Systems/{normalized}"
+
 @dataclass
 class Pack:
     """Represents a downloadable pack of software for a system."""
@@ -54,7 +80,12 @@ def read_clients_config(config_dir="config", config_set=None):
         legacy_path = os.path.join(config_dir, "clients.yaml")
         if os.path.exists(legacy_path):
             with open(legacy_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                legacy_config = yaml.safe_load(f) or {"clients": []}
+                for client_data in legacy_config.get("clients", []):
+                    for system in client_data.get("systems", []):
+                        if "local_base_path" in system:
+                            system["local_base_path"] = _normalize_native_local_base_path(system.get("local_base_path"))
+                return legacy_config
         # Try direct clients directory (backward compatibility)
         clients_dir = os.path.join(config_dir, "clients")
         if os.path.exists(clients_dir) and os.path.isdir(clients_dir):
@@ -65,6 +96,9 @@ def read_clients_config(config_dir="config", config_set=None):
                         with open(client_path, "r", encoding="utf-8") as f:
                             client_data = yaml.safe_load(f)
                             if client_data and isinstance(client_data, dict):
+                                for system in client_data.get("systems", []):
+                                    if "local_base_path" in system:
+                                        system["local_base_path"] = _normalize_native_local_base_path(system.get("local_base_path"))
                                 clients.append(client_data)
             return {"clients": clients}
         return {"clients": []}
@@ -76,6 +110,9 @@ def read_clients_config(config_dir="config", config_set=None):
             with open(client_path, "r", encoding="utf-8") as f:
                 client_data = yaml.safe_load(f)
                 if client_data and isinstance(client_data, dict):
+                    for system in client_data.get("systems", []):
+                        if "local_base_path" in system:
+                            system["local_base_path"] = _normalize_native_local_base_path(system.get("local_base_path"))
                     clients.append(client_data)
     
     return {"clients": clients}
@@ -97,13 +134,19 @@ def read_source_config(manufacturer: str, canonical_name: str, config_dir="confi
     path = os.path.join(config_dir, "sources", config_set, manufacturer, f"{canonical_name}.yaml")
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            source_config = yaml.safe_load(f)
+            if isinstance(source_config, dict) and "base_path" in source_config:
+                source_config["base_path"] = _normalize_source_base_path(source_config.get("base_path"))
+            return source_config
     
     # Fallback to legacy location (no config_set subdirectory)
     legacy_path = os.path.join(config_dir, "sources", manufacturer, f"{canonical_name}.yaml")
     if os.path.exists(legacy_path):
         with open(legacy_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            source_config = yaml.safe_load(f)
+            if isinstance(source_config, dict) and "base_path" in source_config:
+                source_config["base_path"] = _normalize_source_base_path(source_config.get("base_path"))
+            return source_config
     
     return None
 

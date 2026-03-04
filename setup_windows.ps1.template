@@ -33,6 +33,7 @@ $DefaultSmbHost = "{{TRANSFS_SMB_HOST}}"
 $DefaultSmbUsername = "{{TRANSFS_SMB_USERNAME}}"
 $DefaultSmbPort = "{{TRANSFS_SMB_PORT}}"
 $DefaultShareName = "{{TRANSFS_SHARE_NAME}}"
+$DefaultNativeShareName = "{{TRANSFS_NATIVE_SHARE_NAME}}"
 $script:RestartExplorerAfterExit = $false
 
 function Write-Info([string]$Message) { Write-Host "[INFO] $Message" -ForegroundColor Cyan }
@@ -54,7 +55,7 @@ function Get-StoredSettings {
 		}
 		
 		# Safely access each property using PSObject.Properties
-		$propNames = @('Mode', 'ShareRoot', 'DriveLetter', 'ServerName', 'ShareName', 'SmbPort', 'MappingScope')
+		$propNames = @('Mode', 'ShareRoot', 'DriveLetter', 'ServerName', 'ShareName', 'SmbPort', 'MappingScope', 'NativeShareRoot', 'NativeDriveLetter', 'NativeShareName')
 		foreach ($propName in $propNames) {
 			$propValue = $props.PSObject.Properties.Item($propName)
 			if ($propValue -ne $null) {
@@ -373,6 +374,7 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 		switch ($mode) {
 			"1" {
 				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "" }
+				$defaultNativeShareRoot = if ($Defaults['NativeShareRoot']) { [string]$Defaults['NativeShareRoot'] } else { "" }
 				$useBrowser = Prompt-WithDefault "Use folder browser? (Y/N)" "Y"
 				if ($useBrowser.ToUpperInvariant() -eq "Y") {
 					$selected = Select-FolderDialog "Select mapped drive root or share folder" $defaultShareRoot
@@ -388,8 +390,14 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 					$shareRoot = Prompt-WithDefault "Enter mapped drive path (example: U:\\ or U:\\TransFS)" $defaultShareRoot
 				}
 
+				$nativeShareRoot = Prompt-WithDefault "Enter mapped NATIVE drive path (example: V:\\)" $defaultNativeShareRoot
+
 				if (-not (Test-Path $shareRoot -PathType Container)) {
 					Write-ErrMsg "Path does not exist: $shareRoot"
+					continue
+				}
+				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
+					Write-ErrMsg "Native path does not exist: $nativeShareRoot"
 					continue
 				}
 
@@ -397,43 +405,71 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 					Write-ErrMsg "Path is not writable: $shareRoot"
 					continue
 				}
+				if (-not (Test-PathWritable $nativeShareRoot)) {
+					Write-ErrMsg "Native path is not writable: $nativeShareRoot"
+					continue
+				}
 
 				return @{
 					Mode = "1"
 					ShareRoot = (Resolve-Path $shareRoot).Path
+					NativeShareRoot = (Resolve-Path $nativeShareRoot).Path
 					DriveLetter = ""
+					NativeDriveLetter = ""
 					ServerName = ""
 					ShareName = ""
+					NativeShareName = ""
 					SmbPort = ""
 				}
 			}
 			"2" {
 				$defaultShareRoot = if ($Defaults['ShareRoot']) { [string]$Defaults['ShareRoot'] } else { "\\server\share" }
+				$defaultNativeShareRoot = if ($Defaults['NativeShareRoot']) { [string]$Defaults['NativeShareRoot'] } else { "\\server\TransFSNative" }
 				$shareRoot = Prompt-WithDefault "Enter UNC path (example: \\server\share)" $defaultShareRoot
+				$nativeShareRoot = Prompt-WithDefault "Enter UNC NATIVE path (example: \\server\TransFSNative)" $defaultNativeShareRoot
 
 				if ($shareRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
 					Write-ErrMsg "Invalid UNC format."
+					continue
+				}
+				if ($nativeShareRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
+					Write-ErrMsg "Invalid native UNC format."
 					continue
 				}
 				if ($shareRoot -match ':[0-9]+') {
 					Write-WarnMsg "UNC with custom port requires a mapped drive. Choose option 3."
 					continue
 				}
+				if ($nativeShareRoot -match ':[0-9]+') {
+					Write-WarnMsg "Native UNC with custom port requires a mapped drive. Choose option 3."
+					continue
+				}
 				if (-not (Test-Path $shareRoot -PathType Container)) {
 					Write-ErrMsg "UNC path not reachable: $shareRoot"
+					continue
+				}
+				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
+					Write-ErrMsg "Native UNC path not reachable: $nativeShareRoot"
 					continue
 				}
 				if (-not (Test-PathWritable $shareRoot)) {
 					Write-ErrMsg "UNC path is not writable: $shareRoot"
 					continue
 				}
+				if (-not (Test-PathWritable $nativeShareRoot)) {
+					Write-ErrMsg "Native UNC path is not writable: $nativeShareRoot"
+					continue
+				}
 
 				return @{
 					Mode = "2"
 					ShareRoot = $shareRoot.TrimEnd('\\')
+					NativeShareRoot = $nativeShareRoot.TrimEnd('\\')
 					DriveLetter = ""
+					NativeDriveLetter = ""
 					ServerName = ""
 					ShareName = ""
+					NativeShareName = ""
 					SmbPort = ""
 				}
 			}
@@ -442,6 +478,7 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 				Write-Host ""
 
 				$defaultDrive = if ($Defaults['DriveLetter']) { [string]$Defaults['DriveLetter'] } else { "U" }
+				$defaultNativeDrive = if ($Defaults['NativeDriveLetter']) { [string]$Defaults['NativeDriveLetter'] } else { "V" }
 				while ($true) {
 					$driveLetter = Prompt-WithDefault "Enter unused drive letter (example: U)" $defaultDrive
 					$driveLetter = $driveLetter.Trim().TrimEnd(':').ToUpperInvariant()
@@ -450,14 +487,31 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 					}
 					break
 				}
+				while ($true) {
+					$nativeDriveLetter = Prompt-WithDefault "Enter unused NATIVE drive letter (example: V)" $defaultNativeDrive
+					$nativeDriveLetter = $nativeDriveLetter.Trim().TrimEnd(':').ToUpperInvariant()
+					if ($nativeDriveLetter -eq $driveLetter) {
+						Write-ErrMsg "Native drive letter must be different from virtual drive letter."
+						continue
+					}
+					if (-not (Ensure-DriveLetterAvailableOrOfferRemoval $nativeDriveLetter)) {
+						continue
+					}
+					break
+				}
 
 				$defaultServerName = if ($Defaults.ContainsKey("ServerName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ServerName'])) { [string]$Defaults['ServerName'] } else { $DefaultSmbHost }
 				$defaultShareName = if ($Defaults.ContainsKey("ShareName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['ShareName'])) { [string]$Defaults['ShareName'] } else { $DefaultShareName }
+				if ($defaultShareName -notmatch '(?i)\\retrobat$') {
+					$defaultShareName = "$defaultShareName\RetroBat"
+				}
+				$defaultNativeShareName = if ($Defaults.ContainsKey("NativeShareName") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['NativeShareName'])) { [string]$Defaults['NativeShareName'] } else { $DefaultNativeShareName }
 				$defaultSmbPort = if ($Defaults.ContainsKey("SmbPort") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['SmbPort'])) { [string]$Defaults['SmbPort'] } else { $DefaultSmbPort }
 				$defaultMappingScope = if ($Defaults.ContainsKey("MappingScope") -and -not [string]::IsNullOrWhiteSpace([string]$Defaults['MappingScope'])) { [string]$Defaults['MappingScope'] } else { "1" }
 
 				$serverName = Prompt-WithDefault "Enter SMB server name" $defaultServerName
-				$shareName = Prompt-WithDefault "Enter share name" $defaultShareName
+				$shareName = Prompt-WithDefault "Enter virtual share path (example: TransFS\RetroBat)" $defaultShareName
+				$nativeShareName = Prompt-WithDefault "Enter native share name" $defaultNativeShareName
 				$smbPort = Prompt-WithDefault "Enter SMB TCP port" $defaultSmbPort
 				Write-Host ""
 				Write-Host "Select mapping scope:" -ForegroundColor White
@@ -477,6 +531,8 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 
 				$remotePath = "\\$serverName\$shareName"
 				$localPath = "${driveLetter}:"
+				$nativeRemotePath = "\\$serverName\$nativeShareName"
+				$nativeLocalPath = "${nativeDriveLetter}:"
 
 				try {
 					Write-Info "Mapping $localPath to $remotePath on port $smbPort"
@@ -516,6 +572,7 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 				Start-Sleep -Milliseconds 500
 
 				$shareRoot = "$localPath\"
+				$nativeShareRoot = "$nativeLocalPath\"
 				
 				try {
 					$pathTest = Test-Path $shareRoot -PathType Container -ErrorAction Stop
@@ -540,14 +597,37 @@ function Resolve-TransFSShare([hashtable]$Defaults) {
 					Write-WarnMsg "Continuing - script will validate write access at the BIOS target folder."
 				}
 
+				try {
+					Write-Info "Mapping native share $nativeLocalPath to $nativeRemotePath on port $smbPort"
+					Remove-StaleSmbMappings -LocalPath $nativeLocalPath -RemotePath $nativeRemotePath
+					New-TransFSSmbMappingWithFallback -LocalPath $nativeLocalPath -RemotePath $nativeRemotePath -SmbPort ([int]$smbPort) -Credential $creds -UseGlobalMapping $useGlobalMapping -ServerName $serverName -DefaultUserName $DefaultSmbUsername
+				}
+				catch {
+					Write-ErrMsg "Failed to map native drive: $($_.Exception.Message)"
+					continue
+				}
+
+				Start-Sleep -Milliseconds 500
+				if (-not (Test-Path $nativeShareRoot -PathType Container)) {
+					Write-ErrMsg "Native mapped drive is not accessible: $nativeShareRoot"
+					continue
+				}
+				if (-not (Test-PathWritable $nativeShareRoot)) {
+					Write-ErrMsg "Native mapped drive is not writable: $nativeShareRoot"
+					continue
+				}
+
 				Restart-ExplorerIfRequested
 
 				return @{
 					Mode = "3"
 					ShareRoot = $shareRoot
+					NativeShareRoot = $nativeShareRoot
 					DriveLetter = $driveLetter
+					NativeDriveLetter = $nativeDriveLetter
 					ServerName = $serverName
 					ShareName = $shareName
+					NativeShareName = $nativeShareName
 					SmbPort = $smbPort
 					MappingScope = $mappingScope
 				}
@@ -568,7 +648,7 @@ function Copy-BiosWithProgress([string]$SourceDir, [string]$DestinationDir) {
 	$index = 0
 	foreach ($file in $files) {
 		$index++
-		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\\', '/')
+		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\', '/')
 		$targetPath = Join-Path $DestinationDir $relative
 		$targetFolder = Split-Path -Parent $targetPath
 		
@@ -634,6 +714,55 @@ function Update-RetroBatConfig([string]$RetroBatDir, [string]$BiosPath) {
 	Write-Ok "Updated bios= in $configPath"
 }
 
+function Update-RomPaths([string]$RetroBatDir, [string]$NativeDriveLetter) {
+	$esSystemsPath = Join-Path $RetroBatDir "emulationstation\.emulationstation\es_systems.cfg"
+	if (-not (Test-Path $esSystemsPath)) {
+		Write-Warn "Cannot find es_systems.cfg at $esSystemsPath"
+		return $false
+	}
+
+	$backupPath = "$esSystemsPath.transfs"
+	if (-not (Test-Path $backupPath)) {
+		Copy-Item -Path $esSystemsPath -Destination $backupPath -Force
+		Write-Ok "Backup created: $backupPath"
+	}
+	else {
+		Write-Info "Backup already exists: $backupPath"
+	}
+
+	[xml]$xmlContent = Get-Content -Path $esSystemsPath -Encoding UTF8
+	$updated = $false
+
+	# Find all systemList/system/path elements
+	if ($xmlContent.systemList.system) {
+		foreach ($system in $xmlContent.systemList.system) {
+			if ($system.path) {
+				$originalPath = $system.path
+				# Replace relative paths (../) with native drive mapping
+				# e.g., ../roms/megadrive becomes V:\roms\megadrive
+				if ($originalPath -match '^\.\.[\\/]') {
+					# Convert relative paths by removing ../ or ..\ prefix (3 chars)
+					$relativePart = $originalPath.Substring(3)
+					$newPath = "$NativeDriveLetter\$relativePart"
+					$system.path = $newPath
+					$updated = $true
+					Write-Info "  Updated path: $originalPath -> $newPath"
+				}
+			}
+		}
+	}
+
+	if ($updated) {
+		$xmlContent.Save($esSystemsPath)
+		Write-Ok "Updated es_systems.cfg ROM paths to use $NativeDriveLetter drive"
+		return $true
+	}
+	else {
+		Write-Info "No relative paths found to update in es_systems.cfg"
+		return $false
+	}
+}
+
 try {
 	Write-Host ""
 	Write-Host "TransFS RetroBat BIOS Setup" -ForegroundColor White
@@ -650,7 +779,7 @@ try {
 	Save-StoredSettings -Settings $shareConfig
 	Write-Ok "Saved share settings to registry: HKCU\\Software\\TransFS\\RetroBatSync"
 
-	$targetBiosDir = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
+	$targetBiosDir = Join-Path $shareConfig['NativeShareRoot'] "Clients\RetroBat\bios"
 	if (Test-Path $targetBiosDir -PathType Container) {
 		Write-Info ""
 		Write-Info "Target BIOS folder already exists at: $targetBiosDir"
@@ -723,10 +852,63 @@ try {
 
 	Write-Ok "Copy verified. Source files: $srcCount, Destination files: $dstCount"
 
-	$configuredBiosPath = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
+	Write-Host ""
+	Write-Info "Database sync will now run for RetroBat and may take a while..."
+	Write-Info "This makes the copied BIOS files available in TransFS virtual paths."
+	Write-Host ""
+
+	try {
+		$apiHost = if ($shareConfig['ServerName']) { $shareConfig['ServerName'] } else { "localhost" }
+		$apiUrl = "http://${apiHost}:8000/api/db/sync?client=RetroBat"
+		$response = Invoke-RestMethod -Uri $apiUrl -Method Post -TimeoutSec 300 -ErrorAction Stop
+
+		if ($response.success) {
+			Write-Ok "Database sync completed successfully"
+			if ($response.stats) {
+				Write-Host "  Files added: $($response.stats.files_added)" -ForegroundColor Gray
+				Write-Host "  Files updated: $($response.stats.files_updated)" -ForegroundColor Gray
+			}
+		}
+		else {
+			Write-Warn "Database sync returned non-success: $($response.message)"
+		}
+	}
+	catch {
+		Write-Warn "Failed to trigger database sync automatically: $($_.Exception.Message)"
+		Write-Info "You can run a manual sync from the TransFS web UI if needed."
+	}
+
+	# In Mode 3 (dual-drive), use native share path directly; otherwise use virtual share with RetroBat subpath logic
+	if ($shareConfig['Mode'] -eq "3") {
+		$configuredBiosPath = Join-Path $shareConfig['NativeShareRoot'] "Clients\RetroBat\bios"
+	}
+	else {
+		$virtualPathAlreadyRetrobat = ($shareConfig['ShareRoot'] -as [string]) -match '(?i)[\\/]retrobat[\\/]*$'
+		$configuredBiosRelative = if ($virtualPathAlreadyRetrobat) { "bios" } else { "RetroBat\bios" }
+		$configuredBiosPath = Join-Path $shareConfig['ShareRoot'] $configuredBiosRelative
+	}
 	$updateConfig = Prompt-WithDefault "Update local RetroBat config to use '$configuredBiosPath'? (Y/N)" "Y"
 	if ($updateConfig.ToUpperInvariant() -eq "Y") {
 		Update-RetroBatConfig -RetroBatDir $retroBatDir -BiosPath $configuredBiosPath
+		Write-Host ""
+		$updateRomPaths = Prompt-WithDefault "Update all ROM paths in es_systems.cfg to use the native drive? (Y/N)" "Y"
+		if ($updateRomPaths.ToUpperInvariant() -eq "Y") {
+			Write-Info "Updating ROM paths..."
+			Write-Host ""
+			$nativeDriveLetter = $shareConfig['NativeDriveLetter']
+			if ($nativeDriveLetter) {
+				$pathsUpdated = Update-RomPaths -RetroBatDir $retroBatDir -NativeDriveLetter $nativeDriveLetter
+				if ($pathsUpdated) {
+					Write-Host ""
+				}
+			}
+			else {
+				Write-Warn "Native drive letter not available - skipping ROM path update."
+			}
+		}
+		else {
+			Write-Info "Skipped ROM path update."
+		}
 	}
 	else {
 		Write-Info "Skipped config update."

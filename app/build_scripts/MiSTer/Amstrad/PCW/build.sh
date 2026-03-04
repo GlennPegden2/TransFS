@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Amstrad PCW build"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Amstrad/PCW/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Amstrad/PCW/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"

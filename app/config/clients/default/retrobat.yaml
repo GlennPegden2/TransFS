@@ -5,15 +5,32 @@ name: RetroBat
 download_layout: source_based
 default_target_path: "{name}/{system_name}/{maps}"
 
+# Client-level base path for client infrastructure files (e.g., downloaded BIOS)
+local_base_path: Clients/RetroBat
+
 # Category-based path templates
 # Maps with category="roms" will appear under ROMS/{system_name}
 # Maps with category="bios" will appear under bios/{system_name}
+# Maps with category="shared_bios" will appear under bios (no system subdirectory)
 category_paths:
   roms: "{name}/ROMS/{system_name}"
   bios: "{name}/bios/{system_name}"
   mame_roms: "{name}/mame/roms/{system_name}"
   mame_bios: "{name}/mame/bios/{system_name}"
   shared_bios: "{name}/bios"  # Shared BIOS folder at client root
+
+# Client-level maps (apply globally to all systems in this client)
+# These files appear at /RetroBat/bios/* regardless of system
+maps:
+  - .:  # All files from Clients/RetroBat/bios/ (downloaded BIOS files)
+      category: shared_bios
+      query:
+        source_dir: bios
+        extensions:
+          - "*"
+        preserve_structure: true
+        supports_zaparoo: false
+        preserve_exact_filenames: true
 
 systems: 
   - name: AcornAtom
@@ -58,22 +75,17 @@ systems:
             preserve_exact_filenames: true
 #            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
       - atom.zip:
-          category: bios  # Appears at /RetroBat/bios/AcornAtom/atom.zip
+          category: shared_bios  # Appears at /RetroBat/bios/atom.zip (shared root, not system-specific)
           file:
             path: Software/BIOS/atom.zip
             zip_mode: file  # Treat as a file, not a browsable directory
 
-  # Shared system for common BIOS files
+  # System for additional shared BIOS files (not client-level, but system-specific sources)
   # Files appear at /RetroBat/bios/* (cross-system shared folder)
   - name: SharedBIOS
     manufacturer: Shared
-    local_base_path: Acorn/Atom  # Use Atom as base since it has the shared BIOS
+    local_base_path: Acorn/Atom  # Use Atom as base since it has the shared BIOS sources
     maps:
-      - mame/ini/mamei.ini:
-          category: shared_bios
-          file:
-            path: Software/BIOS/mame/ini/mamei.ini
-            zip_mode: file
       - .:
           category: shared_bios
           query:

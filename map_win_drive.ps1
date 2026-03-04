@@ -301,21 +301,51 @@ function Copy-BiosWithProgress([string]$SourceDir, [string]$DestinationDir) {
 	}
 
 	$index = 0
+	$failedFiles = @()
 	foreach ($file in $files) {
 		$index++
-		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\\')
+		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\')
 		$targetPath = Join-Path $DestinationDir $relative
 		$targetFolder = Split-Path -Parent $targetPath
+		
+		# Ensure target folder exists
 		if (-not (Test-Path $targetFolder)) {
-			New-Item -Path $targetFolder -ItemType Directory -Force | Out-Null
+			try {
+				New-Item -Path $targetFolder -ItemType Directory -Force -ErrorAction Stop | Out-Null
+			}
+			catch {
+				Write-WarnMsg "Failed to create directory '$targetFolder': $($_.Exception.Message)"
+				$failedFiles += $relative
+				continue
+			}
+		}
+		
+		# Check if target exists as wrong type (e.g., file when we need directory)
+		if ((Test-Path $targetPath) -and (Get-Item $targetPath).PSIsContainer) {
+			Write-WarnMsg "Removing incorrectly created directory: $targetPath"
+			Remove-Item $targetPath -Force -Recurse
 		}
 
-		Copy-Item -Path $file.FullName -Destination $targetPath -Force
+		try {
+			Copy-Item -Path $file.FullName -Destination $targetPath -Force -ErrorAction Stop
+		}
+		catch {
+			Write-WarnMsg "Failed to copy '$relative': $($_.Exception.Message)"
+			$failedFiles += $relative
+			continue
+		}
 
 		$percent = [int](($index / $files.Count) * 100)
 		Write-Progress -Activity "Copying RetroBat BIOS" -Status "$index / $($files.Count): $relative" -PercentComplete $percent
 	}
 	Write-Progress -Activity "Copying RetroBat BIOS" -Completed
+	
+	if ($failedFiles.Count -gt 0) {
+		Write-WarnMsg "Failed to copy $($failedFiles.Count) file(s):"
+		foreach ($failed in $failedFiles) {
+			Write-Host "  - $failed" -ForegroundColor Yellow
+		}
+	}
 }
 
 function Update-RetroBatConfig([string]$RetroBatDir, [string]$BiosPath) {
@@ -367,7 +397,7 @@ try {
 	Save-StoredSettings -Settings $shareConfig
 	Write-Ok "Saved share settings to registry: HKCU\\Software\\TransFS\\RetroBatSync"
 
-	$targetBiosDir = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
+	$targetBiosDir = Join-Path $shareConfig['ShareRoot'] "Native\Clients\RetroBat\bios"
 	if (Test-Path $targetBiosDir -PathType Container) {
 		Write-Ok "Target BIOS folder already exists: $targetBiosDir"
 		Write-Info "Nothing to copy."
@@ -408,14 +438,75 @@ try {
 
 	Copy-BiosWithProgress -SourceDir $sourceBiosDir -DestinationDir $targetBiosDir
 
-	$srcCount = (Get-ChildItem -Path $sourceBiosDir -Recurse -File).Count
-	$dstCount = (Get-ChildItem -Path $targetBiosDir -Recurse -File).Count
+	Write-Info ""
+	Write-Info "Verifying copy..."
+	$srcFiles = Get-ChildItem -Path $sourceBiosDir -Recurse -File
+	$dstFiles = Get-ChildItem -Path $targetBiosDir -Recurse -File
+	$srcCount = $srcFiles.Count
+	$dstCount = $dstFiles.Count
 
 	if ($dstCount -lt $srcCount) {
-		throw "Copy verification failed. Source files: $srcCount, Destination files: $dstCount"
+		# Find missing files
+		$srcRelativePaths = @{}
+		foreach ($f in $srcFiles) {
+			$rel = $f.FullName.Substring($sourceBiosDir.Length).TrimStart('\')
+			$srcRelativePaths[$rel] = $true
+		}
+		
+		$dstRelativePaths = @{}
+		foreach ($f in $dstFiles) {
+			$rel = $f.FullName.Substring($targetBiosDir.Length).TrimStart('\')
+			$dstRelativePaths[$rel] = $true
+		}
+		
+		$missing = @()
+		foreach ($srcRel in $srcRelativePaths.Keys) {
+			if (-not $dstRelativePaths.ContainsKey($srcRel)) {
+				$missing += $srcRel
+			}
+		}
+		
+		Write-ErrMsg "Copy verification failed. Source files: $srcCount, Destination files: $dstCount"
+		Write-Host ""
+		Write-WarnMsg "Missing file(s):"
+		foreach ($m in $missing) {
+			Write-Host "  - $m" -ForegroundColor Yellow
+		}
+		throw "Copy incomplete - see missing files above"
 	}
 
 	Write-Ok "Copy verified. Source files: $srcCount, Destination files: $dstCount"
+	# Trigger database sync for the new BIOS files
+	Write-Host ""
+	Write-Info "Triggering database sync for BIOS files..."
+	Write-Info "This may take a few minutes depending on the number of files."
+	Write-Host ""
+	
+	try {
+		# Construct API URL
+		$apiHost = if ($shareConfig['ServerName']) { $shareConfig['ServerName'] } else { "localhost" }
+		$apiUrl = "http://${apiHost}:8000/api/db/sync?client=RetroBat"
+		
+		# Call sync API (non-streaming mode for simplicity)
+		$response = Invoke-RestMethod -Uri $apiUrl -Method Post -TimeoutSec 300 -ErrorAction Stop
+		
+		if ($response.success) {
+			Write-Ok "Database sync completed successfully"
+			if ($response.stats) {
+				Write-Host "  Files added: $($response.stats.files_added)" -ForegroundColor Gray
+				Write-Host "  Files updated: $($response.stats.files_updated)" -ForegroundColor Gray
+			}
+		}
+		else {
+			Write-WarnMsg "Database sync returned non-success: $($response.message)"
+		}
+	}
+	catch {
+		Write-WarnMsg "Failed to trigger database sync: $($_.Exception.Message)"
+		Write-Info "You may need to manually trigger sync via the TransFS web interface."
+	}
+	
+	Write-Host ""
 
 	$configuredBiosPath = Join-Path $shareConfig['ShareRoot'] "RetroBat\bios"
 	$updateConfig = Prompt-WithDefault "Update local RetroBat config to use '$configuredBiosPath'? (Y/N)" "Y"

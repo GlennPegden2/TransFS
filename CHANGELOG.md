@@ -18,12 +18,44 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Advertised SMB endpoint (Approach B)**: Added optional compose environment overrides `SMB_ADVERTISE_HOST`, `SMB_ADVERTISE_PORT`, and `SMB_ADVERTISE_SHARE` for explicit client-facing setup values.
 - **Dev compose LAN host default**: Updated `SMB_ADVERTISE_HOST` default in compose for this environment so Setup Clients and generated scripts point to a network-reachable host.
 - **Project Housekeeping (Legacy Archival)**: Moved temporary development artifacts out of project root into `legacy/`
+- **Client-level global maps support**: Added runtime support for client-level `maps` + `local_base_path` so shared content (e.g., `Native/Clients/RetroBat/bios`) can be mapped once per client and merged with system-specific mappings (e.g., `atom.zip`) under `/RetroBat/bios`
+- **Dual-share SMB architecture**: Added a dedicated native SMB share (`TransFSNative`) and removed the `Native` bind-mount into `/mnt/transfs`, separating virtual and native access at the share level.
+- **Windows setup dual-drive flow**: Updated setup profile/script generation and both setup templates to capture, validate, persist, and reuse separate virtual/native drive mappings (including distinct share names and drive letters).
+- **Windows virtual mapping path correction**: Setup profile and scripts now target `\\<host>\TransFS\RetroBat` for the virtual Windows mapping (instead of share root), and BIOS config path generation avoids duplicate `RetroBat` segments.
+- **Setup Clients native visibility**: Updated the Setup Clients tab to display native share name and native Windows mapping command alongside the existing virtual SMB details.
+
+### Fixed
+- **Windows setup BIOS copy PowerShell syntax error**: Fixed `TrimStart()` method calls in map_win_drive.ps1 and setup_windows.ps1 templates - changed from `TrimStart('\\')` to `TrimStart('\')` to correctly pass a single backslash character instead of an escaped string, resolving "Cannot convert value "\\" to type "System.Char"" error during RetroBat BIOS folder setup
+- **Windows setup BIOS copy error handling**: Added comprehensive error handling to `map_win_drive.ps1` Copy-BiosWithProgress function to catch and report individual file copy failures (permissions, locked files, long paths) instead of silently continuing
+- **Windows setup BIOS copy verification diagnostics**: Enhanced verification logic to identify and display specific missing files when copy count mismatch occurs, making it easier to diagnose which file failed and why
+- **Windows setup native BIOS path**: Setup scripts copy BIOS to `V:\Clients\RetroBat\bios` (matching retrobat.yaml client-level local_base_path) so files appear in virtual mount via client-level query map
+- **Windows setup dual-drive config prompt**: Mode 3 (dual-drive) config prompt shows full native client path (`V:\Clients\RetroBat\bios`) matching where files are copied
+- **Windows setup ROM paths migration**: Added optional post-BIOS update flow to migrate all ROM paths in `es_systems.cfg` from relative (`../roms`) to network share paths (`V:\roms`), with backup and rollback support
+- **Shared BIOS zip map rendering**: Fixed zip-mode resolution for category-level mapped files (e.g., `/RetroBat/bios/atom.zip`) so `file.zip_mode: file` is honored and the item is exposed as a regular file instead of a virtual directory
+- **RetroBat query-map file open pathing**: Fixed category-based map file resolution for query maps (e.g., `/RetroBat/ROMS/AcornAtom/Tapes/*.uef`) so lookups resolve against configured query `source_dir` (with flattened recursive fallback) instead of incorrect fallback paths like `.../Atom/Tapes/...`
+- **RetroBat BIOS path mapping**: Fixed map_win_drive.ps1 to copy BIOS files to correct physical location (Native\Clients\RetroBat\bios) while configuring RetroBat to use virtual path (RetroBat\bios)
+- **RetroBat BIOS database sync**: Added automatic database synchronization after BIOS copy completion to ensure files are immediately available in TransFS virtual filesystem
+- **Downloadable Windows setup RetroBat BIOS path**: Fixed setup script templates to keep copying BIOS files to Native\Clients\RetroBat\bios while updating emulatorLauncher.cfg to use RetroBat\bios (virtual path)
+- **Downloadable Windows setup post-copy sync**: Added user notice and automatic RetroBat-targeted database sync after BIOS copy completes
+- **RetroBat BIOS mame/ini visibility**: Fixed deep category-path directory listing initialization so `/RetroBat/bios/mame/ini` is correctly discovered and exposed (including `mame.ini`) instead of appearing empty
+- **TransFS release crash (KeyError)**: Hardened file-handle teardown in `app/transfs.py` `release()` to handle duplicate/reordered release events and shared inode scenarios without crashing the Trio FUSE loop
+- **SMB 0KB mapped file metadata**: Fixed `readdir` fast-path cached stat construction in `app/transfs.py` to use real file sizes from `DirEntry.stat()` instead of reporting non-directory entries as `0` bytes
+- **TransFS readdir crash (UnboundLocalError)**: Fixed `app/transfs.py` `readdir` fast-path to avoid `stat` name shadowing (`UnboundLocalError: local variable 'stat' referenced before assignment`) during `readdirplus`
+- **SMB auth/guest parity across shares**: Updated SMB config mutation logic so guest/auth settings are consistently applied to both `TransFS` and `TransFSNative` shares.
   - Archived root-level one-off check/cleanup/test scripts used during feature development
   - Archived abandoned Windows helper prototype at `legacy/tools/Tranfs_Retrobat_Config/`
   - Kept runtime/production scripts in place (including `map_win_drive.ps1`)
 - **Subdirectory query caching optimization**: Implemented empty-result caching for `_get_subdirectories_from_db()` queries, dramatically improving cascade deletion performance
   - Queries returning 0 subdirectories are now cached for 5 seconds, preventing repeated expensive table scans
   - Eliminates 400-800ms database queries that were repeatedly hitting the same empty directory paths
+- **Stable file scan order during database sync**: Added explicit sorting to all `os.walk()` and `os.scandir()` iterations in `sync_database.py` to ensure deterministic file processing order
+  - File scan now sorts both directory and file lists alphabetically before processing
+  - Eliminates non-deterministic file rename behavior across container restarts
+  - Duplicate files are now consistently renamed with predictable `_2`, `_3` suffixes regardless of filesystem scan order
+  - Applies to all sync methods: `_scan_system_directory()`, `_scan_directory()`, `_scan_directory_recursive()`, and file counting
+- **Database sync error resilience**: Removed problematic database queries during collision detection that were causing "current transaction is aborted" errors
+  - Simplified duplicate detection logic to focus on in-memory batch + DB collision detection without additional lookups
+  - Improved robustness of sync startup on systems with transaction state issues
   - Performance improvement: **11,000x faster** for cached empty directory checks (1,472ms → 0.2ms)
   - Directly addresses slow deletion operations (previously ~2 items/second) during multi-folder deletes
 - **READDIR performance optimization**: Eliminated redundant `get_source_path()` calls in directory listing loop

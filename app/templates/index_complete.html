@@ -300,6 +300,10 @@
                     <div id="setup-share-name" style="font-family: monospace;">-</div>
                 </div>
                 <div style="padding: 1em; border: 1px solid #ddd; border-radius: 8px; background: #fafafa;">
+                    <div style="font-weight: 600; margin-bottom: 0.4em;">Native Share Name</div>
+                    <div id="setup-native-share-name" style="font-family: monospace;">-</div>
+                </div>
+                <div style="padding: 1em; border: 1px solid #ddd; border-radius: 8px; background: #fafafa;">
                     <div style="font-weight: 600; margin-bottom: 0.4em;">SMB User</div>
                     <div id="setup-smb-user" style="font-family: monospace;">-</div>
                 </div>
@@ -314,6 +318,11 @@
             <div style="margin-bottom: 1.5em;">
                 <h3 style="margin-bottom: 0.5em;">Windows (PowerShell mapping)</h3>
                 <pre id="setup-win-command" style="background: #1e1e1e; color: #e6e6e6; padding: 1em; border-radius: 8px; overflow-x: auto;">-</pre>
+            </div>
+
+            <div style="margin-bottom: 1.5em;">
+                <h3 style="margin-bottom: 0.5em;">Windows Native (PowerShell mapping)</h3>
+                <pre id="setup-win-native-command" style="background: #1e1e1e; color: #e6e6e6; padding: 1em; border-radius: 8px; overflow-x: auto;">-</pre>
             </div>
 
             <div style="margin-bottom: 1.5em;">
@@ -1266,9 +1275,11 @@
                 document.getElementById('setup-smb-host').textContent = profile.host || '-';
                 document.getElementById('setup-smb-port').textContent = profile.port || '-';
                 document.getElementById('setup-share-name').textContent = profile.share_name || '-';
+                document.getElementById('setup-native-share-name').textContent = profile.native_share_name || '-';
                 document.getElementById('setup-smb-user').textContent = profile.smb_username || '-';
-                document.getElementById('setup-unc-path').textContent = profile.unc_path || '-';
+                document.getElementById('setup-unc-path').textContent = profile.virtual_unc_path || profile.unc_path || '-';
                 document.getElementById('setup-win-command').textContent = profile.windows_mapping_command || '-';
+                document.getElementById('setup-win-native-command').textContent = profile.windows_native_mapping_command || '-';
                 document.getElementById('setup-mister-command').textContent = profile.mister_mount_example || '-';
                 document.getElementById('setup-download-script').href = profile.download_script_url || '/api/download/setup-windows';
 

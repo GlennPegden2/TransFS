@@ -5,8 +5,7 @@ base_path: Acorn/Atom/
 
 sources:
 
-
-  - name: RetrobatBios
+  - name: RetrobatBios # No longer needed as we copy it fom windows
     type: ddl
     urls:
       - https://github.com/RetroBat-Official/retrobat-bios/archive/refs/heads/main.zip
@@ -59,16 +58,15 @@ packs:
     name: BIOS ROMs for MAME/MESS derivatives
     description: BIOS ROMs for MAME/MESS derivatives
     estimated_size: 32k
-    sources: [MameBIOSroms,RetrobatBios]
+    sources: [MameBIOSroms]
     supported_by: [RetroBat,Mame,Batocera,RetroPie]
-    build_script: RetroBat/Acorn/Atom/build.sh
     info_links:
       - label: IA Page
         url: "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip"
     metadata:
       ruleset: Generic
       defaults:
-        media_type: Tape
+        media_type: ROM
         region: World
         language: English
 
@@ -84,7 +82,7 @@ packs:
     metadata:
       ruleset: Generic
       defaults:
-        media_type: Tape
+        media_type: ROM
         region: World
         language: English
 

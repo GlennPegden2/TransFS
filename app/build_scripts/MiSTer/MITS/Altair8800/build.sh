@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Altair 8800"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/MITS/Altair8800/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/MITS/Altair8800/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"

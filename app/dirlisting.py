@@ -15,6 +15,11 @@ logger = logging.getLogger("transfs")
 _empty_subdir_cache = {}
 _EMPTY_CACHE_TTL = 5.0  # seconds
 
+# General cache for ALL subdirectory queries (not just empty ones)
+# Maps virtual_prefix -> (subdirs_list, timestamp)
+_subdir_query_cache = {}
+_SUBDIR_CACHE_TTL = 2.0  # seconds - short TTL to balance freshness vs DB load
+
 
 def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
     """
@@ -36,7 +41,14 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         logger.debug(f"Skipping subdirectory query for file path: {virtual_prefix}")
         return []
     
-    # Check if we have cached empty result (avoids repeated expensive queries)
+    # Check general subdirectory cache first (caches all query results, not just empty)
+    if virtual_prefix in _subdir_query_cache:
+        cached_subdirs, cache_time = _subdir_query_cache[virtual_prefix]
+        if time.time() - cache_time < _SUBDIR_CACHE_TTL:
+            logger.debug(f"CACHE HIT (subdir query): {virtual_prefix} with {len(cached_subdirs)} entries")
+            return cached_subdirs.copy()  # Return copy to prevent cache mutation
+    
+    # Check if we have cached empty result (legacy - can be removed once general cache working)
     if virtual_prefix in _empty_subdir_cache:
         cache_time = _empty_subdir_cache[virtual_prefix]
         if time.time() - cache_time < _EMPTY_CACHE_TTL:
@@ -44,15 +56,14 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
             return []
     try:
         from db.connection import get_cursor, init_database
-        from db import get_connection
-        
-        # Initialize database connection if needed
+
+        # Ensure database is initialized for direct helper usage paths
+        # (some call-sites invoke this function before other DB components initialize).
         try:
-            conn = get_connection()
-            if conn is None:
-                init_database(pool_size=30, max_overflow=40)
-        except:
-            init_database(pool_size=30, max_overflow=40)
+            init_database(pool_size=100, max_overflow=100)
+        except Exception:
+            # If already initialized, continue with existing pool
+            pass
         
         db_start = time.time() if 'time' in dir() else None
         import time as time_module
@@ -122,6 +133,26 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                     # Check all systems for querymaps with matching category
                     potential_category = rel_parts[-1]  # e.g., "bios" from "RetroBat/bios"
                     filestore = config.get('filestore', '/mnt/filestorefs')
+
+                    # Check client-level maps first
+                    client_local_base = client.get('local_base_path', '')
+                    if client_local_base:
+                        for map_entry in client.get('maps', []):
+                            map_config = list(map_entry.values())[0]
+                            if isinstance(map_config, dict):
+                                if map_config.get('category') == 'shared_bios' and potential_category == 'bios':
+                                    query_config = map_config.get('query', {})
+                                    source_dir = query_config.get('source_dir', '')
+                                    if source_dir:
+                                        full_source_dir = os.path.join(filestore, 'Native', client_local_base, source_dir)
+                                        if os.path.exists(full_source_dir) and os.path.isdir(full_source_dir):
+                                            db_names = set(subdirs)
+                                            show_hidden = config.get('show_hidden_files', True)
+                                            for entry in os.scandir(full_source_dir):
+                                                if show_hidden or not entry.name.startswith('.'):
+                                                    if entry.name not in db_names:
+                                                        subdirs.append(entry.name)
+                                                        logger.debug(f"Filesystem fallback added (client map): {entry.name}")
                     
                     for system in client.get('systems', []):
                         for map_entry in system.get('maps', []):
@@ -154,6 +185,10 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         if not subdirs:
             _empty_subdir_cache[virtual_prefix] = time_module.time()
             logger.debug(f"CACHE STORE (empty): {virtual_prefix}")
+        
+        # Cache ALL query results in general cache (not just empty)
+        _subdir_query_cache[virtual_prefix] = (subdirs.copy() if subdirs else [], time_module.time())
+        logger.debug(f"CACHE STORE (subdir query): {virtual_prefix} with {len(subdirs)} entries")
         
         elapsed = time_module.time() - query_start
         if elapsed > 0.1:  # Log slow queries
@@ -505,17 +540,23 @@ def parse_trans_path(config,root,full_path: str) -> list:
         return db_subdirs
     
     # If database query failed but we're at a category level, try to list systems
-    # that have maps with this category
-    if len(rel_path_parts) == 2:  # Client + Category level (e.g., RetroBat/ROMS)
+    # that have maps with this category, AND list direct file maps
+    if len(rel_path_parts) == 2:  # Client + Category level (e.g., RetroBat/ROMS or RetroBat/bios)
         possible_category = rel_path_parts[1]
         result = []
         if 'systems' in client:
             for system in client['systems']:
                 # Check if any maps in this system have the matching category
                 for map_entry in system.get('maps', []):
+                    map_name = list(map_entry.keys())[0]
                     map_config = list(map_entry.values())[0]
                     if isinstance(map_config, dict) and map_config.get('category') == possible_category:
-                        if system['name'] not in result:
+                        # If map has 'file' key, add the map name as a direct file entry
+                        if 'file' in map_config:
+                            if map_name not in result:
+                                result.append(map_name)
+                        # Otherwise, add the system name as a directory
+                        elif system['name'] not in result:
                             result.append(system['name'])
                             break
         if result:
@@ -525,8 +566,11 @@ def parse_trans_path(config,root,full_path: str) -> list:
     return list_dynamic_or_regular(config, path, root_parts)
 
 def list_clients(config) -> list:
-    """List all clients."""
-    return [client['name'] for client in config['clients']]
+    """List all clients, plus the Native bypass directory."""
+    clients = [client['name'] for client in config['clients']]
+    # Add Native directory for direct filesystem access (bypasses FUSE layer)
+    clients.append('Native')
+    return clients
 
 def list_systems(config, path: Path, root_parts: tuple) -> list:
     """List all systems for a client, plus any client-level maps and category directories."""

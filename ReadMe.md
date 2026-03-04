@@ -58,7 +58,38 @@ Then point your web browser to localhost (or wherever your docker host is) port 
 2. Access your content via SMB at `\\<servername>@3445\<system>` (e.g. `\\localhost@3445\mister`)
 3. Configure your emulator to use the SMB share
 
-### 📌 Notes on SMB Port Configuration
+### � Two Access Paths: Virtual vs Direct Native
+
+TransFS provides **two complementary access patterns** in a single SMB share:
+
+```
+\\server\TransFS\
+  ├── Generic/              (Virtual hierarchies)
+  ├── Mame/                 (with transforms, filtering)
+  ├── MiSTer/               
+  ├── RetroBat/
+  ├── RetroPie/
+  └── Native/               ← Direct filesystem (bulk operations)
+      ├── Clients/          (Client-specific assets, e.g. RetroBat BIOS)
+      │   └── RetroBat/
+      │       └── bios/
+      └── Systems/          (Shared system content)
+          ├── Acorn/
+          └── Amstrad/
+```
+
+**Native is a discoverable top-level folder** that bypasses the FUSE virtual layer:
+
+| Path | Use | Performance |
+|------|-----|-------------|
+| `\\server\TransFS\Generic\`, `\\server\TransFS\Mame\` etc. | Normal browsing, virtual transforms | Metadata-cached |
+| `\\server\TransFS\Native\Systems\...` | **Bulk import/delete, direct filesystem** | **6-15ms per file** |
+
+**For bulk operations** (importing 1000+ files or deleting large directories), use the `Native\` path for dramatically faster performance.
+
+📖 **See [Native Bypass Architecture](docs/NATIVE_BYPASS_ARCHITECTURE.md) and [Quick Start Guide](docs/NATIVE_BYPASS_QUICK_START.md) for details.**
+
+### �📌 Notes on SMB Port Configuration
 
 > **Default Port:** TransFS runs on port **3445** (not standard 445) to avoid conflicts with Windows.
 >

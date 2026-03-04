@@ -98,8 +98,8 @@ class TransFS(Passthrough):
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
         self._db_readdir_cache = {}  # path -> (timestamp, db_files)
         self._db_readdir_cache_ttl = 120.0  # seconds
-        self._scandir_cache = {}  # path -> (timestamp, list of entry names) for rapid rescan caching
-        self._SCANDIR_CACHE_TTL = 0.200  # 200ms TTL for scandir cache (catches rapid rescans after UNLINK)
+        self._lookup_parent_entries_cache = {}  # parent_path -> (timestamp, set(entries))
+        self._lookup_parent_entries_ttl = 0.5  # seconds
         from config import read_config
         self.config = read_config()
         
@@ -108,8 +108,8 @@ class TransFS(Passthrough):
             from db.connection import init_database as db_init_database
             # Increase pool size for concurrent FUSE operations (especially recursive directory listing)
             # Default was 5+10=15, now 30+40=70 to balance concurrency with PostgreSQL limits (300 max)
-            db_init_database(pool_size=30, max_overflow=40)
-            logger.info("Database connection initialized with pool_size=30, max_overflow=40")
+            db_init_database(pool_size=100, max_overflow=100)
+            logger.info("Database connection initialized with pool_size=100, max_overflow=100")
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f"Failed to initialize database connection: {e}")
         
@@ -204,12 +204,33 @@ class TransFS(Passthrough):
         # Database results are filtered through parse_trans_path for config compliance
         return True
 
+    def _get_parent_entries_for_lookup(self, parent_path: str):
+        """Get parent entries for LOOKUP with a short-lived cache."""
+        now = time.time()
+        cached = self._lookup_parent_entries_cache.get(parent_path)
+        if cached:
+            cached_at, entries = cached
+            if now - cached_at < self._lookup_parent_entries_ttl:
+                return entries
+
+        entries = set(parse_trans_path(self.config, self.root, parent_path))
+        self._lookup_parent_entries_cache[parent_path] = (now, entries)
+        return entries
+
     def _get_zip_mode_for_path(self, xfull_path: str) -> str:
         """
         Extract zip_mode configuration for the given path.
         Returns 'hierarchical' (default), 'flatten', or 'file'.
         """
-        from pathutils import get_client, get_system_info, find_software_archive_entry, find_map_entry, get_map_config
+        from pathutils import (
+            get_client,
+            get_system_info,
+            find_software_archive_entry,
+            find_map_entry,
+            get_map_config,
+            resolve_virtual_base_path,
+            format_virtual_base_path,
+        )
         
         path = Path(xfull_path)
         root_parts = Path(self.root).parts
@@ -237,6 +258,41 @@ class TransFS(Passthrough):
         # Check system-level maps (including nested maps like FDs/bios/atom.zip)
         if len(rel_parts) < 3:
             return "hierarchical"
+
+        # Category-level fallback (e.g., /RetroBat/bios/atom.zip where system name is omitted)
+        # Needed for shared category paths that map files from systems without exposing system segment.
+        # In this shape, rel_parts = [client, category, filename]
+        if len(rel_parts) == 3:
+            virtual_rel = '/'.join(rel_parts)
+            for candidate_system in client.get('systems', []):
+                for map_entry in candidate_system.get('maps', []):
+                    map_name = list(map_entry.keys())[0]
+                    map_config = map_entry.get(map_name, {})
+                    if not isinstance(map_config, dict):
+                        continue
+
+                    file_spec = map_config.get('file', {})
+                    if not file_spec:
+                        continue
+
+                    try:
+                        base_path_template = resolve_virtual_base_path(client, candidate_system, map_config)
+                        virtual_base = format_virtual_base_path(
+                            base_path_template,
+                            client.get('name', ''),
+                            candidate_system.get('name', ''),
+                        )
+                    except Exception:
+                        continue
+
+                    candidate_virtual_path = f"{virtual_base}/{map_name}".replace('\\', '/').rstrip('/')
+                    if candidate_virtual_path != virtual_rel:
+                        continue
+
+                    if isinstance(file_spec, dict) and 'zip_mode' in file_spec:
+                        return file_spec.get('zip_mode', 'hierarchical')
+                    if 'zip_mode' in map_config:
+                        return map_config.get('zip_mode', 'hierarchical')
         
         path_template_parts = Path(client['default_target_path']).parts
         system_info = get_system_info(client, list(rel_parts), path_template_parts)
@@ -1085,35 +1141,6 @@ class TransFS(Passthrough):
             logger.error(f"OPEN_DB_ONLY: error: {e}", exc_info=True)
             return None
 
-    def _get_cached_scandir_entries(self, directory: str) -> tuple:
-        """
-        Get directory entries with short-lived cache.
-        
-        Returns a tuple (entries_list, is_cache_hit) where:
-        - entries_list: list of entry names
-        - is_cache_hit: True if served from cache, False if fresh scan
-        
-        This dramatically speeds up rapid consecutive READDIR calls on the same directory,
-        which happens when the file manager rescans after each UNLINK operation.
-        """
-        now = time.time()
-        if directory in self._scandir_cache:
-            cached_time, cached_entries = self._scandir_cache[directory]
-            if now - cached_time < self._SCANDIR_CACHE_TTL:
-                return (cached_entries, True)  # Cache hit
-        
-        # Cache miss or expired - perform actual scandir
-        entries = []
-        try:
-            with os.scandir(directory) as dir_entries:
-                entries = [entry.name for entry in dir_entries]
-            # Cache the results
-            self._scandir_cache[directory] = (now, entries)
-        except OSError:
-            pass  # Return empty list on error
-        
-        return (entries, False)  # Cache miss
-    
     async def readdir(self, fh: FileHandleT, start_id: int, token):
         """
         Read directory entries with FULL attributes (readdirplus support).
@@ -1459,7 +1486,7 @@ class TransFS(Passthrough):
         if allow_implicit_entries and os.path.isdir(parent_dir):  # Scan the SOURCE directory, not virtual path
             existing = set(virtual_entries)
             
-            # Scan the main directory (with caching for rapid rescans after UNLINK)
+            # Scan the main directory
             try:
                 # Get parent directory mtime once for cache validation
                 parent_dir_mtime = os.path.getmtime(parent_dir)
@@ -1467,42 +1494,21 @@ class TransFS(Passthrough):
                 # Check if hidden files should be shown
                 show_hidden = self.config.get('show_hidden_files', True)
                 
-                # Try to use cached scandir results if available (200ms TTL for rapid rescans)
-                cached_entry_names, is_cache_hit = self._get_cached_scandir_entries(parent_dir)
-                
-                if is_cache_hit:
-                    # Cache hit - use cached names and skip DirEntry population
-                    logger.debug(f"READDIR: scandir cache hit for {parent_dir} ({len(cached_entry_names)} entries)")
-                    for entry_name in cached_entry_names:
+                with os.scandir(parent_dir) as entries:
+                    for entry in entries:
                         # Skip hidden files (starting with .) if show_hidden_files is False
                         # Skip subdirectories that are extension folders (they'll be merged)
-                        if not show_hidden and entry_name.startswith('.'):
+                        if not show_hidden and entry.name.startswith('.'):
                             continue
-                        # Check if it's an extension subdir by trying to open it
-                        if entry_name.isupper() and 2 <= len(entry_name) <= 4:
-                            entry_path = os.path.join(parent_dir, entry_name)
-                            if os.path.isdir(entry_path):
-                                continue  # Skip extension subdirs like BIN/, ROM/, A52/
-                        if entry_name not in existing:
-                            virtual_entries.append(entry_name)
-                else:
-                    # Cache miss - use fresh scandir and populate DirEntry cache
-                    logger.debug(f"READDIR: scandir cache miss for {parent_dir}, doing full scan")
-                    with os.scandir(parent_dir) as entries:
-                        for entry in entries:
-                            # Skip hidden files (starting with .) if show_hidden_files is False
-                            # Skip subdirectories that are extension folders (they'll be merged)
-                            if not show_hidden and entry.name.startswith('.'):
-                                continue
-                            if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
-                                continue  # Skip extension subdirs like BIN/, ROM/, A52/
-                            if direntry_cache_enabled:
+                        if entry.is_dir() and entry.name.isupper() and 2 <= len(entry.name) <= 4:
+                            continue  # Skip extension subdirs like BIN/, ROM/, A52/
+                        if direntry_cache_enabled:
+                            dir_entry_cache[entry.name] = entry
+                        if entry.name not in existing:
+                            virtual_entries.append(entry.name)
+                            # Cache the DirEntry object for later stat access
+                            if not direntry_cache_enabled:
                                 dir_entry_cache[entry.name] = entry
-                            if entry.name not in existing:
-                                virtual_entries.append(entry.name)
-                                # Cache the DirEntry object for later stat access
-                                if not direntry_cache_enabled:
-                                    dir_entry_cache[entry.name] = entry
             except OSError as e:
                 logger.warning(f"READDIR: scandir failed for {parent_dir}: {e}")
             
@@ -1535,6 +1541,19 @@ class TransFS(Passthrough):
                 seen_entries.add(entry_name)
                 deduped_entries.append(entry_name)
             virtual_entries = deduped_entries
+
+        # BIOS directories are physical-file backed; drop stale DB-only ghost entries.
+        # This prevents long delete stalls on files that no longer exist on disk.
+        if '/bios/' in xfull_path.lower() and dir_entry_cache:
+            original_count = len(virtual_entries)
+            virtual_entries = [entry_name for entry_name in virtual_entries if entry_name in dir_entry_cache]
+            removed_count = original_count - len(virtual_entries)
+            if removed_count > 0:
+                logger.info(
+                    "READDIR: pruned %d stale BIOS virtual entries (kept %d physical)",
+                    removed_count,
+                    len(virtual_entries)
+                )
         
         # Optimize for Native paths - skip expensive get_source_path() call
         is_native_path = parent_dir.startswith("/mnt/filestorefs/Native/")
@@ -1567,10 +1586,20 @@ class TransFS(Passthrough):
             if not missing_entries:
                 skip_cache_lookup = True
             else:
+                logger.info(f"READDIR: skip_cache_lookup=False, missing {len(missing_entries)} entries from DirEntry cache (total virtual_entries={len(virtual_entries)}, dir_entry_cache={len(dir_entry_cache)})")
                 skip_cache_lookup = all(
                     is_virtual_path(self.config, self.mount_path, os.path.join(xfull_path, entry_name))
                     for name in missing_entries
                 )
+                if skip_cache_lookup:
+                    logger.info(f"READDIR: skip_cache_lookup=True via virtual path check")
+        else:
+            if not skip_cache_lookup_enabled:
+                logger.info(f"READDIR: skip_cache_lookup disabled in config")
+            elif not dir_entry_cache:
+                logger.info(f"READDIR: no DirEntry cache available")
+        
+        logger.info(f"READDIR: skip_cache_lookup={skip_cache_lookup}, dir_entry_cache_size={len(dir_entry_cache)}, virtual_entries_size={len(virtual_entries)}")
         
         is_virtual_browse = (
             path.startswith(self.mount_path)
@@ -1592,89 +1621,73 @@ class TransFS(Passthrough):
                 # Don't increment cache_hits here - it will be counted in send phase
                 continue
             
-            # For directories with full DirEntry cache, skip the expensive cache lookup
-            if skip_cache_lookup:
-                # Fast path: Pre-stat using DirEntry cache to avoid send-phase filesystem calls
-                # This is a HUGE optimization for all large directories (100+ files)
-                if entry_name in dir_entry_cache:
-                    # Pre-stat using DirEntry.is_dir() (fast), cache the result for send phase
-                    de = dir_entry_cache[entry_name]
-                    try:
-                        is_dir = de.is_dir(follow_symlinks=False)
-                        now = int(time.time())
-                        stat_dict = {
-                            'st_atime': now, 'st_ctime': now, 'st_mtime': now,
-                            'st_gid': 0, 'st_uid': 0,
-                            'st_mode': 0o040755 if is_dir else 0o100444,
-                            'st_nlink': 2 if is_dir else 1,
-                            'st_size': 4096 if is_dir else 0,
-                        }
-                        source_paths[entry_name] = ('cached', stat_dict)
-                        cache_hits += 1  # Count pre-caching as cache hit
-                        continue
-                    except OSError:
-                        pass  # Fall through to normal path
-                
-                # Try system transform map first before expensive get_source_path
-                if system_transform_map:
-                    _, ext = os.path.splitext(entry_name)
-                    ext = ext[1:].upper() if ext else ""
-                    if ext in system_transform_map:
-                        # Direct transform application without get_source_path!
-                        # Build proper source path - different extensions may be in different subdirectories
-                        # e.g., DSK files in Software/DSK/, 2MG files in Software/2MG/
-                        # Or BIN files in Software/BIN/, ROM files in Software/ROM/ (Atari 5200)
-                        
-                        # Check if there's a subdirectory matching the extension
-                        ext_subdir = os.path.join(parent_dir, ext)
-                        if os.path.isdir(ext_subdir):
-                            fspath = os.path.join(ext_subdir, entry_name)
-                        elif parent_dir.endswith(f'/{ext}'):
-                            # Already in the extension-specific directory, use as-is
-                            fspath = os.path.join(parent_dir, entry_name)
-                        elif parent_dir.endswith('/DSK') and ext == '2MG':
-                            # .2mg file is actually in the 2MG sibling directory
-                            source_dir = parent_dir[:-3] + '2MG'
-                            fspath = os.path.join(source_dir, entry_name)
-                        elif parent_dir.endswith('/2MG') and ext == 'DSK':
-                            # .dsk file is actually in the DSK sibling directory  
-                            source_dir = parent_dir[:-3] + 'DSK'
-                            fspath = os.path.join(source_dir, entry_name)
-                        else:
-                            # Fallback: file in parent directory directly
-                            fspath = os.path.join(parent_dir, entry_name)
-                        
-                        pipeline = system_transform_map[ext]
-                        source_paths[entry_name] = ('uncached', {'path': fspath, 'transform_pipeline': pipeline})
-                        continue
-                
-                if is_native_path:
-                    fspath = os.path.join(parent_dir, entry_name)
-                else:
-                    t_gsp = time.time()
-                    fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
-                    t_get_source_path += time.time() - t_gsp
-                    get_source_path_calls += 1
-                    # Cache the source path for getattr to reuse (major optimization for large dirs)
-                    self._source_path_cache[entry_path] = fspath
-                source_paths[entry_name] = ('uncached', fspath)
+            # Fast path: Pre-stat using DirEntry cache to avoid send-phase filesystem calls
+            # This is a HUGE optimization for all large directories (100+ files)
+            # IMPORTANT: Check this for EVERY entry, not just when skip_cache_lookup is True
+            # This allows optimization for physical files even when virtual entries exist
+            if skip_cache_lookup_enabled and entry_name in dir_entry_cache:
+                # Pre-stat using DirEntry.is_dir() (fast), cache the result for send phase
+                de = dir_entry_cache[entry_name]
+                try:
+                    st = de.stat(follow_symlinks=False)
+                    is_dir = de.is_dir(follow_symlinks=False)
+                    stat_dict = {
+                        'st_atime': int(st.st_atime), 'st_ctime': int(st.st_ctime), 'st_mtime': int(st.st_mtime),
+                        'st_gid': int(st.st_gid), 'st_uid': int(st.st_uid),
+                        'st_mode': 0o040755 if is_dir else 0o100444,
+                        'st_nlink': 2 if is_dir else 1,
+                        'st_size': int(st.st_size) if not is_dir else 4096,
+                    }
+                    source_paths[entry_name] = ('cached', stat_dict)
+                    cache_hits += 1  # Count pre-caching as cache hit
+                    continue
+                except OSError:
+                    pass  # Fall through to normal path
+            
+            # For directories with system transform map, try direct transform application
+            if skip_cache_lookup and system_transform_map:
+                _, ext = os.path.splitext(entry_name)
+                ext = ext[1:].upper() if ext else ""
+                if ext in system_transform_map:
+                    # Direct transform application without get_source_path!
+                    # Build proper source path - different extensions may be in different subdirectories
+                    # e.g., DSK files in Software/DSK/, 2MG files in Software/2MG/
+                    # Or BIN files in Software/BIN/, ROM files in Software/ROM/ (Atari 5200)
+                    
+                    # Check if there's a subdirectory matching the extension
+                    ext_subdir = os.path.join(parent_dir, ext)
+                    if os.path.isdir(ext_subdir):
+                        fspath = os.path.join(ext_subdir, entry_name)
+                    elif parent_dir.endswith(f'/{ext}'):
+                        # Already in the extension-specific directory, use as-is
+                        fspath = os.path.join(parent_dir, entry_name)
+                    elif parent_dir.endswith('/DSK') and ext == '2MG':
+                        # .2mg file is actually in the 2MG sibling directory
+                        source_dir = parent_dir[:-3] + '2MG'
+                        fspath = os.path.join(source_dir, entry_name)
+                    elif parent_dir.endswith('/2MG') and ext == 'DSK':
+                        # .dsk file is actually in the DSK sibling directory  
+                        source_dir = parent_dir[:-3] + 'DSK'
+                        fspath = os.path.join(source_dir, entry_name)
+                    else:
+                        # Fallback: file in parent directory directly
+                        fspath = os.path.join(parent_dir, entry_name)
+                    
+                    pipeline = system_transform_map[ext]
+                    source_paths[entry_name] = ('uncached', {'path': fspath, 'transform_pipeline': pipeline})
+                    continue
+            
+            # Fallback: resolve source path normally
+            if is_native_path:
+                fspath = os.path.join(parent_dir, entry_name)
             else:
-                # Slow path: when DirEntry cache is not sufficient
-                # Note: cache was already checked at the top of the loop
-                # If we get here, the file wasn't in the getattr cache
-                
-                # Try to resolve source path for non-DirEntry-cached files
-                t_resolve_start = time.time()
-                if is_native_path:
-                    fspath = os.path.join(parent_dir, entry_name)
-                else:
-                    # Get source path for non-Native entries (may be expensive)
-                    t_gsp = time.time()
-                    fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
-                    t_get_source_path += time.time() - t_gsp
-                    get_source_path_calls += 1
-                t_path_resolve += time.time() - t_resolve_start
-                source_paths[entry_name] = ('uncached', fspath)
+                t_gsp = time.time()
+                fspath = get_source_path(logger, self.config, self.mount_path, entry_path)
+                t_get_source_path += time.time() - t_gsp
+                get_source_path_calls += 1
+                # Cache the source path for getattr to reuse (major optimization for large dirs)
+                self._source_path_cache[entry_path] = fspath
+            source_paths[entry_name] = ('uncached', fspath)
         
         t_batch = time.time() - t_batch_start
         logger.info(f"READDIR BATCH: {len(virtual_entries)} entries, transform_map={len(system_transform_map)} exts, get_source_path={get_source_path_calls} calls, time={t_batch:.4f}s skip_cache={skip_cache_lookup}")
@@ -2175,6 +2188,31 @@ class TransFS(Passthrough):
         path_parts = Path(xfull_path).parts
         mount_parts = Path(self.mount_path).parts
         rel_parts = path_parts[len(mount_parts):]
+        
+        # IMPORTANT: Check if this path is actually a FILE MAP entry before treating it as a virtual directory
+        # E.g., /RetroBat/bios/atom.zip where atom.zip is a system map with category=shared_bios and file: key
+        if len(rel_parts) == 3:  # /<client>/<category>/<filename>
+            client_name = rel_parts[0]
+            category_name = rel_parts[1]
+            file_name = rel_parts[2]
+            client = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            if client:
+                # Check ALL systems for a file map with this name and category
+                for system in client.get('systems', []):
+                    for map_entry in system.get('maps', []):
+                        map_name = list(map_entry.keys())[0]
+                        map_config = list(map_entry.values())[0]
+                        if (isinstance(map_config, dict) and
+                            map_name == file_name and
+                            map_config.get('category') == category_name and
+                            'file' in map_config):
+                            # This is a file map entry, NOT a virtual directory
+                            # Let it fall through to get_source_path resolution
+                            logger.info(f"GETATTR: detected file map {file_name}, skipping virtual directory check")
+                            break
+                    else:
+                        continue
+                    break  # Found the file map, exit both loops
         
         # Check for client-level nested map directories (e.g., /RetroBat/bios where "bios/atom.zip" is a client-level map)
         if len(rel_parts) == 2:  # /<client>/<map-or-system>
@@ -2829,21 +2867,37 @@ class TransFS(Passthrough):
         logger.info("RELEASE: fh=%s", fh)
         self._log_fh_state(fh, "release-start")
         try:
-            if self._fd_open_count[fh] > 1:
-                self._fd_open_count[fh] -= 1
+            open_count = self._fd_open_count.get(fh)
+            if open_count is None:
+                # Idempotency guard: release can occasionally be observed after state cleanup.
+                logger.warning("RELEASE: fh=%s already released (no open_count state)", fh)
+                return
+
+            if open_count > 1:
+                self._fd_open_count[fh] = open_count - 1
                 logger.info("RELEASE: fh=%s decremented count to %d", fh, self._fd_open_count[fh])
                 self._log_fh_state(fh, "release-decrement")
                 return
-            
-            del self._fd_open_count[fh]
-            inode = self._fd_inode_map[fh]
-            del self._inode_fd_map[inode]
-            del self._fd_inode_map[fh]
+
+            self._fd_open_count.pop(fh, None)
+            inode = self._fd_inode_map.pop(fh, None)
+
+            if inode is not None:
+                # Only clear inode->fd mapping if it still points at this fh.
+                mapped_fh = self._inode_fd_map.get(inode)
+                if mapped_fh == fh:
+                    self._inode_fd_map.pop(inode, None)
+
             self._fd_path_map.pop(fh, None)
             self._fd_read_stats.pop(fh, None)
 
-            pending_times = self._pending_utime.pop(inode, None)
-            if pending_times:
+            pending_times = self._pending_utime.get(inode) if inode is not None else None
+            has_other_fhs_for_inode = False
+            if inode is not None:
+                has_other_fhs_for_inode = inode in self._fd_inode_map.values()
+
+            if pending_times and not has_other_fhs_for_inode:
+                self._pending_utime.pop(inode, None)
                 atime_ns, mtime_ns = pending_times
                 path = self._inode_to_path(inode)
                 def _do_utime():
@@ -2861,8 +2915,15 @@ class TransFS(Passthrough):
             # Use trio.to_thread.run_sync to offload blocking close to a thread
             def _do_close():
                 os.close(fh)
-            
-            await trio.to_thread.run_sync(_do_close)
+
+            try:
+                await trio.to_thread.run_sync(_do_close)
+            except OSError as exc:
+                if exc.errno == errno.EBADF:
+                    logger.warning("RELEASE: fh=%s already closed (EBADF)", fh)
+                    return
+                raise
+
             logger.info("RELEASE: fh=%s closed successfully", fh)
             self._log_fh_state(fh, "release-closed")
         except OSError as exc:
@@ -3062,8 +3123,8 @@ class TransFS(Passthrough):
                 return await self.getattr(synthetic_inode, ctx)
 
         # Check if it's a virtual directory/file by checking if it would be listed
-        parent_entries = set(parse_trans_path(self.config, self.root, parent_path))
-        logger.info(f"LOOKUP: parent_entries={parent_entries}")
+        parent_entries = self._get_parent_entries_for_lookup(parent_path)
+        logger.info("LOOKUP: parent_entries_count=%d", len(parent_entries))
         
         # First try exact match
         if name_str in parent_entries:
@@ -3179,12 +3240,23 @@ class TransFS(Passthrough):
             elapsed = time.time() - start_time
             logger.info(f"UNLINK COMPLETE: {name_str} total={elapsed:.3f}s get_path={t_get_path:.3f}s unlink={t_unlink:.3f}s")
             
-            # Invalidate scandir cache for the parent directory so next READDIR gets fresh data
-            # Convert virtual path to real path for cache key
-            parent_real_path = get_source_path_for_write(logger, self.config, self.mount_path, parent_path)
-            if parent_real_path and parent_real_path in self._scandir_cache:
-                del self._scandir_cache[parent_real_path]
-                logger.debug(f"UNLINK: invalidated scandir cache for {parent_real_path}")
+            # Invalidate subdirectory query cache for parent directory
+            # This ensures next READDIR sees the updated file count
+            try:
+                from dirlisting import _subdir_query_cache, _empty_subdir_cache
+                # Convert parent path to virtual path format for cache key
+                if parent_path.startswith(self.mount_path):
+                    cache_key = parent_path[len(self.mount_path):].strip('/').replace('\\', '/')
+                    if cache_key in _subdir_query_cache:
+                        del _subdir_query_cache[cache_key]
+                        logger.debug(f"UNLINK: invalidated subdir cache for {cache_key}")
+                    if cache_key in _empty_subdir_cache:
+                        del _empty_subdir_cache[cache_key]
+            except Exception as e:
+                logger.debug(f"UNLINK: cache invalidation failed: {e}")
+
+            self._lookup_parent_entries_cache.pop(parent_path, None)
+                
         except OSError as exc:
             elapsed = time.time() - start_time
             logger.info("UNLINK ERROR: %s after %.3fs (errno=%s)", name_str, elapsed, exc.errno)
@@ -3209,13 +3281,23 @@ class TransFS(Passthrough):
         
         try:
             inode = os.lstat(real_path).st_ino
+            os.rmdir(real_path)  # Will fail with ENOTEMPTY if directory not empty
             
-            # Check if real_path is actually a file (virtual zip directory case)
-            if os.path.isfile(real_path):
-                logger.info("RMDIR: virtual directory is actually a file (zip browsing), deleting file: %s", real_path)
-                os.unlink(real_path)
-            else:
-                os.rmdir(real_path)  # Will fail with ENOTEMPTY if directory not empty
+            # Invalidate subdirectory query cache for parent directory
+            try:
+                from dirlisting import _subdir_query_cache, _empty_subdir_cache
+                if parent_path.startswith(self.mount_path):
+                    cache_key = parent_path[len(self.mount_path):].strip('/').replace('\\', '/')
+                    if cache_key in _subdir_query_cache:
+                        del _subdir_query_cache[cache_key]
+                        logger.debug(f"RMDIR: invalidated subdir cache for {cache_key}")
+                    if cache_key in _empty_subdir_cache:
+                        del _empty_subdir_cache[cache_key]
+            except Exception as e:
+                logger.debug(f"RMDIR: cache invalidation failed: {e}")
+
+            self._lookup_parent_entries_cache.pop(parent_path, None)
+                
         except OSError as exc:
             logger.debug("RMDIR: OSError errno=%s", exc.errno)
             raise FUSEError(exc.errno)

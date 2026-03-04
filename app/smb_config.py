@@ -90,42 +90,47 @@ def update_smb_conf_guest_access(allow_guest: bool) -> bool:
             guest_setting = "guest ok = no"
             logger.info("✓ Guest access DISABLED (authentication required)")
         
-        # Update guest ok setting and user permissions in [TransFS] section
-        # Find the [TransFS] section and update/add settings
-        if '[TransFS]' in content:
-            # Replace existing or add guest ok setting
-            if 'guest ok' in content:
+        # Update guest/auth settings for all managed shares
+        managed_shares = ["TransFS", "TransFSNative"]
+        for share_name in managed_shares:
+            section_marker = f'[{share_name}]'
+            if section_marker not in content:
+                continue
+
+            # Replace existing or add guest ok setting within this section
+            if re.search(rf'(\[{share_name}\][\s\S]*?)guest ok\s*=\s*\w+', content):
                 content = re.sub(
-                    r'(\[TransFS\].*?)guest ok\s*=\s*\w+',
+                    rf'(\[{share_name}\][\s\S]*?)guest ok\s*=\s*\w+',
                     rf'\1guest ok = {"yes" if allow_guest else "no"}',
-                    content,
-                    flags=re.DOTALL
+                    content
                 )
             else:
-                # Add guest ok setting after [TransFS] line
                 content = re.sub(
-                    r'(\[TransFS\])',
+                    rf'(\[{share_name}\])',
                     rf'\1\nguest ok = {"yes" if allow_guest else "no"}',
                     content
                 )
-            
+
             # When authentication is required, ensure valid users and force user are set
             if not allow_guest:
-                # Add valid users if not present
-                if 'valid users' not in content:
-                    content = re.sub(
-                        r'(\[TransFS\])',
-                        r'\1\nvalid users = root',
-                        content
-                    )
-                # Add force user if not present
-                if 'force user' not in content:
-                    content = re.sub(
-                        r'(\[TransFS\])',
-                        r'\1\nforce user = root',
-                        content
-                    )
-                logger.info("✓ SMB authentication configured for user 'root'")
+                section_block_match = re.search(rf'(\[{share_name}\][\s\S]*?)(\n\[[^\]]+\]|\Z)', content)
+                if section_block_match:
+                    section_block = section_block_match.group(1)
+                    if 'valid users' not in section_block:
+                        content = re.sub(
+                            rf'(\[{share_name}\])',
+                            r'\1\nvalid users = root',
+                            content
+                        )
+                    if 'force user' not in section_block:
+                        content = re.sub(
+                            rf'(\[{share_name}\])',
+                            r'\1\nforce user = root',
+                            content
+                        )
+
+        if not allow_guest:
+            logger.info("✓ SMB authentication configured for user 'root'")
         
         smb_conf_path.write_text(content)
         return True

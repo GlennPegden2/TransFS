@@ -740,7 +740,7 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
                 progress_queue = Queue()
                 
                 # Initialize database with larger pool for concurrent operations
-                init_database(pool_size=30, max_overflow=40)
+                init_database(pool_size=100, max_overflow=100)
                 
                 # Send initial message
                 yield f"data: {json.dumps({'status': 'starting', 'message': 'Initializing sync...'})}\n\n"
@@ -1897,173 +1897,172 @@ def file_metadata(path: str):
             # Initialize database connection pool if needed (uses environment variables)
             # Use larger pool for concurrent FUSE operations
             try:
-                init_database(pool_size=50, max_overflow=100)
+                init_database(pool_size=100, max_overflow=100)
             except Exception:
                 # If init fails, continue - connection pool might already be initialized
                 pass
             
-            conn = get_connection()
-            cursor = conn.cursor()
-            
-            # Get file info via virtual_mappings table (one-to-many mapping)
-            cursor.execute("""
-                SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path, f.created_at, f.updated_at
-                FROM files f
-                JOIN virtual_mappings vm ON f.file_id = vm.file_id
-                WHERE vm.virtual_path = %s
-                LIMIT 1
-            """, (path,))
-            
-            file_row = cursor.fetchone()
-            if not file_row:
-                # Fallback: try direct source_path or legacy virtual_path lookup
+            # Use context manager to ensure connection is properly returned
+            with get_cursor(commit=False) as cursor:
+                # Get file info via virtual_mappings table (one-to-many mapping)
                 cursor.execute("""
-                    SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
-                    FROM files
-                    WHERE source_path = %s OR virtual_path = %s
+                    SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path, f.created_at, f.updated_at
+                    FROM files f
+                    JOIN virtual_mappings vm ON f.file_id = vm.file_id
+                    WHERE vm.virtual_path = %s
                     LIMIT 1
-                """, (db_path_lookup, path))
+                """, (path,))
+                
                 file_row = cursor.fetchone()
+                if not file_row:
+                    # Fallback: try direct source_path or legacy virtual_path lookup
+                    cursor.execute("""
+                        SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
+                        FROM files
+                        WHERE source_path = %s OR virtual_path = %s
+                        LIMIT 1
+                    """, (db_path_lookup, path))
+                    file_row = cursor.fetchone()
 
-            if not file_row:
-                # Final fallback: resolve virtual path to real source path(s) and try again
-                try:
-                    import logging
-                    from sourcepath import get_source_path
+                if not file_row:
+                    # Final fallback: resolve virtual path to real source path(s) and try again
+                    try:
+                        import logging
+                        from sourcepath import get_source_path
 
-                    logger = logging.getLogger("api")
-                    source_path = get_source_path(logger, config, "/mnt/transfs", path)
-                    resolved_paths = []
+                        logger = logging.getLogger("api")
+                        source_path = get_source_path(logger, config, "/mnt/transfs", path)
+                        resolved_paths = []
 
-                    if isinstance(source_path, str):
-                        resolved_paths = [source_path]
-                    elif isinstance(source_path, tuple):
-                        zip_path, internal_path = source_path
-                        resolved_paths = [f"{zip_path}/{internal_path}"]
-                    elif isinstance(source_path, dict) and "path" in source_path:
-                        resolved_paths = [source_path["path"]]
+                        if isinstance(source_path, str):
+                            resolved_paths = [source_path]
+                        elif isinstance(source_path, tuple):
+                            zip_path, internal_path = source_path
+                            resolved_paths = [f"{zip_path}/{internal_path}"]
+                        elif isinstance(source_path, dict) and "path" in source_path:
+                            resolved_paths = [source_path["path"]]
 
-                    if resolved_paths:
-                        cursor.execute("""
-                            SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
-                            FROM files
-                            WHERE source_path = ANY(%s)
-                            LIMIT 1
-                        """, (resolved_paths,))
-                        file_row = cursor.fetchone()
-                except Exception:  # pylint: disable=broad-except
-                    file_row = None
+                        if resolved_paths:
+                            cursor.execute("""
+                                SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
+                                FROM files
+                                WHERE source_path = ANY(%s)
+                                LIMIT 1
+                            """, (resolved_paths,))
+                            file_row = cursor.fetchone()
+                    except Exception:  # pylint: disable=broad-except
+                        file_row = None
 
-            if not file_row:
-                return {
-                    "error": "File not found in metadata database",
-                    "hint": "Run Update DB to sync metadata for this file",
-                    "path": path,
-                }
-            
-            file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path, created_at, updated_at = file_row
-            
-            # Get normalized metadata with joins to get actual lookup table values
-            cursor.execute("""
-                SELECT 
-                    mt.name as media_type,
-                    r.name as region,
-                    l.name as language,
-                    p.name as publisher,
-                    fm.release_year,
-                    fm.release_date,
-                    fm.release_precision,
-                    fm.rom_size,
-                    fm.is_revision,
-                    fm.is_prototype,
-                    fm.is_homebrew
-                FROM file_metadata fm
-                LEFT JOIN media_types mt ON fm.media_type_id = mt.id
-                LEFT JOIN regions r ON fm.region_id = r.id
-                LEFT JOIN languages l ON fm.language_id = l.id
-                LEFT JOIN publishers p ON fm.publisher_id = p.id
-                WHERE fm.file_id = %s
-            """, (file_id,))
-            
-            normalized_row = cursor.fetchone()
-            
-            # Also check extended metadata table for any data
-            cursor.execute("""
-                SELECT genre, subgenre, language, region, year, publisher, developer,
-                       rating, play_count, last_played, is_prototype, is_homebrew,
-                       is_translation, is_hack, tags, raw_metadata
-                FROM metadata
-                WHERE file_id = %s
-            """, (file_id,))
-            
-            meta_row = cursor.fetchone()
-            
-            # Build response
-            response = {
-                "file_id": file_id,
-                "filename": filename,
-                "display_name": display_name,
-                "extension": extension,
-                "size": size,
-                "mtime": mtime,
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "is_archive": is_archive,
-                "content_type": content_type,
-                "source_path": source_path,
-                "metadata": {}
-            }
-            
-            # Prefer normalized metadata (with joins) as primary source
-            if normalized_row:
-                (media_type, region, language, publisher, release_year, release_date,
-                 release_precision, rom_size, is_revision, is_prototype, is_homebrew) = normalized_row
+                if not file_row:
+                    return {
+                        "error": "File not found in metadata database",
+                        "hint": "Run Update DB to sync metadata for this file",
+                        "path": path,
+                    }
                 
-                response["metadata"] = {
-                    "media_type": media_type,
-                    "region": region,
-                    "language": language,
-                    "publisher": publisher,
-                    "release_year": release_year,
-                    "release_date": release_date,
-                    "release_precision": release_precision,
-                    "rom_size": rom_size,
-                    "is_revision": is_revision,
-                    "is_prototype": is_prototype,
-                    "is_homebrew": is_homebrew
-                }
-            
-            # Add extended metadata if available (will overwrite normalized if both exist)
-            if meta_row:
-                (genre, subgenre, language, region, year, publisher, developer,
-                 rating, play_count, last_played, is_prototype, is_homebrew,
-                 is_translation, is_hack, tags, raw_metadata) = meta_row
+                file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path, created_at, updated_at = file_row
                 
-                extended = {
-                    "genre": genre,
-                    "subgenre": subgenre,
-                    "language": language,
-                    "region": region,
-                    "year": year,
-                    "publisher": publisher,
-                    "developer": developer,
-                    "rating": rating,
-                    "play_count": play_count,
-                    "last_played": last_played,
-                    "is_prototype": is_prototype,
-                    "is_homebrew": is_homebrew,
-                    "is_translation": is_translation,
-                    "is_hack": is_hack,
-                    "tags": tags,
-                    "raw_metadata": raw_metadata
+                # Get normalized metadata with joins to get actual lookup table values
+                cursor.execute("""
+                    SELECT 
+                        mt.name as media_type,
+                        r.name as region,
+                        l.name as language,
+                        p.name as publisher,
+                        fm.release_year,
+                        fm.release_date,
+                        fm.release_precision,
+                        fm.rom_size,
+                        fm.is_revision,
+                        fm.is_prototype,
+                        fm.is_homebrew
+                    FROM file_metadata fm
+                    LEFT JOIN media_types mt ON fm.media_type_id = mt.id
+                    LEFT JOIN regions r ON fm.region_id = r.id
+                    LEFT JOIN languages l ON fm.language_id = l.id
+                    LEFT JOIN publishers p ON fm.publisher_id = p.id
+                    WHERE fm.file_id = %s
+                """, (file_id,))
+                
+                normalized_row = cursor.fetchone()
+                
+                # Also check extended metadata table for any data
+                cursor.execute("""
+                    SELECT genre, subgenre, language, region, year, publisher, developer,
+                           rating, play_count, last_played, is_prototype, is_homebrew,
+                           is_translation, is_hack, tags, raw_metadata
+                    FROM metadata
+                    WHERE file_id = %s
+                """, (file_id,))
+                
+                meta_row = cursor.fetchone()
+                
+                # Build response
+                response = {
+                    "file_id": file_id,
+                    "filename": filename,
+                    "display_name": display_name,
+                    "extension": extension,
+                    "size": size,
+                    "mtime": mtime,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "is_archive": is_archive,
+                    "content_type": content_type,
+                    "source_path": source_path,
+                    "metadata": {}
                 }
-                # Merge, with extended metadata taking precedence for overlapping fields
-                response["metadata"].update({k: v for k, v in extended.items() if v is not None})
-            
-            # Filter out None values for cleaner output
-            response["metadata"] = {k: v for k, v in response["metadata"].items() if v is not None}
-            
-            return response
+                
+                # Prefer normalized metadata (with joins) as primary source
+                if normalized_row:
+                    (media_type, region, language, publisher, release_year, release_date,
+                     release_precision, rom_size, is_revision, is_prototype, is_homebrew) = normalized_row
+                    
+                    response["metadata"] = {
+                        "media_type": media_type,
+                        "region": region,
+                        "language": language,
+                        "publisher": publisher,
+                        "release_year": release_year,
+                        "release_date": release_date,
+                        "release_precision": release_precision,
+                        "rom_size": rom_size,
+                        "is_revision": is_revision,
+                        "is_prototype": is_prototype,
+                        "is_homebrew": is_homebrew
+                    }
+                
+                # Add extended metadata if available (will overwrite normalized if both exist)
+                if meta_row:
+                    (genre, subgenre, language, region, year, publisher, developer,
+                     rating, play_count, last_played, is_prototype, is_homebrew,
+                     is_translation, is_hack, tags, raw_metadata) = meta_row
+                    
+                    extended = {
+                        "genre": genre,
+                        "subgenre": subgenre,
+                        "language": language,
+                        "region": region,
+                        "year": year,
+                        "publisher": publisher,
+                        "developer": developer,
+                        "rating": rating,
+                        "play_count": play_count,
+                        "last_played": last_played,
+                        "is_prototype": is_prototype,
+                        "is_homebrew": is_homebrew,
+                        "is_translation": is_translation,
+                        "is_hack": is_hack,
+                        "tags": tags,
+                        "raw_metadata": raw_metadata
+                    }
+                    # Merge, with extended metadata taking precedence for overlapping fields
+                    response["metadata"].update({k: v for k, v in extended.items() if v is not None})
+                
+                # Filter out None values for cleaner output
+                response["metadata"] = {k: v for k, v in response["metadata"].items() if v is not None}
+                
+                return response
             
         except Exception as e:  # pylint: disable=broad-except
             return {"error": f"Database query failed: {str(e)}"}
@@ -3803,6 +3802,7 @@ def _get_connection_profile(request: Request | None = None):
     advertised_host = (os.getenv('SMB_ADVERTISE_HOST') or '').strip()
     advertised_port = (os.getenv('SMB_ADVERTISE_PORT') or '').strip()
     advertised_share = (os.getenv('SMB_ADVERTISE_SHARE') or '').strip()
+    advertised_native_share = (os.getenv('SMB_ADVERTISE_NATIVE_SHARE') or '').strip()
     avahi_hostname = (os.getenv('AVAHI_HOSTNAME') or '').strip()
 
     host = _strip_port(advertised_host)
@@ -3828,21 +3828,28 @@ def _get_connection_profile(request: Request | None = None):
         port = '3445'
 
     share_name = advertised_share or 'TransFS'
+    native_share_name = advertised_native_share or 'TransFSNative'
     smb_username = smb_config.get('username', 'root')
     allow_guest = bool(smb_config.get('allow_guest', False))
 
     unc_path = f"\\\\{host}\\{share_name}"
+    if share_name.lower().endswith('\\retrobat'):
+        virtual_unc_path = unc_path
+    else:
+        virtual_unc_path = f"{unc_path}\\RetroBat"
     requires_custom_port = port != '445'
 
     return {
         'host': host,
         'port': port,
         'share_name': share_name,
+        'native_share_name': native_share_name,
         'unc_path': unc_path,
+        'virtual_unc_path': virtual_unc_path,
         'requires_custom_port': requires_custom_port,
         'smb_username': smb_username,
         'allow_guest': allow_guest,
-        'source': 'env' if (advertised_host or advertised_port or advertised_share) else 'derived'
+        'source': 'env' if (advertised_host or advertised_port or advertised_share or advertised_native_share) else 'derived'
     }
 
 
@@ -3853,7 +3860,11 @@ def get_setup_connection_profile(request: Request):
         profile = _get_connection_profile(request)
 
         profile['windows_mapping_command'] = (
-            f"New-SmbMapping -LocalPath U: -RemotePath {profile['unc_path']} "
+            f"New-SmbMapping -LocalPath U: -RemotePath {profile['virtual_unc_path']} "
+            f"-TcpPort {profile['port']} -UserName {profile['smb_username']} -Persistent $true"
+        )
+        profile['windows_native_mapping_command'] = (
+            f"New-SmbMapping -LocalPath V: -RemotePath \\\\{profile['host']}\\{profile['native_share_name']} "
             f"-TcpPort {profile['port']} -UserName {profile['smb_username']} -Persistent $true"
         )
 
@@ -3901,6 +3912,7 @@ def download_setup_windows_script(request: Request):
         script_content = script_content.replace('{{TRANSFS_SMB_HOST}}', profile['host'])
         script_content = script_content.replace('{{TRANSFS_SMB_PORT}}', profile['port'])
         script_content = script_content.replace('{{TRANSFS_SHARE_NAME}}', profile['share_name'])
+        script_content = script_content.replace('{{TRANSFS_NATIVE_SHARE_NAME}}', profile['native_share_name'])
 
         return StreamingResponse(
             iter([script_content]),

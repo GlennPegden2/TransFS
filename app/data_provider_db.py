@@ -37,7 +37,7 @@ class DatabaseDataProvider(DataProvider):
         try:
             # Initialize database schema if needed
             # Use larger pool for concurrent FUSE operations
-            init_database(pool_size=30, max_overflow=40)
+            init_database(pool_size=100, max_overflow=100)
             
             # Check if we should sync on startup
             db_config = self.config.get('database', {})
@@ -206,21 +206,21 @@ class DatabaseDataProvider(DataProvider):
         try:
             logger.debug(f"Database open: {path}")
             
-            # Query database for source path
-            conn = get_connection()
-            cursor = conn.execute(
-                "SELECT source_path FROM files WHERE virtual_path = ? LIMIT 1",
-                (path,)
-            )
-            row = cursor.fetchone()
-            
-            if row is None:
-                logger.debug(f"Path not found in database: {path}")
-                return None
-            
-            source_path = row[0]
-            logger.debug(f"Database open resolved {path} → {source_path}")
-            return source_path
+            # Query database for source path using context manager
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(
+                    "SELECT source_path FROM files WHERE virtual_path = %s LIMIT 1",
+                    (path,)
+                )
+                row = cursor.fetchone()
+                
+                if row is None:
+                    logger.debug(f"Path not found in database: {path}")
+                    return None
+                
+                source_path = row['source_path']
+                logger.debug(f"Database open resolved {path} → {source_path}")
+                return source_path
         
         except Exception as e:
             logger.error(f"Database open error for {path}: {e}")

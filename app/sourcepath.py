@@ -164,27 +164,73 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if len(rel_parts) == 1:
         return config.get("filestore", "/mnt/filestorefs")
 
-    # Check for client-level file maps (e.g., /RetroBat/bios/atom.zip)
-    # These appear BEFORE the system level in the hierarchy
+    # Check client-level maps (global maps under client root, e.g. /RetroBat/bios/*)
     if len(rel_parts) >= 2:
-        potential_client_map_path = '/'.join(rel_parts[1:])
-        from pathutils import find_map_entry, get_map_config
-        client_maps = client.get('maps', [])
-        client_map_entry = find_map_entry({'maps': client_maps}, potential_client_map_path)
-        if client_map_entry:
-            map_config = get_map_config(client_map_entry)
-            if map_config and 'file' in map_config:
-                file_spec = map_config['file']
-                if isinstance(file_spec, dict):
-                    source_file_path = file_spec.get('path', '')
-                    filestore_root = config.get("filestore", "/mnt/filestorefs")
-                    # Construct full path: /mnt/filestorefs/Native/{path}
-                    full_path = os.path.join(filestore_root, "Native", source_file_path)
-                    logger.debug(f"DEBUG: client-level map {potential_client_map_path} -> {full_path}")
-                    
-                    # zip_mode: file means treat as opaque file, not browsable directory
-                    # Return as string path (not tuple) so it's treated as a regular file
-                    return full_path
+        filestore_root = config.get("filestore", "/mnt/filestorefs")
+        client_local_base = client.get('local_base_path', '')
+        translated_norm = str(path).replace('\\', '/').rstrip('/')
+        client_name = client.get('name', '')
+
+        if client_local_base:
+            for map_entry in client.get('maps', []):
+                map_name = list(map_entry.keys())[0]
+                map_config = map_entry.get(map_name, {})
+                if not isinstance(map_config, dict):
+                    continue
+
+                pseudo_system = {
+                    'name': '_ClientShared',
+                    'category_paths': {},
+                }
+                try:
+                    base_path_template = resolve_virtual_base_path(client, pseudo_system, map_config)
+                    virtual_base = format_virtual_base_path(base_path_template, client_name, '_ClientShared')
+                except Exception:
+                    continue
+
+                full_virtual_base = os.path.join(root, virtual_base).replace('\\', '/').rstrip('/')
+                if not translated_norm.startswith(full_virtual_base + '/'):
+                    continue
+
+                sub_virtual_path = translated_norm[len(full_virtual_base) + 1:]
+
+                map_subpath = sub_virtual_path
+                if map_name and map_name != '.':
+                    if map_subpath == map_name:
+                        map_subpath = ''
+                    elif map_subpath.startswith(map_name + '/'):
+                        map_subpath = map_subpath[len(map_name) + 1:]
+                    else:
+                        continue
+
+                if 'file' in map_config:
+                    file_spec = map_config.get('file')
+                    if isinstance(file_spec, dict):
+                        source_file_path = file_spec.get('path', '')
+                    else:
+                        source_file_path = str(file_spec)
+
+                    full_path = os.path.join(
+                        filestore_root,
+                        "Native",
+                        client_local_base,
+                        source_file_path,
+                    )
+                    if os.path.exists(full_path):
+                        return full_path
+
+                if is_query_map(map_config):
+                    query_cfg = get_query_config(map_config) or {}
+                    source_dir = query_cfg.get('source_dir', 'Software')
+                    full_path = os.path.join(
+                        filestore_root,
+                        "Native",
+                        client_local_base,
+                        source_dir,
+                        map_subpath,
+                    )
+                    if map_subpath and os.path.exists(full_path):
+                        return full_path
 
     path_template_parts = Path(client['default_target_path']).parts
     system_info = get_system_info(
@@ -906,12 +952,24 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
     """Handle regular map logic."""
     if len(rel_parts) < 3:
         return None
-    map_name = rel_parts[2]
+
+    # Determine map position relative to the resolved system segment.
+    # Supports both /<client>/<system>/<map>/... and category paths like
+    # /<client>/<category>/<system>/<map>/...
+    try:
+        system_idx = rel_parts.index(system_info['name'])
+    except ValueError:
+        system_idx = 1
+
+    if len(rel_parts) <= system_idx + 1:
+        return None
+
+    map_name = rel_parts[system_idx + 1]
     map_entry = next((m for m in system_info['maps'] if list(m.keys())[0] == map_name), None)
     if not map_entry:
         return None
     mapdict = map_entry[map_name]
-    subpath = rel_parts[3:]
+    subpath = rel_parts[system_idx + 2:]
     if "file" in mapdict:
         file_spec = mapdict.get("file")
         if isinstance(file_spec, dict):
@@ -971,6 +1029,40 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         else:
             logger.debug(f"DEBUG: _get_regular_source_path returns None for missing path: {real_path}")
             return None
+
+    if "query" in mapdict:
+        query_cfg = mapdict.get("query") or {}
+        source_dir = _adjust_source_dir_for_layout(query_cfg.get("source_dir", "Software"), system_info)
+        preserve_structure = bool(query_cfg.get("preserve_structure", False))
+        base = os.path.join(
+            config.get("filestore", "/mnt/filestorefs"),
+            "Native",
+            system_info['local_base_path'],
+            source_dir
+        )
+        if not subpath:
+            # Query map root is virtual; let FUSE handle it as directory
+            if os.path.isdir(base):
+                logger.debug(f"DEBUG: _get_regular_source_path returns None for query virtual dir (map root): {base}")
+                return None
+            return None
+
+        real_path = os.path.join(base, *subpath)
+        if os.path.exists(real_path):
+            logger.debug(f"DEBUG: _get_regular_source_path returns real path (query): {real_path}")
+            return real_path
+
+        # If query listing is flattened (preserve_structure=false), the virtual name may
+        # map to a file located in nested subdirectories under source_dir.
+        if not preserve_structure and subpath:
+            candidate_name = subpath[-1]
+            recursive_match = _find_file_recursive(base, candidate_name)
+            if recursive_match and os.path.exists(recursive_match):
+                logger.debug(f"DEBUG: _get_regular_source_path returns recursive query match: {recursive_match}")
+                return recursive_match
+
+        logger.debug(f"DEBUG: _get_regular_source_path returns None for missing path (query): {real_path}")
+        return None
     if "source_filename" in mapdict:
         base = os.path.join(
             config.get("filestore", "/mnt/filestorefs"),
@@ -1097,6 +1189,57 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     translated_lower = translated_norm.lower()
     client_name = client.get('name', '')
     filestore = config.get("filestore", "/mnt/filestorefs")
+
+    # Resolve client-level maps first (global maps under client root)
+    client_local_base = client.get('local_base_path', '')
+    if client_local_base:
+        for map_entry in client.get('maps', []):
+            map_name = list(map_entry.keys())[0]
+            map_config = map_entry.get(map_name, {})
+            if not isinstance(map_config, dict):
+                continue
+
+            pseudo_system = {
+                'name': '_ClientShared',
+                'category_paths': {},
+            }
+            try:
+                base_path_template = resolve_virtual_base_path(client, pseudo_system, map_config)
+                virtual_base = format_virtual_base_path(base_path_template, client_name, '_ClientShared')
+            except Exception:
+                continue
+
+            full_virtual_base = os.path.join(root, virtual_base).replace('\\', '/').rstrip('/')
+            full_virtual_base_lower = full_virtual_base.lower()
+
+            if not (
+                translated_lower == full_virtual_base_lower
+                or translated_lower.startswith(full_virtual_base_lower + '/')
+            ):
+                continue
+
+            sub_virtual = translated_norm[len(full_virtual_base):].lstrip('/')
+
+            map_subpath = sub_virtual
+            if map_name and map_name != '.':
+                if map_subpath == map_name:
+                    map_subpath = ''
+                elif map_subpath.startswith(map_name + '/'):
+                    map_subpath = map_subpath[len(map_name) + 1:]
+                else:
+                    continue
+
+            if is_query_map(map_config):
+                query_cfg = get_query_config(map_config) or {}
+                source_dir = query_cfg.get('source_dir', 'Software')
+                base = os.path.join(filestore, "Native", client_local_base, source_dir)
+                return os.path.join(base, map_subpath) if map_subpath else base
+
+            file_cfg = map_config.get('file')
+            if file_cfg:
+                source_path = file_cfg.get('path') if isinstance(file_cfg, dict) else str(file_cfg)
+                base = os.path.join(filestore, "Native", client_local_base, source_path)
+                return os.path.join(base, map_subpath) if map_subpath else base
 
     for system in client.get('systems', []):
         local_base = system.get('local_base_path', '')

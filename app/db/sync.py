@@ -45,12 +45,18 @@ class FilesystemSync:
         Extract system from source path.
         
         Examples:
-            /mnt/filestorefs/Native/Apple/AppleII/Software/... → Apple/AppleII
-            /mnt/filestorefs/Native/Nintendo/NES/Software/... → Nintendo/NES
+            /mnt/filestorefs/Native/Systems/Apple/AppleII/Software/... → Apple/AppleII
+            /mnt/filestorefs/Native/Systems/Nintendo/NES/Software/... → Nintendo/NES
         """
         parts = source_path.split('/')
-        # Pattern: /mnt/filestorefs/Native/Manufacturer/System/Software/...
-        if len(parts) >= 6 and parts[4] == 'Native':
+        # New pattern: /mnt/filestorefs/Native/Systems/Manufacturer/System/Software/...
+        if len(parts) >= 8 and parts[4] == 'Native' and parts[5] == 'Systems':
+            manufacturer = parts[6]
+            system = parts[7]
+            return f"{manufacturer}/{system}"
+
+        # Legacy pattern: /mnt/filestorefs/Native/Manufacturer/System/Software/...
+        if len(parts) >= 7 and parts[4] == 'Native':
             manufacturer = parts[5]
             system = parts[6]
             return f"{manufacturer}/{system}"

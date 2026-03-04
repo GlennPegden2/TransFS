@@ -213,8 +213,8 @@ class DatabaseSync:
         logger.info("Initializing database connection")
         # init_database reads from environment variables set in docker-compose
         # Use larger pool for concurrent FUSE operations (especially recursive directory listing)
-        db_init_database(pool_size=30, max_overflow=40)
-        logger.info("Database schema initialized with pool_size=30, max_overflow=40")
+        db_init_database(pool_size=100, max_overflow=100)
+        logger.info("Database schema initialized with pool_size=100, max_overflow=100")
     
     def full_sync(self, client_filter: Optional[str] = None, system_filter: Optional[str] = None):
         """
@@ -267,6 +267,11 @@ class DatabaseSync:
                 current_client += 1
                 logger.info(f"Syncing client: {client_name}")
                 self._emit_progress('client', client=client_name, progress=current_client, total=total_clients)
+
+                # Sync client-level maps (global maps for this client)
+                # Only run when not filtering to a specific system.
+                if not system_filter:
+                    self._sync_client_maps(client_config)
                 
                 systems = client_config.get("systems", [])
                 for system_config in systems:
@@ -314,6 +319,34 @@ class DatabaseSync:
     
     def _sync_system(self, client_config: dict, system_config: dict):
         """Sync a single system's files to database by scanning entire base path."""
+        self._sync_maps_for_scope(client_config, system_config)
+
+    def _sync_client_maps(self, client_config: dict):
+        """Sync client-level maps using the client's local_base_path."""
+        client_name = client_config.get("name")
+        client_maps = client_config.get("maps", [])
+        client_local_base = client_config.get("local_base_path", "")
+
+        if not client_maps:
+            logger.debug(f"  No client-level maps configured for {client_name}")
+            return
+
+        if not client_local_base:
+            logger.warning(f"  Client-level maps configured for {client_name} but local_base_path is missing")
+            return
+
+        pseudo_system_config = {
+            "name": "_ClientShared",
+            "local_base_path": client_local_base,
+            "maps": client_maps,
+        }
+
+        logger.info(f"  Syncing client-level maps for {client_name} (base: {client_local_base})")
+        self._emit_progress('system', client=client_name, system='_ClientShared')
+        self._sync_maps_for_scope(client_config, pseudo_system_config)
+
+    def _sync_maps_for_scope(self, client_config: dict, system_config: dict):
+        """Sync maps for either a real system or a client-level pseudo-system."""
         client_name = client_config["name"]
         system_name = system_config["name"]
         local_base_path = system_config.get("local_base_path", "")
@@ -666,6 +699,9 @@ class DatabaseSync:
                 # Skip hidden directories if show_hidden_files is False
                 if not show_hidden:
                     dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                # Ensure deterministic order for stable duplicate handling across restarts
+                dirnames.sort()
+                files = sorted(files)
                 
                 for filename in files:
                     # Skip hidden files if show_hidden_files is False
@@ -763,8 +799,11 @@ class DatabaseSync:
                     # Skip hidden directories if show_hidden_files is False
                     if not show_hidden:
                         dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                    # Ensure deterministic order for stable duplicate handling across restarts
+                    dirnames.sort()
+                    files_list = sorted(files)
                     
-                    for filename in files:
+                    for filename in files_list:
                         # Skip hidden files if show_hidden_files is False
                         if not show_hidden and filename.startswith('.'):
                             continue
@@ -817,7 +856,9 @@ class DatabaseSync:
         file_count = 0
         
         try:
-            for entry in os.scandir(dir_path):
+            # Sort entries for deterministic order to ensure stable duplicate handling
+            entries = sorted(os.scandir(dir_path), key=lambda e: e.name)
+            for entry in entries:
                 if entry.is_file():
                     # Check if extension matches
                     _, ext = os.path.splitext(entry.name)
@@ -870,6 +911,9 @@ class DatabaseSync:
                 # Skip hidden directories if show_hidden_files is False
                 if not show_hidden:
                     dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                # Ensure deterministic order for stable duplicate handling across restarts
+                dirnames.sort()
+                files = sorted(files)
                 
                 for filename in files:
                     # Skip hidden files if show_hidden_files is False

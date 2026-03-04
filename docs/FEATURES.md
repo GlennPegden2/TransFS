@@ -108,6 +108,15 @@
   - `SMB_ADVERTISE_PORT`
   - `SMB_ADVERTISE_SHARE`
 
+### 11.1 Native Direct Path Architecture
+
+- Native bypass now uses explicit layers under the SMB `Native` folder:
+  - `Native/Systems/<Manufacturer>/<System>/...` for shared system content.
+  - `Native/Clients/<Client>/...` for client-specific assets.
+- RetroBat BIOS setup script now targets `Native/Clients/RetroBat/bios` (not the virtual FUSE RetroBat path).
+- `local_base_path` and source `base_path` values are normalized at load time to `Systems/...` for compatibility.
+- Legacy paths under `Native/<Manufacturer>/<System>` are supported during migration through config normalization and staged data move.
+
 ---
 
 ### 12. Database-Only Architecture (Query Maps)
