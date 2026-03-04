@@ -676,9 +676,9 @@ function Copy-BiosWithProgress([string]$SourceDir, [string]$DestinationDir) {
 		}
 
 		$percent = [int](($index / $files.Count) * 100)
-		Write-Progress -Activity "Copying RetroBat BIOS" -Status "$index / $($files.Count): $relative" -PercentComplete $percent
+		Write-Progress -Activity "Copying RetroBat shared BIOS files" -Status "$index / $($files.Count): $relative" -PercentComplete $percent
 	}
-	Write-Progress -Activity "Copying RetroBat BIOS" -Completed
+	Write-Progress -Activity "Copying RetroBat shared BIOS files" -Completed
 }
 
 function Update-RetroBatConfig([string]$RetroBatDir, [string]$BiosPath) {
@@ -845,7 +845,7 @@ try {
 		throw "Target BIOS folder is not writable: $targetBiosDir"
 	}
 
-	Write-Info "Copying BIOS files (this may take a few moments)..."
+	Write-Info "Copying RetroBat shared BIOS files (this may take a few moments)..."
 	Write-Info "  From: $sourceBiosDir"
 	Write-Info "  To:   $targetBiosDir"
 	Write-Info ""
