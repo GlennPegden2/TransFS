@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_source_path ON files(source_path);
 CREATE INDEX IF NOT EXISTS idx_files_virtual_path ON files(virtual_path);
+CREATE INDEX IF NOT EXISTS idx_files_virtual_path_like ON files(virtual_path text_pattern_ops);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_system ON files(system);
 CREATE INDEX IF NOT EXISTS idx_files_system_ext ON files(system, extension);

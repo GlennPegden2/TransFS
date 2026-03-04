@@ -15,6 +15,26 @@ cache_warmer:
   enabled: false
   io_threshold_percent: 20.0
   max_depth: 12
+startup_prewarm:
+  # Pre-load critical paths at startup to avoid cold-start delays
+  enabled: true
+  # Hot paths to pre-warm (relative to mount point)
+  hot_paths:
+    - RetroBat
+    - RetroBat/bios
+    - RetroBat/ROMS/AcornAtom
+    - RetroBat/ROMS/AcornAtom/Tapes
+    - RetroBat/ROMS/AcornAtom/FDs
+  # Pre-warm subdirectory queries for client roots
+  prewarm_subdirs: true
+  subdirectory_paths:
+    - RetroBat
+    - MiSTer
+  # Pre-warm recursive filename indexes for large source directories
+  # This eliminates 8+ second delays on first file access in flattened query maps
+  prewarm_recursive_indexes: true
+  recursive_index_paths:
+    - Native/Systems/Acorn/Atom/Software/Sources  # 5400+ files, takes 8+ seconds to scan
 config_sets:
   active_client_config: default
   active_source_config: default

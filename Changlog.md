@@ -1,5 +1,22 @@
 # Changlog
 
+## 2026-03-04
+- Removed hardcoded "Native" virtual client folder from `/mnt/transfs` root since we now use separate SMB shares for Native and Virtual filesystems.
+- Improved RetroBat/Acorn Atom performance by hardening cache behavior in `readdir` and query-map resolution paths.
+- Added cached config-entry parsing and DB-entry reuse for database-mode `readdir` in `app/transfs.py` to reduce repeated expensive adapter and parse calls.
+- Replaced repeated recursive filename scans with indexed recursive lookup caches in `app/sourcepath.py` and `app/dirlisting.py` for flattened query fallback and ZIP discovery paths.
+- Increased subdirectory query cache TTL in `app/dirlisting.py` to reduce repeated startup/browse DB load.
+- Optimized subdirectory SQL in `app/dirlisting.py` to compute prefix substring once via CTE.
+- Added PostgreSQL prefix-like index `idx_files_virtual_path_like` (`text_pattern_ops`) in `app/db/schema.py` for `virtual_path LIKE 'prefix%'` lookup acceleration.
+- **Added startup hot-path pre-warming in `app/startup_prewarm.py`** to load critical paths before FUSE mount completes, reducing cold-start delays from 550-760ms to **sub-millisecond** (0.6-1.0ms) on frequently-accessed paths like RetroBat/bios and AcornAtom maps.
+- Added `startup_prewarm` configuration section in `app/config/app.yaml` to configure hot paths and subdirectory prewarm behavior.
+- Integrated prewarm into `app/transfs.py` main_async() to execute before pyfuse3.init() for maximum effectiveness.
+- **Enhanced recursive filename index in `app/sourcepath.py`** with comprehensive logging (cache hits/misses, scan time, file counts) and increased TTL from 30s to 900s (15 minutes) to avoid repeated expensive scans of large directories.
+- **Added recursive index pre-warming to `app/startup_prewarm.py`** to pre-build filename indexes for large source directories (e.g., 5,400+ file directories) at startup, eliminating 8+ second cold-start delays on first file access.
+- **Fixed joeblade.dsk lookup performance issue** where first access caused 8.8-second silent delay due to recursive scan of 5,406 files in Software/Sources directory - now resolved with startup pre-warming and longer cache TTL.
+- Added `prewarm_recursive_indexes` and `recursive_index_paths` configuration options in `app/config/app.yaml` to control which directories get pre-indexed at startup.
+- Removed redundant SharedBIOS system from `app/config/clients/default/retrobat.yaml`, consolidating BIOS file mappings into client-level maps for cleaner configuration.
+
 ## 2026-03-03
 - Introduced `Native/Clients` and `Native/Systems` architecture for direct SMB bypass paths.
 - Added dedicated SMB share split (`TransFS` virtual + `TransFSNative` native) and removed the container bind-mount of `Native` into `/mnt/transfs`.

@@ -1,4 +1,6 @@
 import os
+import time
+import logging
 from pathlib import Path
 from typing import Any, Optional, Union
 import zipfile
@@ -20,8 +22,11 @@ from ziptutils import get_zip_mapping
 from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 from transforms import build_transform_pipeline, TransformPipeline
 
+logger = logging.getLogger(__name__)
 
 _transform_pipeline_cache: dict[tuple[str, str, str], Optional[TransformPipeline]] = {}
+_recursive_filename_index_cache: dict[str, tuple[float, dict[str, str]]] = {}
+_RECURSIVE_FILENAME_INDEX_TTL = 900.0  # 15 minutes - expensive to rebuild (5000+ file scans take 8+ seconds)
 
 
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
@@ -43,6 +48,43 @@ def _find_file_recursive(base_dir: str, filename: str) -> Optional[str]:
         if filename in files:
             return os.path.join(root, filename)
     return None
+
+
+def _find_file_recursive_indexed(base_dir: str, filename: str) -> Optional[str]:
+    """
+    Find a file by name recursively with directory-level caching.
+    
+    Builds an index of all filenames under base_dir (cached per directory mtime).
+    This is much faster than repeated os.walk() calls for flattened query maps.
+    """
+    if not os.path.isdir(base_dir):
+        return None
+
+    now = os.path.getmtime(base_dir)
+    cache_entry = _recursive_filename_index_cache.get(base_dir)
+    index = None
+    if cache_entry:
+        cached_mtime, cached_index = cache_entry
+        if (time.time() - cached_mtime) <= _RECURSIVE_FILENAME_INDEX_TTL and cached_index.get("__dir_mtime__") == str(now):
+            index = cached_index
+            logger.info(f"Recursive index cache HIT for {base_dir}")
+
+    if index is None:
+        logger.info(f"Recursive index cache MISS for {base_dir} - scanning directory tree...")
+        scan_start = time.time()
+        index = {"__dir_mtime__": str(now)}
+        file_count = 0
+        for root, _, files in os.walk(base_dir):
+            for item in files:
+                key = item.lower()
+                if key not in index:
+                    index[key] = os.path.join(root, item)
+                file_count += 1
+        scan_elapsed = time.time() - scan_start
+        logger.info(f"Recursive index built: {file_count} files in {scan_elapsed:.2f}s - cached for {_RECURSIVE_FILENAME_INDEX_TTL}s")
+        _recursive_filename_index_cache[base_dir] = (time.time(), index)
+
+    return index.get(filename.lower())
 
 
 def _get_transform_cache_key(system_info: dict, virtual_folder: str, ext: str) -> tuple[str, str, str]:
@@ -1056,7 +1098,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         # map to a file located in nested subdirectories under source_dir.
         if not preserve_structure and subpath:
             candidate_name = subpath[-1]
-            recursive_match = _find_file_recursive(base, candidate_name)
+            recursive_match = _find_file_recursive_indexed(base, candidate_name)
             if recursive_match and os.path.exists(recursive_match):
                 logger.debug(f"DEBUG: _get_regular_source_path returns recursive query match: {recursive_match}")
                 return recursive_match

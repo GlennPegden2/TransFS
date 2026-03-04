@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - Resolves issue where admin tools (e.g., writability probes) failed when using hidden temp files
 
 ### Changed
+- **RetroBat/Acorn Atom directory listing performance**: Hardened `readdir` caching and query-map path resolution to reduce repeated expensive lookups during emulator probe bursts.
+  - Added cached config-entry parsing for database-mode `readdir` calls in `app/transfs.py`.
+  - Reused database `readdir` results in main database-mode path via `_db_readdir_cache` instead of re-querying adapter each call.
+  - Replaced recursive filename scans with indexed recursive lookup caches in `app/sourcepath.py` and `app/dirlisting.py` for flattened query-map fallback and ZIP discovery.
+  - Increased subdirectory query result cache TTL in `app/dirlisting.py` to reduce repeated DB pressure during startup and browse bursts.
+- **Database prefix-query optimization**: Added `idx_files_virtual_path_like` (`text_pattern_ops`) in `app/db/schema.py` to improve `virtual_path LIKE 'prefix%'` lookups used by subdirectory discovery.
 - **Advertised SMB endpoint (Approach B)**: Added optional compose environment overrides `SMB_ADVERTISE_HOST`, `SMB_ADVERTISE_PORT`, and `SMB_ADVERTISE_SHARE` for explicit client-facing setup values.
 - **Dev compose LAN host default**: Updated `SMB_ADVERTISE_HOST` default in compose for this environment so Setup Clients and generated scripts point to a network-reachable host.
 - **Project Housekeeping (Legacy Archival)**: Moved temporary development artifacts out of project root into `legacy/`

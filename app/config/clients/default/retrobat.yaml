@@ -31,6 +31,15 @@ maps:
         preserve_structure: true
         supports_zaparoo: false
         preserve_exact_filenames: true
+  - .:  # Pre-packaged BIOS collection from retrobat-bios repo
+      category: shared_bios
+      query:
+        source_dir: ../Systems/Acorn/Atom/Software/BIOS/retrobat-bios-main
+        extensions:
+          - "*"
+        preserve_structure: true
+        supports_zaparoo: false
+        preserve_exact_filenames: false
 
 systems: 
   - name: AcornAtom
@@ -80,19 +89,4 @@ systems:
             path: Software/BIOS/atom.zip
             zip_mode: file  # Treat as a file, not a browsable directory
 
-  # System for additional shared BIOS files (not client-level, but system-specific sources)
-  # Files appear at /RetroBat/bios/* (cross-system shared folder)
-  - name: SharedBIOS
-    manufacturer: Shared
-    local_base_path: Acorn/Atom  # Use Atom as base since it has the shared BIOS sources
-    maps:
-      - .:
-          category: shared_bios
-          query:
-            source_dir: Software/BIOS/retrobat-bios-main
-            extensions:
-              - "*"
-            preserve_structure: true
-            supports_zaparoo: false
-            preserve_exact_filenames: false
 

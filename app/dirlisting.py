@@ -18,7 +18,10 @@ _EMPTY_CACHE_TTL = 5.0  # seconds
 # General cache for ALL subdirectory queries (not just empty ones)
 # Maps virtual_prefix -> (subdirs_list, timestamp)
 _subdir_query_cache = {}
-_SUBDIR_CACHE_TTL = 2.0  # seconds - short TTL to balance freshness vs DB load
+_SUBDIR_CACHE_TTL = 15.0  # seconds - reduce repeated DB pressure during emulator probe bursts
+_db_initialized = False
+_recursive_filename_index_cache = {}
+_RECURSIVE_FILENAME_INDEX_TTL = 30.0
 
 
 def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
@@ -57,13 +60,13 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
     try:
         from db.connection import get_cursor, init_database
 
-        # Ensure database is initialized for direct helper usage paths
-        # (some call-sites invoke this function before other DB components initialize).
-        try:
-            init_database(pool_size=100, max_overflow=100)
-        except Exception:
-            # If already initialized, continue with existing pool
-            pass
+        global _db_initialized
+        if not _db_initialized:
+            try:
+                init_database(pool_size=100, max_overflow=100)
+            except Exception:
+                pass
+            _db_initialized = True
         
         db_start = time.time() if 'time' in dir() else None
         import time as time_module
@@ -81,26 +84,25 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         # Calculate the position to extract from (after the prefix)
         extract_from_pos = len(full_prefix) + 1  # +1 for 1-based PostgreSQL indexing
         
-        # Query for unique next-level components
-        # For paths like /mnt/transfs/RetroBat/ROMS/AcornAtom/FDs/file.dsk
-        # When querying /mnt/transfs/RetroBat/ROMS/AcornAtom/, extract "FDs"
+        # Query for unique next-level components with single-pass substring extraction
+        # For paths like /mnt/transfs/RetroBat/ROMS/AcornAtom/FDs/file.dsk,
+        # querying /mnt/transfs/RetroBat/ROMS/AcornAtom/ extracts "FDs".
         sql = """
-            SELECT DISTINCT 
-                SPLIT_PART(
-                    SUBSTRING(virtual_path FROM %s),
-                    '/',
-                    1
-                ) AS subdir
-            FROM files
-            WHERE virtual_path LIKE %s
-                AND LENGTH(SUBSTRING(virtual_path FROM %s)) > 0
-                AND virtual_path <> %s
+            WITH matching_paths AS (
+                SELECT SUBSTRING(virtual_path FROM %s) AS rel_path
+                FROM files
+                WHERE virtual_path LIKE %s
+                  AND virtual_path <> %s
+            )
+            SELECT DISTINCT SPLIT_PART(rel_path, '/', 1) AS subdir
+            FROM matching_paths
+            WHERE rel_path IS NOT NULL
+              AND rel_path <> ''
         """
         
         params = [
             extract_from_pos,       # Extract substring starting after prefix
             full_prefix + '%',      # Match paths under prefix
-            extract_from_pos,       # Same as first param
             full_prefix.rstrip('/') # Exclude the directory itself
         ]
         
@@ -220,6 +222,30 @@ def _find_file_recursive(base_dir: str, filename: str) -> str | None:
         if filename in files:
             return os.path.join(root, filename)
     return None
+
+
+def _find_file_recursive_indexed(base_dir: str, filename: str) -> str | None:
+    if not os.path.isdir(base_dir):
+        return None
+
+    dir_mtime = os.path.getmtime(base_dir)
+    cache_entry = _recursive_filename_index_cache.get(base_dir)
+    index = None
+    if cache_entry:
+        cached_at, cached_index = cache_entry
+        if (time.time() - cached_at) <= _RECURSIVE_FILENAME_INDEX_TTL and cached_index.get("__dir_mtime__") == str(dir_mtime):
+            index = cached_index
+
+    if index is None:
+        index = {"__dir_mtime__": str(dir_mtime)}
+        for root, _, files in os.walk(base_dir):
+            for item in files:
+                key = item.lower()
+                if key not in index:
+                    index[key] = os.path.join(root, item)
+        _recursive_filename_index_cache[base_dir] = (time.time(), index)
+
+    return index.get(filename.lower())
 
 # Stat cache file (persistent across container restarts)
 STAT_CACHE_FILE = "/mnt/filestorefs/.transfs_stat_cache.pkl"
@@ -566,10 +592,8 @@ def parse_trans_path(config,root,full_path: str) -> list:
     return list_dynamic_or_regular(config, path, root_parts)
 
 def list_clients(config) -> list:
-    """List all clients, plus the Native bypass directory."""
+    """List all clients configured in the system."""
     clients = [client['name'] for client in config['clients']]
-    # Add Native directory for direct filesystem access (bypasses FUSE layer)
-    clients.append('Native')
     return clients
 
 def list_systems(config, path: Path, root_parts: tuple) -> list:
@@ -937,7 +961,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 if not os.path.isfile(zip_path):
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
                 if not os.path.isfile(zip_path):
-                    zip_path = _find_file_recursive(base_dir, zip_name)
+                    zip_path = _find_file_recursive_indexed(base_dir, zip_name)
                 if os.path.isfile(zip_path):
                     target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
                     try:
@@ -1126,7 +1150,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 if not os.path.isfile(zip_path):
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
                 if not os.path.isfile(zip_path):
-                    zip_path = _find_file_recursive(base_dir, zip_name)
+                    zip_path = _find_file_recursive_indexed(base_dir, zip_name)
                 if os.path.isfile(zip_path):
                     try:
                         internal = zippath_listdir(zip_path)

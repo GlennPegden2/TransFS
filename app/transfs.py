@@ -98,6 +98,8 @@ class TransFS(Passthrough):
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
         self._db_readdir_cache = {}  # path -> (timestamp, db_files)
         self._db_readdir_cache_ttl = 120.0  # seconds
+        self._config_readdir_cache = {}  # path -> (timestamp, config_entries)
+        self._config_readdir_cache_ttl = 15.0  # seconds
         self._lookup_parent_entries_cache = {}  # parent_path -> (timestamp, set(entries))
         self._lookup_parent_entries_ttl = 0.5  # seconds
         from config import read_config
@@ -1169,7 +1171,20 @@ class TransFS(Passthrough):
                 
                 # Get allowed entries from config using parse_trans_path
                 t_config_start = time.time()
-                config_entries = list(parse_trans_path(self.config, self.root, path))
+                config_cache_entry = self._config_readdir_cache.get(path)
+                if config_cache_entry:
+                    config_cached_at, config_cached_entries = config_cache_entry
+                    if (time.time() - config_cached_at) <= self._config_readdir_cache_ttl:
+                        config_entries = config_cached_entries
+                    else:
+                        self._config_readdir_cache.pop(path, None)
+                        config_entries = None
+                else:
+                    config_entries = None
+
+                if config_entries is None:
+                    config_entries = list(parse_trans_path(self.config, self.root, path))
+                    self._config_readdir_cache[path] = (time.time(), config_entries)
                 t_config = time.time() - t_config_start
                 logger.info(f"READDIR DATABASE: config allows {len(config_entries)} entries (parsed in {t_config:.4f}s)")
                 
@@ -1177,7 +1192,20 @@ class TransFS(Passthrough):
                 system_transform_map = self._build_system_transform_map(path)
                 
                 # Get entries from database
-                db_entries = self.data_adapter.readdir_entries(path)
+                cache_entry = self._db_readdir_cache.get(path)
+                if cache_entry:
+                    cached_at, cached_db_entries = cache_entry
+                    if (time.time() - cached_at) <= self._db_readdir_cache_ttl:
+                        db_entries = cached_db_entries
+                    else:
+                        self._db_readdir_cache.pop(path, None)
+                        db_entries = None
+                else:
+                    db_entries = None
+
+                if db_entries is None:
+                    db_entries = self.data_adapter.readdir_entries(path)
+                    self._db_readdir_cache[path] = (time.time(), db_entries)
                 logger.info(f"READDIR DATABASE: got {len(db_entries) if db_entries else 0} entries from adapter")
                 
                 # NOTE: We don't filter stale entries here to avoid connection pool exhaustion
@@ -2161,12 +2189,22 @@ class TransFS(Passthrough):
                         logger.info(f"GETATTR DATABASE: found entry in {t_total:.4f}s")
                         
                         # Verify backend file still exists (prevent stale cache issues)
+                        t_verify_start = time.time()
                         backend_path = get_source_path(logger, self.config, self.mount_path, path)
+                        t_verify = time.time() - t_verify_start
+                        logger.info(f"GETATTR DATABASE: get_source_path returned in {t_verify:.4f}s: {backend_path}")
+                        
                         if isinstance(backend_path, str):
-                            if not os.path.exists(backend_path):
+                            t_exists_start = time.time()
+                            exists = os.path.exists(backend_path)
+                            t_exists = time.time() - t_exists_start
+                            logger.info(f"GETATTR DATABASE: os.path.exists checked in {t_exists:.4f}s: {exists}")
+                            
+                            if not exists:
                                 logger.info(f"GETATTR DATABASE: entry found but backend file missing at {backend_path}, treating as ENOENT")
                                 stat_dict = None  # Fall through to full resolution which will return ENOENT
                             else:
+                                logger.info(f"GETATTR DATABASE: verification complete, returning attributes")
                                 return self._dict_to_entry_attributes(stat_dict, inode)
                         elif isinstance(backend_path, tuple):
                             # Virtual zip directory or similar - trust database
@@ -2630,8 +2668,9 @@ class TransFS(Passthrough):
     
     async def open(self, inode: InodeT, flags: int, ctx):
         """Open a file (pyfuse3 async version)."""
+        t_start = time.time()
         path = self._inode_to_path(inode)
-        logger.info("OPEN: inode=%s, flags=%s, path=%s", inode, flags, path)
+        logger.info("OPEN START: inode=%s, flags=%s, path=%s", inode, flags, path)
         
         # Try database-only mode for query map files first
         trans_path = None
@@ -2640,7 +2679,10 @@ class TransFS(Passthrough):
             map_info = self._extract_map_info(path)
             if map_info:
                 logger.info("OPEN: detected query map file, trying database-only mode")
+                t_db = time.time()
                 trans_path = await self._open_database_only(path, map_info)
+                t_db_elapsed = time.time() - t_db
+                logger.info(f"OPEN: database query took {t_db_elapsed:.4f}s, result={'found' if trans_path else 'not found'}")
                 if trans_path:
                     logger.info(f"OPEN: database-only mode successful, trans_path={trans_path}")
                 else:
@@ -2648,7 +2690,10 @@ class TransFS(Passthrough):
         
         # Fallback to normal source path resolution if database lookup failed or not a query map
         if trans_path is None:
+            t_gsp = time.time()
             trans_path = get_source_path(logger, self.config, self.mount_path, path)
+            t_gsp_elapsed = time.time() - t_gsp
+            logger.info(f"OPEN: get_source_path took {t_gsp_elapsed:.4f}s")
         logger.info("OPEN: trans_path=%s", trans_path)
 
         if trans_path is None:
@@ -3337,6 +3382,7 @@ async def main_async(mount_path: str, root_path: str):
     from config import read_app_config
     from cache_warmer import CacheWarmer
     from dirlisting import set_cache_config
+    from startup_prewarm import prewarm_hotpaths, prewarm_subdirectory_cache, prewarm_recursive_indexes
 
     fs = TransFS(root_path=root_path, mount_path=mount_path)
 
@@ -3344,6 +3390,24 @@ async def main_async(mount_path: str, root_path: str):
     app_config = read_app_config()
     cache_config = app_config.get('cache', {})
     set_cache_config(cache_config)
+    
+    # Pre-warm hot paths BEFORE mounting filesystem
+    logger.info("Pre-warming hot paths at startup...")
+    try:
+        prewarm_hotpaths(
+            config=fs.config,
+            root_path=root_path,
+            mount_path=mount_path,
+            data_adapter=fs.data_adapter,
+            readdir_cache_dict=fs._db_readdir_cache,
+            config_readdir_cache_dict=fs._config_readdir_cache,
+            db_readdir_cache_ttl=fs._db_readdir_cache_ttl,
+            config_readdir_cache_ttl=fs._config_readdir_cache_ttl
+        )
+        prewarm_subdirectory_cache(fs.config, mount_path)
+        prewarm_recursive_indexes(fs.config, root_path)
+    except Exception as e:
+        logger.warning(f"Hot-path pre-warm failed (non-fatal): {e}")
 
     fuse_options = set(pyfuse3.default_options)
     fuse_options.add('fsname=transfs')
