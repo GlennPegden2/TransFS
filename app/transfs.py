@@ -1349,6 +1349,7 @@ class TransFS(Passthrough):
         t_parse_start = time.time()
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
         t_parse = time.time() - t_parse_start
+        logger.info(f"READDIR: parse_trans_path returned {len(virtual_entries)} entries: {virtual_entries}")
 
         # Detect if this is a query map directory (e.g., /MiSTer/Apple-II/FDs)
         # or a nested file map virtual directory (e.g., /MiSTer/BBCMicro/bios from bios/atom.zip)
@@ -1534,6 +1535,7 @@ class TransFS(Passthrough):
                             dir_entry_cache[entry.name] = entry
                         if entry.name not in existing:
                             virtual_entries.append(entry.name)
+                            logger.debug(f"READDIR: added filesystem entry: {entry.name}")
                             # Cache the DirEntry object for later stat access
                             if not direntry_cache_enabled:
                                 dir_entry_cache[entry.name] = entry
