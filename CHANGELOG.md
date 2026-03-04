@@ -4,8 +4,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Known Issues
+- **SMB test hang after full suite run**: When running the full foundation test suite, SMB tests (`TestSmbFoundation`) hang after other tests complete. Individual SMB tests run successfully. **Workaround**: Run non-SMB foundation tests with `pytest tests/test_foundation.py -m "not slow"`, or run SMB tests separately. Root cause appears to be lingering state in Samba/FUSE after write-cleanup operations.
+
 ### Fixed
 - **YAML null handling in virtual directory detection**: Fixed crash when YAML config has `maps:` set to null/empty. Code now uses `.get('maps') or []` pattern to handle None values returned from YAML parsing.
+- **SMB test connection state management**: Added session cleanup before attempting new SMB connections to prevent state leakage between test runs.
 
 ### Added
 - **Browse Native "Sync contents" action**: Added a button in the Browse Native tab to trigger database sync for the current native folder path directly from the UI.
@@ -14,6 +18,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   - `test_smb_can_read_large_file_over_1mb`: Large file (2MB) integrity test with size and SHA256 hash verification
   - Added `smbprotocol>=1.13.0` dependency for SMB2/SMB3 protocol testing
   - Tests dynamically fall back to share root when expected subdirectories are absent
+  - Marked with `@pytest.mark.slow` to allow skipping in quick test runs
 - **Startup hot-path pre-warming**: Added `app/startup_prewarm.py` to pre-load critical paths before FUSE mount completes
   - Reduces cold-start delays from 550-760ms to sub-millisecond (0.6-1.0ms) on frequently-accessed paths
   - Configuration in `app/config/app.yaml` via `startup_prewarm` section
