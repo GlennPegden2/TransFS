@@ -790,6 +790,15 @@ try {
 		$proceedWithBios = Prompt-WithDefault "Would you like to proceed with RetroBat BIOS folder setup? (Y/N)" "N"
 		if ($proceedWithBios.ToUpperInvariant() -ne "Y") {
 			Write-Info "Skipped BIOS setup."
+			Write-Host ""
+			Write-Ok "Done."
+			Write-Host ""
+			if ($script:RestartExplorerAfterExit) {
+				Write-Info "Explorer restart is queued and will run after you exit this script."
+			}
+			Write-Info "Press any key to exit..."
+			$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+			Invoke-PendingExplorerRestart
 			exit 0
 		}
 	}
