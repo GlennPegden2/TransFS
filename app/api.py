@@ -1884,7 +1884,7 @@ def file_metadata(path: str):
         JSON with file metadata including genre, language, region, year, etc.
     """
     try:
-        from db.connection import get_connection, init_database
+        from db.connection import get_connection, init_database, get_cursor
         
         config = read_config()
         
