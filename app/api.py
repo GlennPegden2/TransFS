@@ -502,19 +502,13 @@ def api_browse_directory(path: str):
     path = os.path.normpath(path)
     print(f"[BROWSE] validation done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
-    # For virtual paths, avoid expensive FUSE exists/isdir checks.
-    # We'll validate via parse_trans_path below.
-    is_virtual_path_request = path.startswith("/mnt/transfs")
-    if not is_virtual_path_request:
-        if not os.path.exists(path):
-            return {"error": "Path does not exist"}
-        print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
-        
-        if not os.path.isdir(path):
-            return {"error": "Path is not a directory"}
-        print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
-    else:
-        print(f"[BROWSE] virtual path - skipped exists/isdir checks, elapsed={time.time()-start_time:.4f}s", flush=True)
+    if not os.path.exists(path):
+        return {"error": "Path does not exist"}
+    print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    
+    if not os.path.isdir(path):
+        return {"error": "Path is not a directory"}
+    print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
@@ -558,100 +552,8 @@ def api_browse_directory(path: str):
     # The FUSE filesystem handles all directory composition and file listing logic.
     
     try:
-        # Optimization: for ZIP-internal paths under /mnt/transfs, translate to real path first
-        # This bypasses FUSE and uses zippath's cached index directly
-        real_path = path
-        if path.startswith("/mnt/transfs") and (".zip/" in path or ".zip\\" in path):
-            # Import here to access TransFS internals
-            from sourcepath import get_source_path
-            import logging
-            
-            logger = logging.getLogger("api")
-            config = read_config()
-            root = "/mnt/filestorefs"
-            
-            # Get the real source path (bypasses FUSE)
-            source_path = get_source_path(logger, config, root, path)
-            if isinstance(source_path, tuple):
-                # It's a ZIP tuple (zip_path, internal_path)
-                zip_real_path, internal = source_path
-                real_path = os.path.join(zip_real_path, internal)
-            elif source_path:
-                real_path = source_path
-        
-        # Now use zippath.listdir_with_info on the real path
-        if ".zip/" in real_path or ".zip\\" in real_path:
-            from zippath import listdir_with_info
-            try:
-                items = listdir_with_info(real_path)
-                entries = [
-                    {
-                        "name": item["name"],
-                        "type": "directory" if item["is_dir"] else "file",
-                        "size": item["size"] if not item["is_dir"] else None,
-                        "supports_zaparoo": supports_zaparoo
-                    }
-                    for item in items
-                ]
-                return {"path": path, "entries": entries}
-            except Exception as e:  # pylint: disable=broad-except
-                # Fall back to standard method if zippath fails
-                import logging
-                logger = logging.getLogger("api")
-                logger.error("zippath.listdir_with_info failed: %s", e, exc_info=True)
-        
-        # Fast virtual path listing (bypass FUSE mount for non-zip virtual paths)
-        if path.startswith("/mnt/transfs") and not (".zip/" in path or ".zip\\" in path):
-            from dirlisting import parse_trans_path
-            from pathutils import is_virtual_path
-
-            if 'config' not in locals():
-                config = read_config()
-
-            virtual_entries = None
-
-            # Super-fast path for system root: /mnt/transfs/<client>/<system>
-            # Build entries directly from map config instead of full parse_trans_path.
-            try:
-                from pathutils import normalize_map_name
-
-                if 'rel_parts' in locals() and len(rel_parts) == 2 and 'system' in locals() and system:
-                    direct_entries = []
-                    for map_entry in (system.get('maps') or []):
-                        map_name = list(map_entry.keys())[0]
-                        if map_name == "...SoftwareArchives...":
-                            continue
-                        map_display = normalize_map_name(map_name)
-                        if not map_display or map_display == '.':
-                            continue
-                        # For nested maps like "FDs/bios/atom.zip", expose top-level "FDs"
-                        top_level = map_display.split('/')[0]
-                        if top_level and top_level not in direct_entries:
-                            direct_entries.append(top_level)
-
-                    if direct_entries:
-                        virtual_entries = direct_entries
-            except Exception:
-                virtual_entries = None
-
-            if virtual_entries is None:
-                virtual_entries = list(parse_trans_path(config, "/mnt/transfs", path))
-            print(f"[BROWSE] virtual fast listing done, entries={len(virtual_entries)}, elapsed={time.time()-start_time:.4f}s", flush=True)
-
-            entries = []
-            for entry_name in virtual_entries:
-                entry_path = os.path.join(path, entry_name)
-                is_dir = is_virtual_path(config, "/mnt/transfs", entry_path)
-                entries.append({
-                    "name": entry_name,
-                    "type": "directory" if is_dir else "file",
-                    "size": None,
-                    "supports_zaparoo": supports_zaparoo
-                })
-
-            return {"path": path, "entries": entries}
-
-        # Standard method for non-ZIP, non-virtual-fast paths
+        # Standard method for all paths (including /mnt/transfs) to accurately
+        # reflect the live FUSE layer.
         entries = []
         entry_count = 0
         entry_list = list(os.scandir(path))
