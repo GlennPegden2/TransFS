@@ -622,6 +622,26 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if regular_result is not None:
         return regular_result
 
+    # If this is a file path under a query map and resolution failed,
+    # do not fall back to joining virtual map names as physical folders
+    # (e.g., /.../HDs/file.vhd -> .../Atom/HDs/file.vhd).
+    try:
+        system_idx = rel_parts.index(system_info['name'])
+    except ValueError:
+        system_idx = 1
+    if len(rel_parts) > system_idx + 2:
+        query_map_name = rel_parts[system_idx + 1]
+        query_map_entry = next(
+            (m for m in (system_info.get('maps') or []) if list(m.keys())[0] == query_map_name),
+            None,
+        )
+        query_map_config = get_map_config(query_map_entry)
+        if query_map_config and is_query_map(query_map_config):
+            logger.debug(
+                f"DEBUG: query map resolution failed for {translated_path}; returning None instead of generic fallback"
+            )
+            return None
+
     # Fallback: just join filestore, local_base_path, and the rest
     base = os.path.join(
         config.get("filestore", "/mnt/filestorefs"),
@@ -672,16 +692,21 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         supports_zip = query_cfg.get("supports_zip", True)
         zip_mode = query_cfg.get("zip_mode", "hierarchical")
 
-        source_subdir = _adjust_source_dir_for_layout(
-            query_cfg.get("source_dir", "Software"),
-            system_info,
-        )
-        source_dir = os.path.join(
-            config["filestore"],
-            "Native",
-            system_info["local_base_path"],
-            source_subdir,
-        )
+        raw_source_subdir = query_cfg.get("source_dir", "Software")
+        adjusted_source_subdir = _adjust_source_dir_for_layout(raw_source_subdir, system_info)
+        source_subdirs = [adjusted_source_subdir]
+        if raw_source_subdir not in source_subdirs:
+            source_subdirs.append(raw_source_subdir)
+
+        source_dirs = [
+            os.path.join(
+                config["filestore"],
+                "Native",
+                system_info["local_base_path"],
+                source_subdir,
+            )
+            for source_subdir in source_subdirs
+        ]
 
         subpath = rel_parts[3:]
         if not subpath:
@@ -692,15 +717,16 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         if zip_idx is not None and supports_zip and zip_mode != "file":
             zip_name = subpath[zip_idx]
             inner_parts = subpath[zip_idx + 1:]
-            zip_path = os.path.join(source_dir, zip_name)
-            if not os.path.isfile(zip_path):
-                zip_path = os.path.join(source_dir, "ZIP", zip_name)
-            if not os.path.isfile(zip_path):
-                zip_path = _find_file_recursive(source_dir, zip_name)
-            if os.path.isfile(zip_path):
-                if inner_parts:
-                    return (zip_path, "/".join(inner_parts))
-                return zip_path
+            for source_dir in source_dirs:
+                zip_path = os.path.join(source_dir, zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = os.path.join(source_dir, "ZIP", zip_name)
+                if not os.path.isfile(zip_path):
+                    zip_path = _find_file_recursive(source_dir, zip_name)
+                if os.path.isfile(zip_path):
+                    if inner_parts:
+                        return (zip_path, "/".join(inner_parts))
+                    return zip_path
 
         last = subpath[-1]
         if '.' not in last:
@@ -716,29 +742,30 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
             elif ext_upper == virt_ext:
                 real_exts.append(ext_upper)
 
-        for real_ext in real_exts:
-            real_filename = f"{name}.{real_ext.lower()}"
+        for source_dir in source_dirs:
+            for real_ext in real_exts:
+                real_filename = f"{name}.{real_ext.lower()}"
 
-            # Resolve extension directory case-insensitively (e.g., 2mg vs 2MG)
-            ext_dir_name = real_ext
-            for candidate_dir in (real_ext, real_ext.lower(), real_ext.upper()):
-                if os.path.isdir(os.path.join(source_dir, candidate_dir)):
-                    ext_dir_name = candidate_dir
-                    break
+                # Resolve extension directory case-insensitively (e.g., 2mg vs 2MG)
+                ext_dir_name = real_ext
+                for candidate_dir in (real_ext, real_ext.lower(), real_ext.upper()):
+                    if os.path.isdir(os.path.join(source_dir, candidate_dir)):
+                        ext_dir_name = candidate_dir
+                        break
 
-            # Try extension subfolder
-            candidate = os.path.join(source_dir, ext_dir_name, *subpath[:-1], real_filename)
-            if os.path.exists(candidate):
-                return candidate
-            # Try flat layout under source_dir
-            candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
-            if os.path.exists(candidate):
-                return candidate
+                # Try extension subfolder
+                candidate = os.path.join(source_dir, ext_dir_name, *subpath[:-1], real_filename)
+                if os.path.exists(candidate):
+                    return candidate
+                # Try flat layout under source_dir
+                candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
+                if os.path.exists(candidate):
+                    return candidate
 
-            if system_info.get("download_layout") == "source_based":
-                recursive_match = _find_file_recursive(source_dir, real_filename)
-                if recursive_match:
-                    return recursive_match
+                if system_info.get("download_layout") == "source_based":
+                    recursive_match = _find_file_recursive(source_dir, real_filename)
+                    if recursive_match:
+                        return recursive_match
         
         # REVERSE MAPPING: If not found, check if this extension is a transform output
         # E.g., requesting Game.hdv might actually be Game.2mg with two_mg transform
@@ -817,65 +844,66 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
     subpath = rel_parts[3:]
     if not subpath:
         # Return the directory path for the virtual directory itself (e.g., HDs -> Software/HDF)
-        for real_ext in real_exts:
-            dir_path = os.path.join(source_dir, real_ext)
-            if os.path.isdir(dir_path):
-                return dir_path
-        
-        # Fallback: if extension folder doesn't exist, try using map_name as folder name
-        # This handles semantic folder names like "Collections" when extension is "ZIP"
-        alt_dir_path = os.path.join(source_dir, map_name)
-        if os.path.isdir(alt_dir_path):
-            return alt_dir_path
-        
-        return None
-
-    last = subpath[-1]
-
-    # ========== FILE MODE ==========
-    # ZIPs are opaque files, never treated as containers
-    if zip_mode == "file":
-        # If the last component is a .zip, return the real zip path as a file
-        if last.lower().endswith('.zip'):
-            for real_ext in real_exts:
-                candidate = os.path.join(source_dir, real_ext, *subpath)
-                if os.path.isfile(candidate):
-                    return candidate
-        
-        # If the last component has no extension, treat as a virtual directory
-        if '.' not in last:
-            for real_ext in real_exts:
-                dir_path = os.path.join(source_dir, real_ext, *subpath)
-                if os.path.isdir(dir_path):
-                    return dir_path
-            return None
-
-        # Mapped filetype handling (regular files)
-        filename = subpath[-1]
-        name, virt_ext = os.path.splitext(filename)
-        virt_ext = virt_ext[1:].upper()
-        for real_ext in real_exts:
-            real_filename = f"{name}.{real_ext.lower()}"
-            real_path = os.path.join(source_dir, real_ext, *subpath[:-1], real_filename)
-            if os.path.exists(real_path):
-                return real_path
-        return None
-
-    # ========== HIERARCHICAL MODE (default) ==========
-    # ZIPs appear as navigable directories
-    if zip_mode == "hierarchical":
-        # Check if path contains a .zip component (navigating inside ZIP)
-        zip_path_parts = []
-        zip_internal_parts = []
-        found_zip = False
-        
-        for i, part in enumerate(subpath):
-            if not found_zip:
-                zip_path_parts.append(part)
-                if part.lower().endswith('.zip'):
-                    found_zip = True
-            else:
-                zip_internal_parts.append(part)
+        if transform_map and virt_ext:
+            for source_dir in source_dirs:
+                for source_ext, transform_specs in transform_map.items():
+                    # Check if this transform outputs the requested extension
+                    # Try to find a file with the source extension
+                    real_filename = f"{name}.{source_ext.lower()}"
+                    
+                    # Resolve extension directory case-insensitively
+                    ext_dir_name = source_ext
+                    for candidate_dir in (source_ext, source_ext.lower(), source_ext.upper()):
+                        if os.path.isdir(os.path.join(source_dir, candidate_dir)):
+                            ext_dir_name = candidate_dir
+                            break
+                    
+                    # Try extension subfolder
+                    candidate = os.path.join(source_dir, ext_dir_name, *subpath[:-1], real_filename)
+                    if os.path.exists(candidate):
+                        # Build transformation pipeline for this source file
+                        cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                        pipeline = get_transform_pipeline_for_file(
+                            logger,
+                            system_info,
+                            real_filename,
+                            map_name,
+                            cache_config,
+                            full_path=candidate,
+                        )
+                        if pipeline:
+                            return {'path': candidate, 'transform_pipeline': pipeline}
+                    
+                    # Try flat layout under source_dir
+                    candidate = os.path.join(source_dir, *subpath[:-1], real_filename)
+                    if os.path.exists(candidate):
+                        cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                        pipeline = get_transform_pipeline_for_file(
+                            logger,
+                            system_info,
+                            real_filename,
+                            map_name,
+                            cache_config,
+                            full_path=candidate,
+                        )
+                        if pipeline:
+                            return {'path': candidate, 'transform_pipeline': pipeline}
+                    
+                    # Recursive fallback for source_based layout
+                    if system_info.get("download_layout") == "source_based":
+                        recursive_match = _find_file_recursive(source_dir, real_filename)
+                        if recursive_match:
+                            cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                            pipeline = get_transform_pipeline_for_file(
+                                logger,
+                                system_info,
+                                real_filename,
+                                map_name,
+                                cache_config,
+                                full_path=recursive_match,
+                            )
+                            if pipeline:
+                                return {'path': recursive_match, 'transform_pipeline': pipeline}
         
         # If we found a .zip in the path and supports_zip is enabled
         if found_zip and supports_zip:
@@ -1074,36 +1102,49 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
 
     if "query" in mapdict:
         query_cfg = mapdict.get("query") or {}
-        source_dir = _adjust_source_dir_for_layout(query_cfg.get("source_dir", "Software"), system_info)
+        raw_source_dir = query_cfg.get("source_dir", "Software")
+        adjusted_source_dir = _adjust_source_dir_for_layout(raw_source_dir, system_info)
+        source_dirs = [adjusted_source_dir]
+        if raw_source_dir not in source_dirs:
+            source_dirs.append(raw_source_dir)
         preserve_structure = bool(query_cfg.get("preserve_structure", False))
-        base = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
-            "Native",
-            system_info['local_base_path'],
-            source_dir
-        )
+        bases = [
+            os.path.join(
+                config.get("filestore", "/mnt/filestorefs"),
+                "Native",
+                system_info['local_base_path'],
+                source_dir,
+            )
+            for source_dir in source_dirs
+        ]
         if not subpath:
             # Query map root is virtual; let FUSE handle it as directory
-            if os.path.isdir(base):
-                logger.debug(f"DEBUG: _get_regular_source_path returns None for query virtual dir (map root): {base}")
-                return None
+            for base in bases:
+                if os.path.isdir(base):
+                    logger.debug(
+                        f"DEBUG: _get_regular_source_path returns None for query virtual dir (map root): {base}"
+                    )
+                    return None
             return None
 
-        real_path = os.path.join(base, *subpath)
-        if os.path.exists(real_path):
-            logger.debug(f"DEBUG: _get_regular_source_path returns real path (query): {real_path}")
-            return real_path
+        for base in bases:
+            real_path = os.path.join(base, *subpath)
+            if os.path.exists(real_path):
+                logger.debug(f"DEBUG: _get_regular_source_path returns real path (query): {real_path}")
+                return real_path
 
-        # If query listing is flattened (preserve_structure=false), the virtual name may
-        # map to a file located in nested subdirectories under source_dir.
-        if not preserve_structure and subpath:
-            candidate_name = subpath[-1]
-            recursive_match = _find_file_recursive_indexed(base, candidate_name)
-            if recursive_match and os.path.exists(recursive_match):
-                logger.debug(f"DEBUG: _get_regular_source_path returns recursive query match: {recursive_match}")
-                return recursive_match
+            # If query listing is flattened (preserve_structure=false), the virtual name may
+            # map to a file located in nested subdirectories under source_dir.
+            if not preserve_structure and subpath:
+                candidate_name = subpath[-1]
+                recursive_match = _find_file_recursive_indexed(base, candidate_name)
+                if recursive_match and os.path.exists(recursive_match):
+                    logger.debug(f"DEBUG: _get_regular_source_path returns recursive query match: {recursive_match}")
+                    return recursive_match
 
-        logger.debug(f"DEBUG: _get_regular_source_path returns None for missing path (query): {real_path}")
+        logger.debug(
+            f"DEBUG: _get_regular_source_path returns None for missing path (query): {os.path.join(bases[0], *subpath)}"
+        )
         return None
     if "source_filename" in mapdict:
         base = os.path.join(
