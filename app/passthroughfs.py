@@ -138,10 +138,23 @@ class Passthrough(pyfuse3.Operations):
             # Clean up any open file descriptors before forgetting inode
             if inode in self._inode_fd_map:
                 log.warning(f"Closing open file descriptors for inode {inode} during forget")
-                fds_to_close = list(self._inode_fd_map[inode])
+                mapped_fds = self._inode_fd_map[inode]
+                if isinstance(mapped_fds, int):
+                    fds_to_close = [mapped_fds]
+                elif isinstance(mapped_fds, (list, tuple, set)):
+                    fds_to_close = list(mapped_fds)
+                else:
+                    log.warning(
+                        "Unexpected inode->fd mapping type for inode %s: %s",
+                        inode,
+                        type(mapped_fds).__name__,
+                    )
+                    fds_to_close = []
+
                 for fd in fds_to_close:
                     try:
                         os.close(fd)
+                        self._fd_inode_map.pop(fd, None)
                     except OSError as e:
                         log.warning(f"Error closing fd {fd} for inode {inode}: {e}")
                 del self._inode_fd_map[inode]

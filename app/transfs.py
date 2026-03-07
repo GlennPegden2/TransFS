@@ -7,6 +7,7 @@ This is the pyfuse3 version of TransFS with async operations and inode-based int
 
 import errno
 import logging
+import mmap
 import os
 import tempfile
 import time
@@ -94,8 +95,11 @@ class TransFS(Passthrough):
         self.mount_path = mount_path or root_path  # Store mount point for path mapping
         self._source_path_cache = {}  # Cache virtual_path -> source_path to avoid re-computation
         self._pending_utime = {}  # inode -> (atime_ns, mtime_ns) deferred for open fh
+        self._fd_open_meta = {}  # fd -> lifecycle metadata (opened_at, path, flags, source_kind)
         self._fd_path_map = {}  # fd -> real path for read diagnostics
         self._fd_read_stats = {}  # fd -> {'total': int, 'max_end': int}
+        self._fd_mmap = {}  # fd -> mmap object for memory-mapped file I/O
+        self._fd_file_size = {}  # fd -> file size for mmap boundary checking
         self._db_readdir_cache = {}  # path -> (timestamp, db_files)
         self._db_readdir_cache_ttl = 120.0  # seconds
         self._config_readdir_cache = {}  # path -> (timestamp, config_entries)
@@ -171,9 +175,72 @@ class TransFS(Passthrough):
         try:
             inode = self._fd_inode_map.get(fh)
             count = self._fd_open_count.get(fh)
-            logger.info("FH_STATE: %s fh=%s inode=%s open_count=%s", context, fh, inode, count)
+            meta = self._fd_open_meta.get(fh, {})
+            opened_at = meta.get("opened_at")
+            age = None
+            if opened_at is not None:
+                age = max(0.0, time.time() - opened_at)
+            logger.info(
+                "FH_STATE: %s fh=%s inode=%s open_count=%s source_kind=%s age=%.3fs path=%s",
+                context,
+                fh,
+                inode,
+                count,
+                meta.get("source_kind"),
+                age if age is not None else -1.0,
+                meta.get("path")
+            )
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("FH_STATE: failed to log state for fh=%s (%s)", fh, exc)
+
+    def _register_open_handle(self, fh: int, inode: InodeT, path: str, flags: int, source_kind: str) -> None:
+        """Register all internal state for a newly opened file handle."""
+        self._fd_inode_map[fh] = inode
+        self._inode_fd_map[inode] = fh
+        self._fd_open_count[fh] = 1
+        self._fd_path_map[fh] = path
+        self._fd_open_meta[fh] = {
+            "opened_at": time.time(),
+            "path": path,
+            "flags": flags,
+            "source_kind": source_kind,
+        }
+        self._fd_read_stats[fh] = {
+            "total": 0,
+            "max_end": 0,
+            "reads": 0,
+            "errors": 0,
+            "last_off": -1,
+            "last_size": 0,
+            "last_elapsed_ms": 0.0,
+        }
+        self._log_fh_state(fh, "open-registered")
+    
+    def _setup_mmap_if_applicable(self, fh: int, path: str) -> None:
+        """Setup memory-mapped I/O for large files if enabled."""
+        if not getattr(self, '_use_mmap', False):
+            return
+        
+        try:
+            # Get file size
+            stat_result = os.fstat(fh)
+            file_size = stat_result.st_size
+            
+            # Check if file meets threshold
+            threshold = getattr(self, '_mmap_threshold', 10485760)  # Default 10MB
+            if file_size < threshold:
+                logger.debug("MMAP: skipping fh=%s size=%d (below threshold %d)", fh, file_size, threshold)
+                return
+            
+            # Create read-only memory map
+            mmap_obj = mmap.mmap(fh, 0, access=mmap.ACCESS_READ)
+            self._fd_mmap[fh] = mmap_obj
+            self._fd_file_size[fh] = file_size
+            logger.info("MMAP: enabled for fh=%s size=%.2fMB path=%s", 
+                       fh, file_size / 1048576, path)
+        except Exception as e:
+            # Non-fatal - file can still be read via os.read()
+            logger.warning("MMAP: failed to create mmap for fh=%s: %s (falling back to os.read)", fh, e)
     
     def _is_database_mode_enabled(self) -> bool:
         """Check if database mode is enabled and adapter is available."""
@@ -2723,9 +2790,8 @@ class TransFS(Passthrough):
                     temp.close()
                     logger.debug("DEBUG: open temp file created at %s", temp.name)
                     fd = os.open(temp.name, flags)
-                    self._fd_inode_map[fd] = inode
-                    self._inode_fd_map[inode] = fd
-                    self._fd_open_count[fd] = 1
+                    self._register_open_handle(fd, inode, temp.name, flags, "zip-temp")
+                    logger.info("OPEN COMPLETE: inode=%s fh=%s kind=zip-temp elapsed=%.4fs", inode, fd, time.time() - t_start)
                     return pyfuse3.FileInfo(fh=fd)
             except FileNotFoundError:
                 logger.error("open: %s not in zip %s", internal_file, zip_path)
@@ -2770,9 +2836,8 @@ class TransFS(Passthrough):
                     
                     # Open temp file
                     fd = os.open(temp.name, flags)
-                    self._fd_inode_map[fd] = inode
-                    self._inode_fd_map[inode] = fd
-                    self._fd_open_count[fd] = 1
+                    self._register_open_handle(fd, inode, temp.name, flags, "transform-temp")
+                    logger.info("OPEN COMPLETE: inode=%s fh=%s kind=transform-temp elapsed=%.4fs", inode, fd, time.time() - t_start)
                     return pyfuse3.FileInfo(fh=fd)
             except Exception as e:
                 logger.error("open: error applying transform pipeline for %s: %s", source_path, e)
@@ -2792,14 +2857,12 @@ class TransFS(Passthrough):
                         raise FUSEError(errno.EACCES)
                     try:
                         fd = os.open(trans_path, flags, 0o644)
-                        self._fd_inode_map[fd] = inode
-                        self._inode_fd_map[inode] = fd
-                        self._fd_open_count[fd] = 1
+                        self._register_open_handle(fd, inode, trans_path, flags, "create")
 
                         parent_path = self._normalize_to_virtual_path(os.path.dirname(path))
                         self._lookup_parent_entries_cache.pop(parent_path, None)
 
-                        logger.info("OPEN: created new file, fd=%s", fd)
+                        logger.info("OPEN COMPLETE: inode=%s fh=%s kind=create elapsed=%.4fs", inode, fd, time.time() - t_start)
                         return pyfuse3.FileInfo(fh=fd)
                     except Exception as e:
                         logger.error("open: failed to create file %s: %s", trans_path, e)
@@ -2814,12 +2877,12 @@ class TransFS(Passthrough):
                 # Always open a new file descriptor - don't reuse
                 # (Reusing causes file position conflicts between multiple handles)
                 fd = os.open(trans_path, flags)
-                self._fd_inode_map[fd] = inode
-                self._inode_fd_map[inode] = fd
-                self._fd_open_count[fd] = 1
-                self._fd_path_map[fd] = trans_path
-                self._fd_read_stats[fd] = {"total": 0, "max_end": 0}
-                logger.info("OPEN: opened successfully, fd=%s", fd)
+                self._register_open_handle(fd, inode, trans_path, flags, "regular")
+                
+                # Setup memory-mapped I/O for large files if enabled
+                self._setup_mmap_if_applicable(fd, trans_path)
+                
+                logger.info("OPEN COMPLETE: inode=%s fh=%s kind=regular elapsed=%.4fs", inode, fd, time.time() - t_start)
                 return pyfuse3.FileInfo(fh=fd)
             except OSError as exc:
                 logger.error("OPEN: failed to open %s: %s", trans_path, exc)
@@ -2832,32 +2895,89 @@ class TransFS(Passthrough):
         """
         Read data from an open file.
         Uses trio thread offloading to avoid blocking the async event loop.
-        Includes hex dump diagnostics to analyze data patterns.
+        Supports optional memory-mapped I/O for large files to avoid os.read() chunking.
         """
-        logger.info("READ: fh=%s off=%s size=%s", fh, off, size)
+        t_start = time.time()
+        meta = self._fd_open_meta.get(fh)
+        if meta is None:
+            logger.warning("READ: fh=%s off=%s size=%s with missing open metadata", fh, off, size)
+        # Debug level logging to avoid log spam
+        logger.debug("READ: fh=%s off=%s size=%s", fh, off, size)
         try:
             # Use trio.to_thread.run_sync to offload blocking I/O to a thread
             def _do_read():
+                """
+                Read 'size' bytes from file handle at offset 'off'.
+                
+                If mmap is enabled and available for this fd, use memory-mapped I/O
+                which avoids the FUSE kernel driver's 65KB chunking limitation.
+                
+                Otherwise, uses a loop to handle short reads from os.read(), which can
+                legally return fewer bytes than requested without causing an error.
+                This is critical for large files accessed over SMB/CIFS.
+                """
+                # Try mmap first if available for this file descriptor
+                mmap_obj = self._fd_mmap.get(fh)
+                if mmap_obj is not None:
+                    file_size = self._fd_file_size.get(fh, 0)
+                    # Validate read bounds
+                    if off >= file_size:
+                        return b''  # EOF
+                    read_end = min(off + size, file_size)
+                    actual_size = read_end - off
+                    try:
+                        # Direct memory copy from mmap - fast!
+                        data = mmap_obj[off:read_end]
+                        return bytes(data)  # Convert memoryview to bytes
+                    except Exception as e:
+                        logger.warning(f"READ: mmap failed for fh={fh} off={off} size={size}: {e}, falling back to os.read()")
+                        # Fall through to os.read() approach
+                
+                # Standard os.read() with loop to handle short reads
                 os.lseek(fh, off, os.SEEK_SET)
-                return os.read(fh, size)
+                data = b''
+                remaining = size
+                read_iterations = 0
+                while remaining > 0:
+                    chunk = os.read(fh, remaining)
+                    read_iterations += 1
+                    if not chunk:  # EOF reached
+                        if remaining > 0 and meta:
+                            logger.warning(
+                                "READ SHORT: fh=%s off=%s requested=%d got=%d (EOF after %d iterations) path=%s",
+                                fh, off, size, len(data), read_iterations, meta.get("path", "")
+                            )
+                        break
+                    if len(chunk) < remaining:
+                        # Got a short read - only log at debug level to avoid log spam
+                        if read_iterations == 1:  # Log first occurrence only
+                            logger.debug(
+                                "READ PARTIAL: fh=%s iteration=%d requested=%d got=%d remaining=%d",
+                                fh, read_iterations, remaining, len(chunk), remaining - len(chunk)
+                            )
+                    data += chunk
+                    remaining -= len(chunk)
+                if read_iterations > 1:
+                    logger.debug(
+                        "READ COMPLETE: fh=%s off=%s size=%d completed in %d iterations",
+                        fh, off, size, read_iterations
+                    )
+                return data
 
             data = await trio.to_thread.run_sync(_do_read)
-            logger.info("READ: fh=%s off=%s size=%s -> %d bytes", fh, off, size, len(data))
-            
-            # Hex dump diagnostics for first and last 64 bytes
-            if len(data) >= 128:
-                first_64 = data[:64]
-                last_64 = data[-64:]
-                logger.debug(f"READ HEX FIRST 64: {first_64.hex()}")
-                logger.debug(f"READ HEX LAST 64: {last_64.hex()}")
-            elif len(data) > 0:
-                logger.debug(f"READ HEX (full {len(data)} bytes): {data.hex()}")
+            elapsed_ms = (time.time() - t_start) * 1000.0
+            # Only log at debug level unless it's slow
+            logger.debug("READ: fh=%s off=%s size=%s -> %d bytes (%.2fms)", fh, off, size, len(data), elapsed_ms)
             
             # Track read stats for diagnostics
             try:
                 stats = self._fd_read_stats.get(fh)
                 if stats is not None:
                     stats["total"] += len(data)
+                    stats["reads"] += 1
+                    stats["last_off"] = off
+                    stats["last_size"] = size
+                    stats["last_elapsed_ms"] = elapsed_ms
                     end = off + len(data)
                     if end > stats["max_end"]:
                         stats["max_end"] = end
@@ -2869,25 +2989,22 @@ class TransFS(Passthrough):
                         )
             except Exception:
                 pass
-            return data
-            # Track read stats for diagnostics
-            try:
-                stats = self._fd_read_stats.get(fh)
-                if stats is not None:
-                    stats["total"] += len(data)
-                    end = off + len(data)
-                    if end > stats["max_end"]:
-                        stats["max_end"] = end
-                    path = self._fd_path_map.get(fh, "")
-                    if path.endswith("/Acorn/Atom/Software/VHD/hoglet67.vhd"):
-                        logger.info(
-                            "READ_STATS: fh=%s total=%d max_end=%d path=%s",
-                            fh, stats["total"], stats["max_end"], path
-                        )
-            except Exception:
-                pass
+
+            if elapsed_ms > 250:
+                path = self._fd_path_map.get(fh)
+                logger.warning(
+                    "READ SLOW: fh=%s off=%s size=%s elapsed=%.2fms path=%s",
+                    fh,
+                    off,
+                    size,
+                    elapsed_ms,
+                    path,
+                )
             return data
         except OSError as exc:
+            stats = self._fd_read_stats.get(fh)
+            if stats is not None:
+                stats["errors"] += 1
             logger.error("READ: failed fh=%s off=%s size=%s: %s", fh, off, size, exc)
             raise FUSEError(exc.errno if exc.errno else errno.EIO)
 
@@ -2932,6 +3049,8 @@ class TransFS(Passthrough):
 
             self._fd_open_count.pop(fh, None)
             inode = self._fd_inode_map.pop(fh, None)
+            stats = self._fd_read_stats.get(fh, {})
+            meta = self._fd_open_meta.get(fh, {})
 
             if inode is not None:
                 # Only clear inode->fd mapping if it still points at this fh.
@@ -2941,6 +3060,17 @@ class TransFS(Passthrough):
 
             self._fd_path_map.pop(fh, None)
             self._fd_read_stats.pop(fh, None)
+            self._fd_open_meta.pop(fh, None)
+            
+            # Cleanup memory-mapped I/O if it was used
+            mmap_obj = self._fd_mmap.pop(fh, None)
+            if mmap_obj is not None:
+                try:
+                    mmap_obj.close()
+                    logger.debug("RELEASE: closed mmap for fh=%s", fh)
+                except Exception as e:
+                    logger.warning("RELEASE: failed to close mmap for fh=%s: %s", fh, e)
+            self._fd_file_size.pop(fh, None)
 
             pending_times = self._pending_utime.get(inode) if inode is not None else None
             has_other_fhs_for_inode = False
@@ -2975,7 +3105,21 @@ class TransFS(Passthrough):
                     return
                 raise
 
-            logger.info("RELEASE: fh=%s closed successfully", fh)
+            open_age = None
+            if meta.get("opened_at") is not None:
+                open_age = max(0.0, time.time() - meta["opened_at"])
+
+            logger.info(
+                "RELEASE: fh=%s closed successfully (inode=%s kind=%s lifetime=%.3fs reads=%s total=%s max_end=%s errors=%s)",
+                fh,
+                inode,
+                meta.get("source_kind"),
+                open_age if open_age is not None else -1.0,
+                stats.get("reads"),
+                stats.get("total"),
+                stats.get("max_end"),
+                stats.get("errors"),
+            )
             self._log_fh_state(fh, "release-closed")
         except OSError as exc:
             logger.error("RELEASE: failed fh=%s: %s", fh, exc)
@@ -3407,6 +3551,17 @@ async def main_async(mount_path: str, root_path: str):
     # Initialize cache configuration from app.yaml
     app_config = read_app_config()
     cache_config = app_config.get('cache', {})
+    perf_config = app_config.get('performance', {})
+    
+    # Performance tuning settings
+    use_mmap = perf_config.get('use_mmap_for_reads', False)
+    mmap_threshold = perf_config.get('mmap_threshold_bytes', 10485760)  # 10MB default
+    logger.info(f"Performance: use_mmap={use_mmap}, threshold={mmap_threshold / 1048576:.1f}MB")
+    
+    # Create TransFS instance with performance settings
+    fs = TransFS(root_path, mount_path)
+    fs._use_mmap = use_mmap
+    fs._mmap_threshold = mmap_threshold
     set_cache_config(cache_config)
     
     # Pre-warm hot paths BEFORE mounting filesystem
@@ -3432,6 +3587,10 @@ async def main_async(mount_path: str, root_path: str):
     fuse_options.add('allow_other')
     fuse_options.discard('default_permissions')
     fuse_options.discard('ro')  # Ensure read-only is not set
+    
+    # NOTE: pyfuse3 doesn't support direct_io, auto_cache, timeout, or max_read options via mount options
+    # max_read must be set via pyfuse3.init() max_read parameter instead
+    # SMB stability will rely on Samba keepalive settings instead
 
     logger.info(f"Mounting TransFS at {mount_path} with root {root_path}")
     logger.info(f"FUSE options: {fuse_options}")

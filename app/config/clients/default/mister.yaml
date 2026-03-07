@@ -15,6 +15,7 @@ systems:
       - boot.vhd:
           file:
             path: Software/VHD/hoglet67.vhd
+            supports_zaparoo: true
       - HDs:
           query:
             source_dir: Software

@@ -27,3 +27,15 @@
  We have a suite of pytests that run inside the docker container,  Tests are organized in the `tests/` directory, and we have documentation in `tests/docs/` to help with testing guidelines and best practices. Unless specifically instructed you should never change the test to make it pass. 
 
  The user can also run tests from the UI.
+
+#ARCHITECTURE
+
+ The following is alist of ststements we have designed into the app, so should be considered as part of the architecture and design of the app. You should not suggest changes to these statements, but you can refer to them when providing assistance.  
+
+ - The concept is download one, reuse everywhere. We want to be able to download conten from various sources, store it in the Natice directory and present it in many different form via the virtual FUSE FS. 
+
+ - The aims is to support as wide a range of clents as possible, so changes to be made to clients is something to be avoided.
+
+ - The "Browse Virtual" tab in the Web UI is supposed to give an accurate resentation of the FUSE filsyetem, so attempts to bypass the FUSE layer should be avoided even if they are more performant.
+
+ 

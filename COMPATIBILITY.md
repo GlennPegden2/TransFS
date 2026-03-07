@@ -4,16 +4,16 @@ This table tracks which systems are supported on which emulator platforms, along
 
 | System             | MiSTer | Mame | RetroPie | RetroBat | Zaparoo Launch | Notes |
 |--------------------|--------|------|----------|----------|-------|
-| Acorn Archimedes   | ✅ ADF, HDF |   |          |          | ❌        | Mister: See notes on how to configure HDs on the archie, they wont boot without cmos config      |
-| Acorn Atom         | ✅ VHD      |   |          | ✅ UEF, DSK          | ✅         | Shift F10 to load |
+| Acorn Archimedes   | ✅ ADF, HDF |   |          |          | ❌        | Mister: HDs require CMOS config to boot; real-world validation reconfirmed March 2026 |
+| Acorn Atom         | ✅ VHD      | ✅ UEF, DSK  |          | ✅ UEF, DSK          | ✅         | Shift F10 to autoload |
 | Acorn BBC Micro    | ✅ VHD, MMB |   |          |          | ✅         |       |
 | Acorn Electron     | ✅ VHD, MMB, UEF | |      |          | ✅         |       |
 | Amstrad CPC        | ✅ DSK, CTD, Exx, ROM      |   |          |          | ✅         | MiSTer takes ages to boot, partly because it looks for 255 files tht normally won't exist |
 | Amstrad PCW        | ✅ DSK      |   |          |          |       | ✅         |
 | Apple I           |            |   |          |          |       |          |
-| Apple II           |  ✅ DSK, PO, DO, HDV, 2MG (via transform to HDV          |   |          |          |  ✅ (except HDVs)     | Self boot HDVs need a soft reset to boot. Many images don't seem to work for some reasons         |
+| Apple II           |  ✅ DSK, PO, DO, HDV, 2MG (via transform to HDV)          |   |          |          |  ✅ (except HDVs)     | Self boot HDVs need a soft reset to boot. Many images don't seem to work for some reasons         |
 | Atari 2600         |            |   |          |          |       |          |
-| Atari 5200         |            |   |          |          |       |          |
+| Atari 5200         | ✅ (core validation) |   |          |          |       | Real-world MiSTer core validation completed March 2026 |
 | Atari 7800         |            |   |          |          |       |          |
 | Atari 800          |            |   |          |          |       |          |
 | Atari Lynx         |            |   |          |          |       |          |

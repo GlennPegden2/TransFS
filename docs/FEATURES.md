@@ -119,6 +119,20 @@
 
 ---
 
+### 12. Large-File Read Performance (SMB/FUSE)
+
+- TransFS now supports configurable memory-mapped reads for large files to improve SMB/CIFS performance without bypassing the virtual FUSE layer.
+- Configuration keys in `app/config/app.yaml`:
+  - `performance.use_mmap_for_reads` (default `true`)
+  - `performance.mmap_threshold_bytes` (default `10485760`, i.e. 10MB)
+- Read path behavior:
+  - Files above threshold use mmap-backed reads.
+  - Small files and mmap failures automatically fall back to the safe `os.read()` loop path.
+- This keeps the architecture principle intact: download once, present through many virtual layouts.
+- Real-world validation completed on MiSTer cores: Acorn Atom, Acorn Archimedes, and Atari 5200.
+
+---
+
 ### 12. Database-Only Architecture (Query Maps)
 
 **Overview**: For query map directories (maps defined with `query` configuration), TransFS uses an optimized database-driven file access path that completely bypasses expensive filesystem scanning.

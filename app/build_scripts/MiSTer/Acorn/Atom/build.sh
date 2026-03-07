@@ -4,24 +4,48 @@ set -e
 echo "Build Script for Acorn Atom"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Acorn/Atom/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Acorn/Atom}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"
 
-# Find the already-extracted software directory
-SOFTWARE_SOURCE="$SOFTWARE_DIR/Software/Sources/hoglet67"
-if [[ ! -d "$SOFTWARE_SOURCE" ]]; then
-    echo "Software source directory not found: $SOFTWARE_SOURCE"
+# Resolve software source directory (supports both legacy and source_based layouts)
+SOFTWARE_SOURCE=""
+for candidate in \
+    "$SOFTWARE_DIR/Software/Sources/hoglet67" \
+    "$SOFTWARE_DIR/Software/hoglet67"; do
+    if [[ -d "$candidate" ]]; then
+        SOFTWARE_SOURCE="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$SOFTWARE_SOURCE" ]]; then
+    echo "Software source directory not found. Checked:"
+    echo "  - $SOFTWARE_DIR/Software/Sources/hoglet67"
+    echo "  - $SOFTWARE_DIR/Software/hoglet67"
     exit 1
 fi
 
 echo "Found software source: $SOFTWARE_SOURCE"
 
-# Find the blank.vhd (already extracted)
-BLANK_VHD=$(find "$SOFTWARE_DIR/Software/Sources/blankvhd" -type f -name "*.vhd" | head -n 1)
+# Resolve blank VHD source (supports both legacy and source_based layouts)
+BLANK_VHD=""
+for candidate in \
+    "$SOFTWARE_DIR/Software/Sources/blankvhd/blank.vhd" \
+    "$SOFTWARE_DIR/Software/blankvhd/blank.vhd"; do
+    if [[ -f "$candidate" ]]; then
+        BLANK_VHD="$candidate"
+        break
+    fi
+done
+
 if [[ -z "$BLANK_VHD" ]]; then
-    echo "No .vhd file found in $SOFTWARE_DIR/Software/Sources/blankvhd"
+    BLANK_VHD=$(find "$SOFTWARE_DIR/Software" -type f -name "blank*.vhd" | sort | head -n 1)
+fi
+
+if [[ -z "$BLANK_VHD" || ! -f "$BLANK_VHD" ]]; then
+    echo "No blank VHD found under $SOFTWARE_DIR/Software"
     exit 1
 fi
 
@@ -43,6 +67,20 @@ PARTITION="/dev/sda1"
 guestfish --rw -a "$WORK_VHD" -m "$PARTITION" <<EOF
 copy-in "$SOFTWARE_SOURCE/." /
 EOF
+
+# Sanity-check key boot files exist in the generated image
+if ! guestfish --ro -a "$WORK_VHD" -m "$PARTITION" is-file /MENU >/dev/null 2>&1; then
+    echo "Generated VHD is missing /MENU - aborting"
+    exit 1
+fi
+if ! guestfish --ro -a "$WORK_VHD" -m "$PARTITION" is-file /SPLASH1 >/dev/null 2>&1; then
+    echo "Generated VHD is missing /SPLASH1 - aborting"
+    exit 1
+fi
+if ! guestfish --ro -a "$WORK_VHD" -m "$PARTITION" is-file /SPLASH2 >/dev/null 2>&1; then
+    echo "Generated VHD is missing /SPLASH2 - aborting"
+    exit 1
+fi
 
 # Move the updated VHD to Software/VHD directory
 mkdir -p "$SOFTWARE_DIR/Software/VHD"
