@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **SMB test hang after full suite run**: When running the full foundation test suite, SMB tests (`TestSmbFoundation`) hang after other tests complete. Individual SMB tests run successfully. **Workaround**: Run non-SMB foundation tests with `pytest tests/test_foundation.py -m "not slow"`, or run SMB tests separately. Root cause appears to be lingering state in Samba/FUSE after write-cleanup operations.
 
 ### Fixed
+- **Virtual browser metadata info error**: Fixed `/file-metadata` endpoint failures caused by dict-style DB rows being unpacked as tuples (`"invalid input syntax for type integer: 'file_id'"`). Endpoint now supports both dict and tuple row formats and includes case-insensitive path lookup fallback for virtual path casing differences.
 - **File metadata API import error**: Fixed missing `get_cursor` import in `/file-metadata` endpoint that caused "Database query failed: name 'get_cursor' is not defined" error when clicking [i] button in virtual browser.
 - **YAML null handling in virtual directory detection**: Fixed crash when YAML config has `maps:` set to null/empty. Code now uses `.get('maps') or []` pattern to handle None values returned from YAML parsing.
 - **SMB test connection state management**: Added session cleanup before attempting new SMB connections to prevent state leakage between test runs.

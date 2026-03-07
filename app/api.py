@@ -1917,13 +1917,26 @@ def file_metadata(path: str):
                 
                 file_row = cursor.fetchone()
                 if not file_row:
+                    # Case-insensitive fallback for clients/category casing differences
+                    # (e.g., MAME vs Mame, ROMS vs ROMs)
+                    cursor.execute("""
+                        SELECT f.file_id, f.filename, f.extension, f.size, f.mtime, f.is_archive, f.content_type, vm.display_name, f.source_path, f.created_at, f.updated_at
+                        FROM files f
+                        JOIN virtual_mappings vm ON f.file_id = vm.file_id
+                        WHERE lower(vm.virtual_path) = lower(%s)
+                        LIMIT 1
+                    """, (path,))
+                    file_row = cursor.fetchone()
+
+                if not file_row:
                     # Fallback: try direct source_path or legacy virtual_path lookup
                     cursor.execute("""
                         SELECT file_id, filename, extension, size, mtime, is_archive, content_type, filename as display_name, source_path, created_at, updated_at
                         FROM files
                         WHERE source_path = %s OR virtual_path = %s
+                           OR lower(source_path) = lower(%s) OR lower(virtual_path) = lower(%s)
                         LIMIT 1
-                    """, (db_path_lookup, path))
+                    """, (db_path_lookup, path, db_path_lookup, path))
                     file_row = cursor.fetchone()
 
                 if not file_row:
@@ -1956,13 +1969,93 @@ def file_metadata(path: str):
                         file_row = None
 
                 if not file_row:
-                    return {
-                        "error": "File not found in metadata database",
-                        "hint": "Run Update DB to sync metadata for this file",
-                        "path": path,
-                    }
+                    # Graceful fallback: provide basic metadata from filename/path so
+                    # virtual browser info panel remains usable even before DB sync.
+                    try:
+                        from metadata.parser import parse_filename
+
+                        filename = Path(path).name
+                        parsed = parse_filename(filename)
+
+                        fallback_metadata = {
+                            "title": parsed.title,
+                            "region": parsed.region,
+                            "language": parsed.language,
+                            "version": parsed.version,
+                            "year": parsed.year,
+                            "publisher": parsed.publisher,
+                            "is_prototype": parsed.is_prototype,
+                            "is_homebrew": parsed.is_homebrew,
+                            "is_translation": parsed.is_translation,
+                            "is_hack": parsed.is_hack,
+                            "is_demo": parsed.is_demo,
+                            "is_beta": parsed.is_beta,
+                            "is_sample": parsed.is_sample,
+                            "tags": parsed.tags,
+                        }
+
+                        # Try to resolve actual source path for size/mtime when possible
+                        resolved_source_path = None
+                        resolved_size = None
+                        resolved_mtime = None
+                        try:
+                            from sourcepath import get_source_path
+
+                            logger = logging.getLogger("api")
+                            source_path = get_source_path(logger, config, "/mnt/transfs", path)
+                            if isinstance(source_path, str):
+                                resolved_source_path = source_path
+                            elif isinstance(source_path, tuple):
+                                zip_path, internal_path = source_path
+                                resolved_source_path = f"{zip_path}/{internal_path}"
+                            elif isinstance(source_path, dict) and "path" in source_path:
+                                resolved_source_path = source_path["path"]
+
+                            if isinstance(source_path, str) and os.path.exists(source_path):
+                                stat_result = os.stat(source_path)
+                                resolved_size = stat_result.st_size
+                                resolved_mtime = int(stat_result.st_mtime)
+                        except Exception:
+                            pass
+
+                        return {
+                            "file_id": None,
+                            "filename": filename,
+                            "display_name": filename,
+                            "extension": Path(filename).suffix.lstrip('.'),
+                            "size": resolved_size,
+                            "mtime": resolved_mtime,
+                            "created_at": None,
+                            "updated_at": None,
+                            "is_archive": False,
+                            "content_type": None,
+                            "source_path": resolved_source_path,
+                            "metadata": {k: v for k, v in fallback_metadata.items() if v is not None},
+                            "metadata_source": "filename_fallback",
+                            "warning": "Metadata not found in database; showing filename-derived metadata",
+                            "hint": "Run Update DB to sync full metadata for this file",
+                        }
+                    except Exception:
+                        return {
+                            "error": "File not found in metadata database",
+                            "hint": "Run Update DB to sync metadata for this file",
+                            "path": path,
+                        }
                 
-                file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path, created_at, updated_at = file_row
+                if isinstance(file_row, dict):
+                    file_id = file_row.get("file_id")
+                    filename = file_row.get("filename")
+                    extension = file_row.get("extension")
+                    size = file_row.get("size")
+                    mtime = file_row.get("mtime")
+                    is_archive = file_row.get("is_archive")
+                    content_type = file_row.get("content_type")
+                    display_name = file_row.get("display_name")
+                    source_path = file_row.get("source_path")
+                    created_at = file_row.get("created_at")
+                    updated_at = file_row.get("updated_at")
+                else:
+                    file_id, filename, extension, size, mtime, is_archive, content_type, display_name, source_path, created_at, updated_at = file_row
                 
                 # Get normalized metadata with joins to get actual lookup table values
                 cursor.execute("""
@@ -2017,8 +2110,21 @@ def file_metadata(path: str):
                 
                 # Prefer normalized metadata (with joins) as primary source
                 if normalized_row:
-                    (media_type, region, language, publisher, release_year, release_date,
-                     release_precision, rom_size, is_revision, is_prototype, is_homebrew) = normalized_row
+                    if isinstance(normalized_row, dict):
+                        media_type = normalized_row.get("media_type")
+                        region = normalized_row.get("region")
+                        language = normalized_row.get("language")
+                        publisher = normalized_row.get("publisher")
+                        release_year = normalized_row.get("release_year")
+                        release_date = normalized_row.get("release_date")
+                        release_precision = normalized_row.get("release_precision")
+                        rom_size = normalized_row.get("rom_size")
+                        is_revision = normalized_row.get("is_revision")
+                        is_prototype = normalized_row.get("is_prototype")
+                        is_homebrew = normalized_row.get("is_homebrew")
+                    else:
+                        (media_type, region, language, publisher, release_year, release_date,
+                         release_precision, rom_size, is_revision, is_prototype, is_homebrew) = normalized_row
                     
                     response["metadata"] = {
                         "media_type": media_type,
@@ -2036,9 +2142,27 @@ def file_metadata(path: str):
                 
                 # Add extended metadata if available (will overwrite normalized if both exist)
                 if meta_row:
-                    (genre, subgenre, language, region, year, publisher, developer,
-                     rating, play_count, last_played, is_prototype, is_homebrew,
-                     is_translation, is_hack, tags, raw_metadata) = meta_row
+                    if isinstance(meta_row, dict):
+                        genre = meta_row.get("genre")
+                        subgenre = meta_row.get("subgenre")
+                        language = meta_row.get("language")
+                        region = meta_row.get("region")
+                        year = meta_row.get("year")
+                        publisher = meta_row.get("publisher")
+                        developer = meta_row.get("developer")
+                        rating = meta_row.get("rating")
+                        play_count = meta_row.get("play_count")
+                        last_played = meta_row.get("last_played")
+                        is_prototype = meta_row.get("is_prototype")
+                        is_homebrew = meta_row.get("is_homebrew")
+                        is_translation = meta_row.get("is_translation")
+                        is_hack = meta_row.get("is_hack")
+                        tags = meta_row.get("tags")
+                        raw_metadata = meta_row.get("raw_metadata")
+                    else:
+                        (genre, subgenre, language, region, year, publisher, developer,
+                         rating, play_count, last_played, is_prototype, is_homebrew,
+                         is_translation, is_hack, tags, raw_metadata) = meta_row
                     
                     extended = {
                         "genre": genre,
