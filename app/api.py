@@ -415,7 +415,9 @@ def api_source_paths(path: str):
         from pathutils import get_client, get_system_info
         
         logger = logging.getLogger("api")
-        config = read_config()
+        config = read_clients_config()
+        if not isinstance(config, dict) or 'clients' not in config:
+            config = read_config()
         
         # Only allow virtual paths
         if not path.startswith("/mnt/transfs"):
@@ -500,13 +502,19 @@ def api_browse_directory(path: str):
     path = os.path.normpath(path)
     print(f"[BROWSE] validation done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
-    if not os.path.exists(path):
-        return {"error": "Path does not exist"}
-    print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
-    
-    if not os.path.isdir(path):
-        return {"error": "Path is not a directory"}
-    print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    # For virtual paths, avoid expensive FUSE exists/isdir checks.
+    # We'll validate via parse_trans_path below.
+    is_virtual_path_request = path.startswith("/mnt/transfs")
+    if not is_virtual_path_request:
+        if not os.path.exists(path):
+            return {"error": "Path does not exist"}
+        print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+        
+        if not os.path.isdir(path):
+            return {"error": "Path is not a directory"}
+        print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    else:
+        print(f"[BROWSE] virtual path - skipped exists/isdir checks, elapsed={time.time()-start_time:.4f}s", flush=True)
     
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
@@ -592,7 +600,58 @@ def api_browse_directory(path: str):
                 logger = logging.getLogger("api")
                 logger.error("zippath.listdir_with_info failed: %s", e, exc_info=True)
         
-        # Standard method for non-ZIP paths
+        # Fast virtual path listing (bypass FUSE mount for non-zip virtual paths)
+        if path.startswith("/mnt/transfs") and not (".zip/" in path or ".zip\\" in path):
+            from dirlisting import parse_trans_path
+            from pathutils import is_virtual_path
+
+            if 'config' not in locals():
+                config = read_config()
+
+            virtual_entries = None
+
+            # Super-fast path for system root: /mnt/transfs/<client>/<system>
+            # Build entries directly from map config instead of full parse_trans_path.
+            try:
+                from pathutils import normalize_map_name
+
+                if 'rel_parts' in locals() and len(rel_parts) == 2 and 'system' in locals() and system:
+                    direct_entries = []
+                    for map_entry in (system.get('maps') or []):
+                        map_name = list(map_entry.keys())[0]
+                        if map_name == "...SoftwareArchives...":
+                            continue
+                        map_display = normalize_map_name(map_name)
+                        if not map_display or map_display == '.':
+                            continue
+                        # For nested maps like "FDs/bios/atom.zip", expose top-level "FDs"
+                        top_level = map_display.split('/')[0]
+                        if top_level and top_level not in direct_entries:
+                            direct_entries.append(top_level)
+
+                    if direct_entries:
+                        virtual_entries = direct_entries
+            except Exception:
+                virtual_entries = None
+
+            if virtual_entries is None:
+                virtual_entries = list(parse_trans_path(config, "/mnt/transfs", path))
+            print(f"[BROWSE] virtual fast listing done, entries={len(virtual_entries)}, elapsed={time.time()-start_time:.4f}s", flush=True)
+
+            entries = []
+            for entry_name in virtual_entries:
+                entry_path = os.path.join(path, entry_name)
+                is_dir = is_virtual_path(config, "/mnt/transfs", entry_path)
+                entries.append({
+                    "name": entry_name,
+                    "type": "directory" if is_dir else "file",
+                    "size": None,
+                    "supports_zaparoo": supports_zaparoo
+                })
+
+            return {"path": path, "entries": entries}
+
+        # Standard method for non-ZIP, non-virtual-fast paths
         entries = []
         entry_count = 0
         entry_list = list(os.scandir(path))
