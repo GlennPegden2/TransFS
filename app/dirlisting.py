@@ -666,21 +666,12 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     if not client:
         return []
     
-    # First try database-driven discovery (works with category paths)
-    mount_path = config.get('mount_path', '/mnt/transfs')
+    # Try to find system using flexible search
     rel_path_parts = path.parts[len(root_parts):]
-    rel_path = '/'.join(rel_path_parts)
-    db_maps = _get_subdirectories_from_db(mount_path, rel_path)
-    
-    # If database returns results, use them
-    if db_maps:
-        logger.debug(f"list_maps: Using database-discovered maps for {rel_path}: {db_maps}")
-        return db_maps
-    
-    # Fallback: Try to find system using flexible search
     system_info = get_system_info(client, rel_path_parts)
     if not system_info:
         # Not found - might be at a different level, return empty
+        rel_path = '/'.join(rel_path_parts)
         logger.debug(f"list_maps: No system found for {rel_path}")
         return []
     
@@ -697,6 +688,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
         if source_dir:
             excluded_dirs.add(source_dir)
 
+    # First: Add all configured maps (FILE maps, QUERY maps, etc.)
     for map_entry in (system.get('maps') or []):
         map_name = list(map_entry.keys())[0]
         
@@ -728,6 +720,18 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     # Add virtual directories
     maps.extend(virtual_dirs)
     # Don't add implicit real files/dirs - only show explicitly mapped items
+    
+    # Second: Merge database-discovered entries (from QUERY maps that populate the DB)
+    # This adds entries found in the database that might not be in the config
+    mount_path = config.get('mount_path', '/mnt/transfs')
+    rel_path = '/'.join(rel_path_parts)
+    db_maps = _get_subdirectories_from_db(mount_path, rel_path)
+    if db_maps:
+        logger.debug(f"list_maps: Merging database-discovered maps for {rel_path}: {db_maps}")
+        for db_entry in db_maps:
+            if db_entry not in mapped_names:
+                maps.append(db_entry)
+                mapped_names.add(db_entry)
     
     # Handle flattened maps (.) - merge their contents directly into this listing
     flatten_map_entry = next((m for m in (system.get('maps') or []) if list(m.keys())[0] == '.'), None)
