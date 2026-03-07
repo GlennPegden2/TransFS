@@ -2000,8 +2000,54 @@
                         });
                     }
                     
+                    // Add copy-to-clipboard button
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'copy-btn';
+                    copyBtn.textContent = '📋';
+                    copyBtn.title = 'Copy path to clipboard';
+                    copyBtn.style.padding = '0';
+                    copyBtn.style.marginLeft = '0';
+                    copyBtn.style.background = 'transparent';
+                    copyBtn.style.border = 'none';
+                    copyBtn.style.cursor = 'pointer';
+                    copyBtn.style.display = 'flex';
+                    copyBtn.style.alignItems = 'center';
+                    copyBtn.style.justifyContent = 'center';
+                    copyBtn.style.width = '35px';
+                    copyBtn.style.height = '35px';
+                    copyBtn.style.fontSize = '1.4em';
+                    copyBtn.style.lineHeight = '1';
+                    copyBtn.style.transition = 'opacity 0.2s';
+                    copyBtn.style.opacity = '0.7';
+                    
+                    copyBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        try {
+                            await navigator.clipboard.writeText(fullPath);
+                            copyBtn.textContent = '✓';
+                            copyBtn.style.opacity = '1';
+                            showToast('Path copied to clipboard', 'success', 2000);
+                            setTimeout(() => {
+                                copyBtn.textContent = '📋';
+                                copyBtn.style.opacity = '0.7';
+                            }, 1500);
+                        } catch (err) {
+                            showToast('Failed to copy to clipboard', 'error', 3000);
+                        }
+                    });
+                    
+                    copyBtn.addEventListener('mouseover', () => {
+                        copyBtn.style.opacity = '1';
+                    });
+                    copyBtn.addEventListener('mouseout', () => {
+                        if (copyBtn.textContent === '📋') {
+                            copyBtn.style.opacity = '0.7';
+                        }
+                    });
+                    
                     if (launchBtn) buttonContainer.appendChild(launchBtn);
                     if (infoBtn) buttonContainer.appendChild(infoBtn);
+                    buttonContainer.appendChild(copyBtn);
                     
                     if (metadataPanel && fileDiv) {
                         // Insert metadata panel after the file item div

@@ -18,6 +18,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **SMB test connection state management**: Added session cleanup before attempting new SMB connections to prevent state leakage between test runs.
 
 ### Added
+- **Virtual browser copy-to-clipboard button**: Added 📋 button next to [i] info and Zaparoo launch buttons in the virtual browser to copy file paths to clipboard
+  - Copies full virtual path (e.g., `/mnt/transfs/MiSTer/AcornAtom/boot.vhd`)
+  - Shows success toast notification and briefly displays ✓ checkmark on button
+  - Uses modern Clipboard API with fallback error handling
 - **Browse Native "Sync contents" action**: Added a button in the Browse Native tab to trigger database sync for the current native folder path directly from the UI.
 - **SMB-layer foundation tests**: Added `TestSmbFoundation` class in `tests/test_foundation.py` with two comprehensive SMB protocol tests
   - `test_smb_write_read_delete_roundtrip`: End-to-end write/read/delete validation over SMB share
