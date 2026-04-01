@@ -690,30 +690,43 @@ class TransFS(Passthrough):
         Returns tuple (client_name, system_name, map_name) or None.
         
         Example: /mnt/transfs/MiSTer/Apple-II/FDs -> ('MiSTer', 'Apple-II', 'FDs')
-        
-        Only applies to top-level map directories, not subdirectories.
-        E.g., /FDs/ -> returns info, but /FDs/bios/ -> returns None
+        Also supports category paths like /mnt/transfs/RetroBat/ROMS/3DO/CDs.
         """
         try:
             rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
             if len(rel_parts) < 3:
                 return None
             
-            # Only handle top-level map directories, not nested subdirectories
-            # This prevents database-only mode from applying to virtual nested directories
-            if len(rel_parts) > 3:
-                logger.debug(f"_extract_map_info: path has {len(rel_parts)} parts, skipping (nested subdirectory)")
-                return None
-            
             client_name = rel_parts[0]
-            system_name = rel_parts[1]
-            map_name = rel_parts[2]
             
             # Verify this is a valid client/system/map
             client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if not client_config:
                 logger.debug(f"_extract_map_info: client {client_name} not found")
                 return None
+
+            # Resolve system segment for both non-category and category paths.
+            # Non-category: /<client>/<system>/<map>
+            # Category: /<client>/<category>/<system>/<map>
+            from pathutils import resolve_system_name
+            system_idx = None
+            system_name = None
+            for idx, part in enumerate(rel_parts[1:], start=1):
+                resolved = resolve_system_name(client_config, part)
+                if resolved:
+                    system_idx = idx
+                    system_name = resolved
+                    break
+
+            if system_idx is None or system_name is None:
+                logger.debug(f"_extract_map_info: system not found in path {rel_parts}")
+                return None
+
+            map_idx = system_idx + 1
+            if len(rel_parts) <= map_idx:
+                return None
+
+            map_name = rel_parts[map_idx]
             
             system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
             if not system_info:
@@ -846,7 +859,11 @@ class TransFS(Passthrough):
                     
                     # Determine current subpath for preserve_structure mode
                     rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
-                    subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                    try:
+                        map_idx = rel_parts.index(map_name)
+                        subpath_parts = rel_parts[map_idx + 1:] if len(rel_parts) > map_idx + 1 else []
+                    except ValueError:
+                        subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
                     current_subpath = '/'.join(subpath_parts)
                     
                     # Build full directory path to scan
@@ -905,7 +922,11 @@ class TransFS(Passthrough):
 
                 # Determine which subpath inside the map we're listing
                 rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
-                subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                try:
+                    map_idx = rel_parts.index(map_name)
+                    subpath_parts = rel_parts[map_idx + 1:] if len(rel_parts) > map_idx + 1 else []
+                except ValueError:
+                    subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
                 subpath = '/'.join(subpath_parts)
 
                 entries_map = {}  # name -> ('dir'|'file', file_record)
@@ -1081,7 +1102,11 @@ class TransFS(Passthrough):
                         if query_config and query_config.get('preserve_structure', False):
                             source_dir = query_config.get('source_dir', 'Software')
                             rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
-                            subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                            try:
+                                map_idx = rel_parts.index(map_name)
+                                subpath_parts = rel_parts[map_idx + 1:] if len(rel_parts) > map_idx + 1 else []
+                            except ValueError:
+                                subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
                             subpath = '/'.join(subpath_parts)
 
                             def build_dir_stat() -> dict:
@@ -1100,7 +1125,11 @@ class TransFS(Passthrough):
                             if not subpath:
                                 return build_dir_stat()
 
-                            map_root_path = os.path.join(self.mount_path, *rel_parts[:3])
+                            try:
+                                map_idx = rel_parts.index(map_name)
+                                map_root_path = os.path.join(self.mount_path, *rel_parts[:map_idx + 1])
+                            except ValueError:
+                                map_root_path = os.path.join(self.mount_path, *rel_parts[:3])
                             cache_entry = self._db_readdir_cache.get(map_root_path)
                             if cache_entry:
                                 cached_at, cached_files = cache_entry
@@ -1336,11 +1365,13 @@ class TransFS(Passthrough):
                 # create synthetic directory entries for them (handles category paths and map directories)
                 entries_to_send = []
                 if config_entries:
-                    # Check if config_entries look like file entries (have extensions) or directory names
+                    # Classify config entries using per-entry shape instead of extension variety.
+                    # A map containing a single file type (e.g., only .cue) must still be treated as files.
                     config_entries_set = set(config_entries)
-                    file_extensions = {os.path.splitext(e)[1].lower() for e in config_entries}
-                    looks_like_files = len([e for e in file_extensions if e]) > 0 and len(file_extensions) > 1
-                    looks_like_dirs = len([e for e in config_entries if '.' not in e]) > 0 or not looks_like_files
+                    file_like_count = sum(1 for e in config_entries if os.path.splitext(e)[1])
+                    dir_like_count = len(config_entries) - file_like_count
+                    looks_like_files = file_like_count > 0 and dir_like_count == 0
+                    looks_like_dirs = dir_like_count > 0 and file_like_count == 0
                     
                     logger.info(f"READDIR DATABASE: config_entries look_like_files={looks_like_files}, look_like_dirs={looks_like_dirs}")
                     
