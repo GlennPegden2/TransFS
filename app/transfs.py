@@ -36,6 +36,9 @@ setup_logging(logging.INFO)
 logger = logging.getLogger("transfs")
 logger.info("TransFS logging initialized (pyfuse3 version)")
 
+# Global reference to the FUSE instance for API access and signal handling
+_fuse_instance: Optional['TransFS'] = None
+
 
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
     layout = system_info.get("download_layout") if system_info else None
@@ -141,6 +144,57 @@ class TransFS(Passthrough):
             logger.error(f"Failed to initialize DataProvider: {e}", exc_info=True)
             logger.warning("Falling back to cache-only mode")
             self.data_adapter = None
+
+    def reload_config_from_disk(self) -> dict:
+        """Reload config from disk and update in-memory state.
+        
+        Returns:
+            dict with status and details about the reload operation
+        """
+        try:
+            from config import read_config, reload_config
+            
+            logger.info("SIGHUP: Reloading config from disk...")
+            
+            # Clear config cache in the config module
+            reload_config()
+            
+            # Re-read config
+            new_config = read_config()
+            self.config = new_config
+            
+            # Clear cache entries that may be stale with new config
+            self._config_readdir_cache.clear()
+            self._source_path_cache.clear()
+            
+            # Reinitialize data adapter if database settings changed
+            try:
+                if new_config.get('database', {}).get('enabled', False):
+                    if self.data_adapter is None:
+                        logger.info("Database mode now enabled - reinitializing DataProvider")
+                        manager = initialize_data_provider(new_config)
+                        self.data_adapter = FUSEOperationAdapter(manager.get_provider())
+                    # If already initialized, leave it alone (connection pool remains valid)
+                else:
+                    if self.data_adapter is not None:
+                        logger.info("Database mode now disabled - clearing DataProvider")
+                        self.data_adapter = None
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(f"Failed to reinitialize DataProvider after config reload: {e}")
+            
+            logger.info("Config reload complete - client/source mappings refreshed")
+            return {
+                "success": True,
+                "message": "Config reloaded and applied to FUSE process",
+                "timestamp": time.time()
+            }
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"Failed to reload config: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "timestamp": time.time()
+            }
 
     def _filestore_to_mount_path(self, filestore_path: str) -> str:
         """Convert a filestore path to a mount-relative path for get_source_path()."""
@@ -1707,7 +1761,17 @@ class TransFS(Passthrough):
         # Skip getattr cache for very large directories to reduce cache churn
         skip_getattr_cache = len(virtual_entries) > max_readdir_getattr_cache
 
-        for entry_name in virtual_entries:
+        # OPTIMIZATION: Only batch-process entries for this pagination batch, not the entire directory
+        # This avoids processing 759 entries when we'll only send 24, improving perf by ~30x for large dirs
+        batch_size = 24  # Standard FUSE readdir batch size
+        batch_start_idx = max(0, start_id)  # Convert start_id to array index
+        batch_end_idx = min(len(virtual_entries), batch_start_idx + batch_size)
+        batch_entries = virtual_entries[batch_start_idx:batch_end_idx]
+        
+        # Note: We still need to track total entries for send phase, but only process this batch
+        logger.debug(f"READDIR: batch pagination start_id={start_id} batch_entries={len(batch_entries)}/{len(virtual_entries)}")
+
+        for entry_name in batch_entries:
             entry_path = os.path.join(xfull_path, entry_name)
             
             # PRIORITY 1: Always check getattr cache FIRST, before any other resolution
@@ -1787,7 +1851,7 @@ class TransFS(Passthrough):
             source_paths[entry_name] = ('uncached', fspath)
         
         t_batch = time.time() - t_batch_start
-        logger.info(f"READDIR BATCH: {len(virtual_entries)} entries, transform_map={len(system_transform_map)} exts, get_source_path={get_source_path_calls} calls, time={t_batch:.4f}s skip_cache={skip_cache_lookup}")
+        logger.info(f"READDIR BATCH: {len(batch_entries)}/{len(virtual_entries)} entries, transform_map={len(system_transform_map)} exts, get_source_path={get_source_path_calls} calls, time={t_batch:.4f}s skip_cache={skip_cache_lookup}")
         
         # Send entries with full attributes
         # Note: cache_hits was already accumulated in batch phase, don't reset it
@@ -1796,10 +1860,7 @@ class TransFS(Passthrough):
         t_attr_creation = 0.0
         t_readdir_reply = 0.0
         
-        for entry_id, entry_name in enumerate(virtual_entries, start=1):
-            if entry_id <= start_id:
-                continue
-            
+        for entry_id, entry_name in enumerate(batch_entries, start=batch_start_idx + 1):
             entry_path = os.path.join(xfull_path, entry_name)
             
             # Determine inode: use actual inode for real files, synthetic for virtual
@@ -3541,12 +3602,13 @@ class TransFS(Passthrough):
 
 async def main_async(mount_path: str, root_path: str):
     """Async main function for pyfuse3."""
+    global _fuse_instance
+    
+    import signal
     from config import read_app_config
     from cache_warmer import CacheWarmer
     from dirlisting import set_cache_config
     from startup_prewarm import prewarm_hotpaths, prewarm_subdirectory_cache, prewarm_recursive_indexes
-
-    fs = TransFS(root_path=root_path, mount_path=mount_path)
 
     # Initialize cache configuration from app.yaml
     app_config = read_app_config()
@@ -3563,6 +3625,21 @@ async def main_async(mount_path: str, root_path: str):
     fs._use_mmap = use_mmap
     fs._mmap_threshold = mmap_threshold
     set_cache_config(cache_config)
+    
+    # Store global reference for API access
+    _fuse_instance = fs
+    
+    # Register SIGHUP handler for config reload
+    def sighup_handler(signum, frame):
+        logger.info("Received SIGHUP - reloading config...")
+        result = fs.reload_config_from_disk()
+        if result['success']:
+            logger.info(f"SIGHUP handler: {result['message']}")
+        else:
+            logger.error(f"SIGHUP handler failed: {result['error']}")
+    
+    signal.signal(signal.SIGHUP, sighup_handler)
+    logger.info("SIGHUP signal handler registered for config reload")
     
     # Pre-warm hot paths BEFORE mounting filesystem
     logger.info("Pre-warming hot paths at startup...")
@@ -3613,6 +3690,32 @@ async def main_async(mount_path: str, root_path: str):
         logger.info("Unmounting TransFS")
         warmer.stop()
         pyfuse3.close(unmount=True)
+
+
+
+def reload_fuse_config() -> dict:
+    """Trigger config reload in the FUSE instance from the API.
+    
+    Returns:
+        Dictionary with success status and result message
+    """
+    global _fuse_instance
+    
+    if _fuse_instance is None:
+        return {
+            "success": False,
+            "error": "FUSE instance not initialized yet"
+        }
+    
+    try:
+        result = _fuse_instance.reload_config_from_disk()
+        return result
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(f"Failed to reload FUSE config: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 def main(mount_path: str, root_path: str):

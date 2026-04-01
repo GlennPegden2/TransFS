@@ -11,7 +11,7 @@ Tables:
 """
 
 # PostgreSQL schema with indexes optimized for common queries
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 CREATE_TABLES = """
 -- Core files table
@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS file_metadata (
     is_revision BOOLEAN DEFAULT false,
     is_prototype BOOLEAN DEFAULT false,
     is_homebrew BOOLEAN DEFAULT false,
+    metadata_provider TEXT,
+    metadata_source TEXT,
+    metadata_applied_at BIGINT,
     FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE,
     FOREIGN KEY (media_type_id) REFERENCES media_types(id),
     FOREIGN KEY (region_id) REFERENCES regions(id),
@@ -204,6 +207,44 @@ CREATE TABLE IF NOT EXISTS file_packs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_packs_pack ON file_packs(pack_id);
+
+-- Imported DAT/XML catalogs and entries
+CREATE TABLE IF NOT EXISTS dat_imports (
+    dat_import_id SERIAL PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    xml_format TEXT NOT NULL,
+    file_size BIGINT,
+    file_mtime BIGINT,
+    file_sha1 TEXT,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    imported_at BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'completed',
+    last_error TEXT,
+    UNIQUE(source_path, xml_format)
+);
+
+CREATE TABLE IF NOT EXISTS dat_import_entries (
+    dat_import_entry_id SERIAL PRIMARY KEY,
+    dat_import_id INTEGER NOT NULL REFERENCES dat_imports(dat_import_id) ON DELETE CASCADE,
+    source_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    entry_path TEXT,
+    top_level_dir TEXT,
+    relative_dir TEXT,
+    extension TEXT,
+    sha1 TEXT,
+    crc TEXT,
+    title TEXT,
+    publisher TEXT,
+    release_year INTEGER,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_dat_import_entries_import_id ON dat_import_entries(dat_import_id);
+CREATE INDEX IF NOT EXISTS idx_dat_import_entries_name ON dat_import_entries(normalized_name);
+CREATE INDEX IF NOT EXISTS idx_dat_import_entries_sha1 ON dat_import_entries(sha1);
+CREATE INDEX IF NOT EXISTS idx_dat_import_entries_crc ON dat_import_entries(crc);
 
 -- Optional manual edit audit
 CREATE TABLE IF NOT EXISTS metadata_edits (

@@ -93,6 +93,10 @@ class DatabaseSync:
         """
         Build a lookup of {manufacturer/system: {folder: pack_context_dict}}.
         Folder corresponds to sources[].folder (e.g., ROMs, BIN).
+
+        Metadata ownership model:
+        - Preferred: sources[].metadata (source-scoped defaults)
+        - Legacy fallback: packs[].metadata applied to each referenced source
         """
         index: Dict[str, Dict[str, dict]] = {}
         archive_sources = self.config.get("archive_sources", {})
@@ -103,28 +107,51 @@ class DatabaseSync:
                 download_layout = self._get_download_layout(manufacturer, canonical_name)
                 sources = source_config.get("sources", [])
                 source_by_name = {src.get("name"): src for src in sources}
+
+                # Legacy fallback map: source_name -> {metadata, pack_name}
+                # Preserve old behavior by taking first referenced pack with metadata.
+                legacy_source_metadata = {}
                 for pack in source_config.get("packs", []) or []:
-                    metadata = pack.get("metadata") or {}
+                    metadata = pack.get("metadata")
+                    if not metadata:
+                        continue
+                    legacy_pack_name = pack.get("name") or pack.get("id")
+                    for source_name in pack.get("sources", []) or []:
+                        if source_name not in legacy_source_metadata:
+                            legacy_source_metadata[source_name] = {
+                                "metadata": metadata,
+                                "pack_name": legacy_pack_name,
+                            }
+
+                for source_name, source in source_by_name.items():
+                    source_metadata = source.get("metadata")
+                    fallback_meta = legacy_source_metadata.get(source_name)
+                    metadata = source_metadata or (fallback_meta or {}).get("metadata")
+                    if not metadata:
+                        continue
+
                     defaults = metadata.get("defaults") or {}
+                    pack_name = metadata.get("pack_name") or source_name
+                    if not source_metadata and fallback_meta:
+                        # Legacy compatibility: keep previous pack association when source-level metadata is absent.
+                        pack_name = fallback_meta.get("pack_name") or pack_name
+
                     pack_context = PackContext(
-                        pack_name=pack.get("name") or pack.get("id"),
+                        pack_name=pack_name,
                         ruleset=metadata.get("ruleset"),
                         ruleset_overrides=metadata.get("overrides"),
                         defaults=defaults,
                         tags=metadata.get("tags") or [],
                         default_extension=defaults.get("extension"),
                     )
-                    for source_name in pack.get("sources", []) or []:
-                        source = source_by_name.get(source_name)
-                        if not source:
-                            continue
-                        folder = self._resolve_source_folder_for_layout(
-                            folder=source.get("folder"),
-                            source_name=source_name,
-                            download_layout=download_layout,
-                        )
-                        if folder and folder not in index[system_key]:
-                            index[system_key][folder] = pack_context
+
+                    folder = self._resolve_source_folder_for_layout(
+                        folder=source.get("folder"),
+                        source_name=source_name,
+                        download_layout=download_layout,
+                    )
+                    if folder and folder not in index[system_key]:
+                        index[system_key][folder] = pack_context
         return index
 
     def _resolve_source_folder_for_layout(self, folder: Optional[str], source_name: str,
@@ -719,7 +746,7 @@ class DatabaseSync:
                         pack_context = self._get_pack_context_for_file(manufacturer, canonical_name, file_path)
                         if pack_context and pack_context.default_extension:
                             ext = pack_context.default_extension.upper()
-                            logger.debug(f"      File {filename} has no extension, applying pack default: {ext}")
+                            logger.debug(f"      File {filename} has no extension, applying source metadata default: {ext}")
                     
                     # Try to match file to a map
                     matched = False
@@ -932,7 +959,7 @@ class DatabaseSync:
                             default_ext = pack_context.default_extension.upper()
                             ext = default_ext
                             applied_default = True
-                            logger.debug(f"File {filename} has no extension, applying default from pack: {default_ext}")
+                            logger.debug(f"File {filename} has no extension, applying default from source metadata: {default_ext}")
                     
                     # File matches if extension is in the list, OR if we applied a default extension that's in the list
                     if ext in extensions_upper:

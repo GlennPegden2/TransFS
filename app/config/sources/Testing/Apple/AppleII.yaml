@@ -1,0 +1,72 @@
+# Apple II Software Sources
+
+base_path: Apple/AppleII/
+
+sources:
+  - name: official-new-prodos
+    type: ddl
+    urls:
+     - https://releases.prodos8.com/ProDOS_2_4_3.po
+     -
+    folder: Software/dsk
+
+  - name: apple2-top20games
+    type: ddl
+    urls:
+     - https://apple2online.com/wp-content/uploads/Ultima-I.zip
+     - https://apple2online.com/wp-content/uploads/Wolfenstein-3D-GS.zip
+     - https://apple2online.com/wp-content/uploads/Wizardry-I.zip
+     - https://apple2online.com/wp-content/uploads/Swashbuckler.zip
+     - https://apple2online.com/wp-content/uploads/Choplifter-A2OL.zip
+     - https://apple2online.com/wp-content/uploads/lode_runner.zip
+     - https://apple2online.com/wp-content/uploads/cavern_creatures.zip
+     - https://apple2online.com/wp-content/uploads/Kings-Quest-I-GS.zip
+     - https://apple2online.com/wp-content/uploads/Karateka.zip
+     - https://apple2online.com/wp-content/uploads/Impossible-Mission-A2OL.zip
+     - https://apple2online.com/wp-content/uploads/The-Bards-Tale.zip
+     - https://www.virtualapple.org/apple2/OT(Disk1of2).zip
+     - https://www.virtualapple.org/apple2/OT(Disk2of2).zip
+     - https://apple2online.com/wp-content/uploads/Elite.zip
+     - https://apple2online.com/wp-content/uploads/Might-and-Magic-1.zip
+     - https://www.virtualapple.org/apple2/Pirates!(cracked)(Boot)(Disk1of4).zip
+     - https://www.virtualapple.org/apple2/Pirates!(cracked)(Boot)(Disk2of4).zip
+     - https://www.virtualapple.org/apple2/Pirates!(cracked)(Boot)(Disk3of4).zip
+     - https://www.virtualapple.org/apple2/Pirates!(cracked)(Boot)(Disk4of4).zip
+     - https://apple2online.com/wp-content/uploads/California-Games.zip
+     - https://apple2online.com/wp-content/uploads/maniac_mansion.zip
+     - https://apple2online.com/wp-content/uploads/Wasteland.zip
+     - https://apple2online.com/wp-content/uploads/Prince-of-Persia.zip
+     - https://apple2online.com/wp-content/uploads/Battle-Chess-GS.zip
+
+    folder: Software/dsk
+    extract: true
+
+packs:
+
+  - id: appple2top20games
+    name: Top 20 Apple II Games
+    description: A collection of the top 20 Apple II games from apple2online.com and virtualapple.org
+    estimated_size: 2MB
+    sources: [apple2-top20games]
+    supported_by: [MiSTer]
+    info_links:
+      - label: Apple2Online
+        url: https://apple2online.com/
+
+      - label: Virtual Apple
+        url: https://www.virtualapple.org/
+
+      - label: 20 Games That Defined the Apple II (Youtube)
+        url: https://www.youtube.com/watch?v=dk5p7RjmlpQ
+
+  - id: official-new-prodos
+    name: Prodos
+    description: A modern multi platform prodos
+    estimated_size: 140k
+    sources: [official-new-prodos]
+    supported_by: [MiSTer]
+    info_links:
+      - label: ProDos 8
+        url: https://prodos8.com/
+
+

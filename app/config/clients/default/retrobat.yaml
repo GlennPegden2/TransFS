@@ -42,6 +42,40 @@ maps:
         preserve_exact_filenames: false
 
 systems: 
+ # --- 3DO Company ---
+  - name: 3DO
+    manufacturer: 3DO
+    system_mapping_name: 3DO
+    local_base_path: 3DO/3DO
+    maps:
+      - panafz1.bin:
+          category: shared_bios 
+          file:
+            path: BIOS/panafz1.bin
+            supports_zaparoo: false
+      - panafz10.bin:
+          category: shared_bios 
+          file:
+            path: BIOS/panafz10.bin
+            supports_zaparoo: false
+      - goldstar.bin:
+          category: shared_bios 
+          file:
+            path: BIOS/goldstar.bin
+            supports_zaparoo: false
+      - CDs:
+          category: roms  # Appears at /RetroBat/ROMS/3DO/CDs
+          query:
+            source_dir: Software
+            extensions:
+              - CUE
+            supports_zip: false
+            supports_zaparoo: true
+      - BIOS:
+          query:
+            source_dir: BIOS
+            extensions:
+              - ROM
   - name: AcornAtom
     manufacturer: Acorn
     system_mapping_name: Atom

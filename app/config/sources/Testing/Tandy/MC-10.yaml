@@ -1,0 +1,9 @@
+# Tandy MC-10 Software Sources
+
+base_path: Tandy/MC-10/Software
+
+sources:
+  - name: MC-10
+    type: IA-COL
+    url: https://archive.org/details/softwarelibrary_mc10
+    folder: c10

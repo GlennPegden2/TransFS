@@ -1,0 +1,67 @@
+# Acorn Electron Software Sources
+
+base_path: Acorn/Electron/
+
+sources:
+  - name: ElkBBEB
+    type: ddl
+    url: https://rayharper.co.uk/stardot/ElkBEEB.zip
+    folder: Software/Collections/
+  
+  - name: RayHarper-ADF
+    type: ddl
+    url: https://rayharper.co.uk/stardot/Elk-PubGameADF.zip
+    folder: Software/Collections/
+  
+  - name: RayHarper-HFE
+    type: ddl
+    url: https://rayharper.co.uk/stardot/Elk-PubGameHFE.zip        
+    folder: Software/Collections/
+  
+  - name: RayHarper-DFS
+    type: ddl
+    url: https://rayharper.co.uk/stardot/Elk-PubGameDFS.zip        
+    folder: Software/Collections/
+  
+  - name: TOSEC_2012_04_23
+    type: ddl
+    url: https://archive.org/download/Acorn_Electronic_TOSEC_2012_04_23/Acorn_Electronic_TOSEC_2012_04_23.zip       
+    folder: Software/Collections/
+
+  - name: ElkWelcomeTape
+    type: ddl
+    url: https://www.everygamegoing.com/download/electron/acornsoft/tapes/Introductory-Cassette.zip 
+    folder: Software/UEF/
+
+  - name: ElkBEEB_MMB
+    type: ddl
+    url: https://rayharper.co.uk/stardot/ElkBEEB.zip
+    folder: Software/MMB/
+
+packs:
+  - id: Welcome
+    name: Minimal - Eletron Welcome Tape 
+    description: The Acorn Electron Welcome Tape contains a selection of programs to get you started with your new computer. It includes educational software, games, and utilities that showcase the capabilities of the Acorn Electron.
+    estimated_size: 58K
+    sources: [ElkWelcomeTape]
+    info_links:
+      - label: Everyone Gaming
+        url: https://www.everygamegoing.com/litem/Introductory-Cassette/9206/
+
+  - id: ElkBEEB
+    name: Ray Hapers ElkBEEB Collection
+    description: A comprehensive collection of software for the Acorn Electron, curated by Ray Harper, using the UniMenu system
+    estimated_size: 100Mb
+    sources: [ElkBEEB_MMB]
+    info_links:
+      - label: Ray Harper's Site
+        url: http://rayharper.co.uk/stardot/Stardot.html
+
+  - id: RaysElkGames
+    name: Ray Hapers Elk Game Collection
+    description: Ray Harpers Games Collection, as individual ADF 
+    estimated_size: 100Mb
+    sources: [ElkBEEB_MMB]
+    info_links:
+      - label: Ray Harper's Site
+        url: http://rayharper.co.uk/stardot/Stardot.html

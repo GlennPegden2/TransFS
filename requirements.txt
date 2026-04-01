@@ -4,6 +4,7 @@ internetarchive
 requests
 pyyaml
 fastapi
+python-multipart
 uvicorn
 jinja2
 fastapi

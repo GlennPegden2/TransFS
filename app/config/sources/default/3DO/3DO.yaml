@@ -1,0 +1,38 @@
+# Acorn Archimedes Software Sources
+
+base_path: 3DO/3DO/
+
+sources:
+  - name: bios
+    type: ddl
+    urls: 
+     - https://github.com/trapexit/3do-bios/blob/master/3do_arcade_saot.bin
+     - https://github.com/trapexit/3do-bios/blob/master/goldstar.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz1-kanji.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz1.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz10-patched.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz10.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil-patched.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil.bin
+     - https://github.com/trapexit/3do-bios/blob/master/panafz10ja-anvil-kanji.bin
+     - https://github.com/trapexit/3do-bios/blob/master/sanyotry.bin
+    folder: BIOS
+
+    
+  - name: 3do-interactive-samplers
+    type: ddl
+    urls: 
+    - https://archive.org/download/the-3do-interactive-sampler-cd-4-3do-usa/The_3DO_Interactive_Sampler_CD_4.bin
+    - https://archive.org/download/the-3do-interactive-sampler-cd-4-3do-usa/The_3DO_Interactive_Sampler_CD_4.cue
+    folder: Software/Collections/3DO_Interactive_Sampler
+    extract: false
+  
+
+packs:
+  - id: minimal
+    name: Minimal Starter Set
+    description: Essential BIOS files and a N, to test the system
+    estimated_size: 11MB
+    sources: [bios,3do-interactive-samplers]
+  
+  

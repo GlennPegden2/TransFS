@@ -538,6 +538,13 @@ button:hover, button:focus {
     word-break: break-all;
 }
 
+#metadata-files .file-item .name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: normal;
+}
+
 .file-item.folder .name {
     color: #2d8cf0;
     font-weight: 500;

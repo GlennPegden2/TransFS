@@ -29,6 +29,18 @@ async def setup_page(request: Request):
     """Serve the Setup Clients configuration page."""
     return templates.TemplateResponse("index_complete.html", {"request": request})
 
+
+@app.get("/metadata/{path:path}", response_class=HTMLResponse)
+async def metadata_page(request: Request, path: str):
+    """Serve the Metadata tab page with folder deep-link routing."""
+    return templates.TemplateResponse("index_complete.html", {"request": request})
+
+
+@app.get("/metadata", response_class=HTMLResponse)
+async def metadata_root_page(request: Request):
+    """Serve Metadata tab root route."""
+    return templates.TemplateResponse("index_complete.html", {"request": request})
+
 # For running directly with: python -m uvicorn main:app
 if __name__ == "__main__":
     import uvicorn

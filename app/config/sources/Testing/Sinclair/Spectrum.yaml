@@ -1,0 +1,9 @@
+# Sinclair ZX Spectrum Software Sources
+
+base_path: Sinclair/Spectrum/Software
+
+sources:
+  - name: TOSEC ZX Spectrum Collection
+    type: ddl
+    url: https://archive.org/download/ZX_Spectrum_TOSEC_2012_04_23/ZX_Spectrum_TOSEC_2012_04_23.zip
+    folder: Tapes

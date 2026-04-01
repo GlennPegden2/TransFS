@@ -231,7 +231,9 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
         for system in client.get("systems", []):
             manufacturer = system.get("manufacturer")
             mapping_name = system.get("system_mapping_name") or system.get("cananonical_system_name")
-            display_name = system.get("display_name") or system.get("name") or mapping_name
+            # For merged cross-client views, prefer explicit display_name and then canonical mapping name.
+            # This avoids client-local name casing (e.g., "3do") leaking into shared system labels.
+            display_name = system.get("display_name") or mapping_name or system.get("name")
             name = system.get("name")
             if manufacturer and mapping_name:
                 manufacturer_map.setdefault(manufacturer, {})

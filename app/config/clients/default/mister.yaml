@@ -6,6 +6,29 @@ download_layout: source_based
 default_target_path: "{name}/{system_name}/{maps}"
 
 systems:
+ # --- 3DO Company ---
+  - name: 3do
+    manufacturer: 3DO
+    system_mapping_name: 3DO
+    local_base_path: 3DO/3DO
+    maps:
+      - boot.rom:
+          file:
+            path: BIOS/panafz1.bin
+            supports_zaparoo: false
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CUE
+            supports_zip: false
+            supports_zaparoo: true
+      - BIOS:
+          query:
+            source_dir: BIOS
+            extensions:
+              - ROM
+
   # --- Acorn ---
   - name: AcornAtom
     manufacturer: Acorn
@@ -245,6 +268,13 @@ systems:
               - A52
               - BIN
               - ROM
+            supports_zip: false
+            supports_zaparoo: true
+      - Tapes:
+          query:
+            source_dir: Software
+            extensions:
+              - CAS
             supports_zip: false
             supports_zaparoo: true
   - name: Atari7800

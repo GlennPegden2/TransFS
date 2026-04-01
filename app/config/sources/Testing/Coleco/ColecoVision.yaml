@@ -1,0 +1,9 @@
+# ColecoVision Software Sources
+
+base_path: Coleco/ColecoVision/Software
+
+sources:
+  - name: TOSEC ColecoVision Collection
+    type: ddl
+    url: https://archive.org/download/ColecoVision_TOSEC_2012_04_23/ColecoVision_TOSEC_2012_04_23.zip
+    folder: ROMs

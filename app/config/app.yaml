@@ -1,19 +1,13 @@
 cache:
-  # File stat cache (persisted to .transfs_getattr_cache.pkl)
   stat_cache_enabled: false
   stat_cache_save_interval: 5.0
-  # Transform caches (in-memory runtime performance)
   transform_output_size_cache_enabled: true
   transform_pipeline_cache_enabled: true
-  # Readdir optimization (in-memory runtime performance)
   readdir_direntry_cache_enabled: true
   readdir_skip_cache_lookup_with_direntry: true
 performance:
-  # Use memory-mapped I/O for large files to avoid os.read() 65KB chunking limitation
-  # This can significantly improve read performance for large files (VHDs, ISOs, etc.)
-  # over SMB/CIFS by reducing syscall iterations
   use_mmap_for_reads: true
-  mmap_threshold_bytes: 10485760  # 10MB - files larger than this use mmap
+  mmap_threshold_bytes: 10485760
 cache_warmer:
   batch_size: 10
   check_interval_seconds: 5
@@ -22,34 +16,28 @@ cache_warmer:
   io_threshold_percent: 20.0
   max_depth: 12
 startup_prewarm:
-  # Pre-load critical paths at startup to avoid cold-start delays
   enabled: true
-  # Hot paths to pre-warm (relative to mount point)
   hot_paths:
-    - RetroBat
-    - RetroBat/bios
-    - RetroBat/ROMS/AcornAtom
-    - RetroBat/ROMS/AcornAtom/Tapes
-    - RetroBat/ROMS/AcornAtom/FDs
-  # Pre-warm subdirectory queries for client roots
+  - RetroBat
+  - RetroBat/bios
+  - RetroBat/ROMS/AcornAtom
+  - RetroBat/ROMS/AcornAtom/Tapes
+  - RetroBat/ROMS/AcornAtom/FDs
   prewarm_subdirs: true
   subdirectory_paths:
-    - RetroBat
-    - MiSTer
-  # Pre-warm recursive filename indexes for large source directories
-  # This eliminates 8+ second delays on first file access in flattened query maps
+  - RetroBat
+  - MiSTer
   prewarm_recursive_indexes: true
   recursive_index_paths:
-    - Native/Systems/Acorn/Atom/Software/Sources  # 5400+ files, takes 8+ seconds to scan
+  - Native/Systems/Acorn/Atom/Software/Sources
 config_sets:
   active_client_config: default
-  active_source_config: default
+  active_source_config: Testing
 database:
   auto_sync: false
   enabled: true
   mode: enabled
   sync_on_startup: false
-  # PostgreSQL connection (environment variables override these)
   host: postgres
   port: 5432
   name: transfs
@@ -57,21 +45,15 @@ database:
   password: transfs_pass
   pool_size: 20
   max_overflow: 10
-# SMB Server credentials and access control
 smb:
   username: root
-  password: "1"
-  allow_guest: false  # Set to true to allow unauthenticated guest access
+  password: '1'
+  allow_guest: false
 filestore: /mnt/filestorefs
-# Filesystem behavior
-show_hidden_files: true  # Show hidden files (names starting with '.') - matches standard filesystem behavior
+show_hidden_files: true
 mame:
-  # MAME Software List downloader configuration
   hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
   hash_repo_branch: master
-  # Internet Archive collection containing MAME Software List files (NOT arcade ROMs)
-  # Files are stored in nested ZIP structure: archive.zip/{softwarelist}/{software}.zip
-  # Example: MAME_0.228_Software_List_ROMs_merged.zip/atom_cass/747.zip
   archive_base_url: https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
   download_root: /mnt/filestorefs/Downloads/MAME
   verify_checksums: true

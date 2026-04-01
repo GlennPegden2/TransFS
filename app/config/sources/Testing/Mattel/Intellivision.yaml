@@ -1,0 +1,9 @@
+# Mattel Intellivision Software Sources
+
+base_path: Mattel/Intellivision/Software
+
+sources:
+  - name: TOSEC Intellivision Collection
+    type: ddl
+    url: https://archive.org/download/Intellivision_TOSEC_2012_04_23/Intellivision_TOSEC_2012_04_23.zip
+    folder: ROMs

@@ -117,6 +117,83 @@
 - `local_base_path` and source `base_path` values are normalized at load time to `Systems/...` for compatibility.
 - Legacy paths under `Native/<Manufacturer>/<System>` are supported during migration through config normalization and staged data move.
 
+### 11.2 Metadata Scanner + Browser (Web UI)
+
+- **Scan workflow moved to Browse Native**: The scanner now runs directly from the **Browse Native** tab so users scan the folder they are already browsing.
+- Browse Native includes a **Scan Metadata** toggle panel with:
+  - provider selection
+  - recursive option
+  - **Preview** and **Apply** actions
+- The **Metadata** tab is now a metadata-first browser view (database-backed), with:
+  - metadata coverage summary
+  - search and filter controls
+  - paginated metadata entries list
+  - inline entry editing for both file context and metadata fields, including:
+    - file context: source path, virtual path, original extension, system/client/map/content type, archive flags
+    - metadata fields: title, media type, genre, app type, release metadata, publisher/region/language, revision/prototype/homebrew
+    - provenance and linkage: metadata provider/source, metadata tags, and pack names
+  - advanced safety toggle: core file fields (paths/system/client/map/archive flags) are hidden by default and only editable when **Show advanced file fields** is enabled
+- Initial provider types:
+  - `filename_ruleset` (existing filename parsing/ruleset behavior)
+  - `dat_xml_lookup` (DAT/XML lookup; initial adapter supports MAME software-list XML)
+  - `imported_dat_lookup` (manual DAT imports stored in the database and then re-used as scan/apply providers)
+- DAT/XML matching strategy in phase 1 is **filename first**, then **checksum fallback** (`sha1`, `crc32`).
+
+### 11.2.1 Manual DAT Importer
+
+- The **Metadata** tab now includes an explicit **DAT Importer** panel.
+- Default import root is `/mnt/filestorefs/Native/DATs`, but any readable DAT/XML path can be entered manually.
+- The importer:
+  - lists DAT/XML files in the selected folder
+  - highlights files that are **new** or **changed** since the last import
+  - lets the user choose an `xml_format`
+  - records imported catalogs in the database
+  - stores per-entry filename/path, normalized filename, checksums, and extracted metadata
+  - shows live polling-based import logs in the UI while parsing/writing entries
+- Imported catalogs become selectable metadata providers via `imported_dat_lookup`.
+- This keeps DAT ingestion explicit and reviewable rather than silently re-parsing in the background.
+
+### 11.2.2 DAT-Driven Client Config Generation
+
+- Imported DAT catalogs can generate a new client config file under `config/clients/<config_set>/`.
+- Path-bearing DAT entries (for example MiSTer Organizer-style ROM names) are grouped by top-level folder.
+- Each top-level path segment becomes a generated `query` map.
+- Generated maps use:
+  - `source_dir: Software/<top-level-folder>`
+  - discovered extensions from the imported DAT
+  - `preserve_structure: true`
+- The UI prompts for the config set name and target system details before writing the client YAML.
+
+### 11.3 Metadata APIs
+
+- `GET /api/metadata/providers` - List available metadata providers for the active source config set.
+- `GET /api/metadata/xml-formats` - List XML/DAT format definitions exposed to the manual importer.
+- `GET /api/metadata/dat-files` - List DAT/XML candidates and indicate whether each file is new, changed, or already imported.
+- `GET /api/metadata/dat-imports` - List DAT/XML catalogs already imported into the database.
+- `POST /api/metadata/dat-import/start` - Start a tracked DAT/XML import job.
+- `GET /api/metadata/dat-import/jobs/{job_id}` - Poll live DAT/XML import status and logs.
+- `POST /api/metadata/dat-imports/generate-client-config` - Generate/update a client config set from imported DAT path structure.
+- `POST /api/metadata/scan-preview` - Preview metadata matches for a selected folder/provider.
+- `POST /api/metadata/apply` - Apply metadata matches for a selected folder/provider.
+- `GET /api/metadata/stats` - Metadata coverage totals and provider breakdown.
+- `GET /api/metadata/entries` - Paginated metadata entry browser with optional filters (`search`, `publisher`, `year`, `tag`, `provider`), returning file context + metadata + tags + pack lineage fields.
+- `POST /api/metadata/entry/update` - Update editable metadata/file fields for a single record, including metadata tags and file-pack memberships.
+
+Provider definitions are loaded from:
+- `config/metadata/providers/<active_source_config>.yaml` (preferred)
+- fallback `config/metadata/providers/default.yaml`
+
+XML format templates are loaded from:
+- `config/metadata/xml_formats/<active_source_config>.yaml` (preferred)
+- fallback `config/metadata/xml_formats/default.yaml`
+
+Each format entry can declaratively define:
+- top-level `item_path` for XML records
+- `metadata` field mappings (child paths/attributes, fallback values, value maps, type casts)
+- `match.filename` source and normalization strategy
+- `match.checksums` nodes and checksum attribute names (`sha1_attr`, `crc_attr`)
+- static tags to append to matched metadata
+
 ---
 
 ### 12. Large-File Read Performance (SMB/FUSE)
@@ -271,6 +348,53 @@ HDs:
 - Directory structure: 3,197 files → 3,669 total entries (472 virtual directories)
 - API response includes both directory and file type indicators
 - Traversal still uses database queries, maintaining database-only performance benefits
+
+---
+
+### 14. Runtime Config Reload (No Container Restart)
+
+**Overview**: TransFS supports hot-reloading of configuration changes without unmounting the filesystem or restarting the container. Changes to client/source configuration YAML files can take effect in real-time via API endpoints.
+
+**Two-Tier Reload System**:
+
+1. **Web Service Config Reload** (`/api/config/reload`)
+   - Reloads configuration in the web API service only
+   - Clears config cache and re-reads YAML files on next request
+   - Immediate effect for all HTTP API responses
+   - Scope: Web service setup UI, metadata operations, diagnostics
+
+2. **FUSE Process Config Reload** (`/api/fuse/reload-config`)
+   - Reloads configuration in the running FUSE filesystem process
+   - Sends SIGHUP signal to trigger safe in-process reapply
+   - Updates client/source mappings, clears filesystem caches, reinitializes data providers
+   - No filesystem unmount or operation disruption
+   - Scope: Virtual filesystem node assignments, file path mappings, database settings
+
+**How It Works**:
+1. Client modifies YAML configuration files (typically via mounted config volume in Docker)
+2. Client calls `/api/config/reload` (web service) and/or `/api/fuse/reload-config` (FUSE)
+3. Configuration is re-read from disk and validated
+4. FUSE process:
+   - Clears all readdir and path caches
+   - Resets virtual-to-real path mappings
+   - Reinitializes data provider if database settings changed
+   - Logs all changes for debugging
+5. Active filesystem operations continue without interruption
+
+**Use Cases**:
+- **Rapid development**: Test config changes without `docker compose restart`
+- **Multi-client setup**: Switch between active client configurations via API
+- **Dynamic filtering**: Update include/exclude patterns mid-session
+- **Database mode toggle**: Switch between hybrid/enabled/disabled without restart (if supported)
+
+**API Endpoints**:
+- `POST /api/config/reload` - Reload web service config
+- `POST /api/fuse/reload-config` - Reload FUSE process config with hot-apply via SIGHUP signal
+
+**Limitations**:
+- Changes only take effect for *new* filesystem operations
+- Files already open by clients may continue using old metadata/paths until closed and reopened
+- Source path changes apply only to newly traversed directories (existing cached hierarchy holds old paths temporarily until TTL expires)
 
 **Benefits**:
 - Users see organized file hierarchies in the virtual filesystem

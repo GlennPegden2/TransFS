@@ -11,6 +11,8 @@
             const path = window.location.pathname;
             if (path === '/setup' || path === '/setup/') {
                 return 'setup-clients';
+            } else if (path.startsWith('/metadata')) {
+                return 'metadata';
             } else if (path.startsWith('/browse/native')) {
                 return 'browse-native';
             } else if (path.startsWith('/browse/virtual')) {
@@ -30,13 +32,13 @@
     <div class="tab-container">
         <div class="tab-buttons">
             <button class="tab-button active" onclick="switchTab('download')">Download</button>
+            <button class="tab-button" onclick="switchTab('metadata')">Metadata</button>
             <button class="tab-button" onclick="switchTab('browse-native')">Browse Native</button>
             <button class="tab-button" onclick="switchTab('browse-virtual')">Browse Virtual</button>
             <button class="tab-button" onclick="switchTab('config')">Config</button>
             <button class="tab-button" onclick="switchTab('setup-clients')">Setup Clients</button>
             <button class="tab-button" onclick="switchTab('docs')">Docs</button>
-            <button class="tab-button" id="test-results-tab-btn" onclick="switchTab('test-results')" style="display:none;">Test Results</button>
-            <button class="tab-button" id="debug-tab-btn" onclick="switchTab('debug')" style="display:none;">Logs</button>
+            <button class="tab-button" id="debug-tab-btn" onclick="switchTab('debug')" style="display:none;">Debug</button>
         </div>
     </div>
     
@@ -72,6 +74,161 @@
             </div>
         </form>
     </div>
+
+    <!-- Metadata Tab -->
+    <div id="metadata-tab" class="tab-content">
+        <div class="file-browser">
+            <h2>Metadata Browser</h2>
+            <div style="margin-bottom: 1em; border: 1px solid #d7e3f4; border-radius: 8px; background: #f7fbff; padding: 1em;">
+                <div style="display:flex; justify-content:space-between; gap:1em; align-items:center; flex-wrap:wrap; margin-bottom:0.7em;">
+                    <div>
+                        <strong>DAT Importer</strong>
+                        <div style="font-size:0.86em; color:#667; margin-top:0.2em;">Import DAT/XML catalogs explicitly, track changed files, and generate client config skeletons from DAT path layouts.</div>
+                    </div>
+                    <div id="metadata-dat-import-summary" style="font-size:0.85em; color:#666;">Loading importer…</div>
+                </div>
+                <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap; margin-bottom:0.35em;">
+                    <button type="button" onclick="refreshMetadataDatFiles()" style="padding:0.45em 0.8em; background:#1976d2; color:#fff; border:none; border-radius:4px; cursor:pointer;">Refresh DAT list</button>
+                </div>
+                <div id="metadata-dat-folder-info" style="font-size:0.8em; color:#667; margin:0 0 0.65em 0;">DAT folder: resolving…</div>
+                <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap; margin-bottom:0.7em;">
+                    <label for="metadata-dat-upload-file" style="font-weight:600;">Upload DAT/XML:</label>
+                    <input id="metadata-dat-upload-file" type="file" accept=".dat,.xml,text/xml,application/xml" style="flex:1; min-width:320px; padding:0.35em 0;">
+                    <button type="button" onclick="uploadMetadataDatFile()" style="padding:0.45em 0.8em; background:#6a1b9a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Upload to DAT folder</button>
+                </div>
+                <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap; margin-bottom:0.7em;">
+                    <label for="metadata-dat-file-select" style="font-weight:600;">DAT file:</label>
+                    <select id="metadata-dat-file-select" onchange="onMetadataDatDropdownChanged()" style="flex:1; min-width:300px; padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                        <option value="">Loading DAT/XML files…</option>
+                    </select>
+                    <label for="metadata-dat-format" style="font-weight:600;">File Format:</label>
+                    <select id="metadata-dat-format" style="min-width:200px; padding:0.45em; border:1px solid #ccc; border-radius:4px;"></select>
+                    <button type="button" onclick="startMetadataDatImportFromInput()" style="padding:0.45em 0.8em; background:#2e7d32; color:#fff; border:none; border-radius:4px; cursor:pointer;">Import Selected DAT</button>
+                </div>
+                <div style="font-size:0.8em; color:#667; margin:-0.25em 0 0.65em 0;">1) Upload (optional), 2) choose DAT and xml_format, 3) import.</div>
+                <div id="metadata-dat-files" style="font-size:0.9em; color:#444; max-height:220px; overflow:auto; border:1px solid #e1e6ef; border-radius:6px; background:#fff; padding:0.6em;">Loading DAT files…</div>
+                <div style="margin-top:0.8em; display:grid; grid-template-columns: 1.1fr 0.9fr; gap:0.8em; align-items:start;">
+                    <div style="border:1px solid #e1e6ef; border-radius:6px; background:#fff; padding:0.7em;">
+                        <div style="display:flex; justify-content:space-between; gap:1em; align-items:center; margin-bottom:0.4em;">
+                            <strong style="font-size:0.92em;">Import log</strong>
+                            <span id="metadata-dat-job-status" style="font-size:0.82em; color:#666;">Idle</span>
+                        </div>
+                        <pre id="metadata-dat-log" style="margin:0; font-size:0.82em; line-height:1.35; background:#10161d; color:#d8e2f0; padding:0.8em; border-radius:6px; min-height:170px; max-height:260px; overflow:auto; white-space:pre-wrap;">Waiting for import…</pre>
+                    </div>
+                    <div style="border:1px solid #e1e6ef; border-radius:6px; background:#fff; padding:0.7em;">
+                        <div style="display:flex; justify-content:space-between; gap:1em; align-items:center; margin-bottom:0.5em;">
+                            <strong style="font-size:0.92em;">Imported catalogs</strong>
+                            <button type="button" onclick="refreshMetadataDatImports()" style="padding:0.3em 0.6em; background:#5e35b1; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.78em;">Reload</button>
+                        </div>
+                        <div id="metadata-dat-imports" style="font-size:0.86em; color:#444; max-height:180px; overflow:auto; margin-bottom:0.7em;">Loading imports…</div>
+                        <div id="metadata-generate-config-section" style="border-top:1px solid #eceff5; padding-top:0.7em; display:none;">
+                            <strong style="display:block; margin-bottom:0.5em; font-size:0.9em;">Generate client config</strong>
+                            <div style="margin-bottom:0.6em; padding:0.55em 0.65em; border:1px solid #ffcc80; border-radius:6px; background:#fff8e1; color:#8a4b00; font-size:0.83em; line-height:1.35;">
+                                Warning: This is a work-in-progress feature and does not yet produce a complete config.
+                            </div>
+                            <input id="metadata-generate-import-id" type="hidden">
+                            <div style="display:grid; grid-template-columns:repeat(2, minmax(140px, 1fr)); gap:0.5em;">
+                                <input id="metadata-generate-config-set" type="text" placeholder="Config set name" title="Config set name" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-system-name" type="text" list="metadata-generate-system-name-options" placeholder="Client name" title="Client name" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-client-name" type="text" list="metadata-generate-client-name-options" placeholder="Client config key" title="Client config key" value="MiSTer" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-output-file" type="text" placeholder="Output file" title="Output file" value="mister.yaml" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-manufacturer" type="text" placeholder="Manufacturer" title="Manufacturer" value="Imported" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-system-mapping" type="text" placeholder="System mapping name (optional)" title="System mapping name" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                                <input id="metadata-generate-local-base" type="text" placeholder="Local base path (optional)" title="Local base path" style="padding:0.45em; border:1px solid #ccc; border-radius:4px; grid-column: span 2;">
+                            </div>
+                            <datalist id="metadata-generate-system-name-options"></datalist>
+                            <datalist id="metadata-generate-client-name-options"></datalist>
+                            <div style="display:flex; gap:0.6em; align-items:center; margin-top:0.6em; flex-wrap:wrap;">
+                                <button type="button" onclick="generateMetadataClientConfig()" style="padding:0.45em 0.8em; background:#6a1b9a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Generate Config</button>
+                                <span id="metadata-generate-status" style="font-size:0.84em; color:#666;">Select an imported DAT first.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Stats bar -->
+            <div id="metadata-stats" style="display: flex; gap: 1.5em; align-items: center; margin-bottom: 1em; padding: 0.7em 1em; background: #f5f5f5; border-radius: 6px; font-size: 0.9em; color: #555; flex-wrap: wrap;">
+                Loading stats...
+            </div>
+            <!-- Search/filter row -->
+            <div style="display: flex; gap: 0.6em; align-items: center; margin-bottom: 1em; flex-wrap: wrap;">
+                <input id="metadata-search" type="search" placeholder="Search title or filename…" style="flex: 1; min-width: 200px; padding: 0.45em 0.7em; border: 1px solid #ccc; border-radius: 4px;" oninput="debounceMetadataSearch()">
+                <input id="metadata-year-filter" type="number" placeholder="Year" min="1950" max="2030" style="width: 90px; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;" oninput="debounceMetadataSearch()">
+                <input id="metadata-publisher-filter" type="text" placeholder="Publisher…" style="width: 160px; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;" oninput="debounceMetadataSearch()">
+                <select id="metadata-provider-filter" style="padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;" onchange="loadMetadataEntries(1)">
+                    <option value="">All providers</option>
+                </select>
+                <button type="button" onclick="loadMetadataEntries(1)" style="padding: 0.45em 0.8em; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Search</button>
+                <button type="button" onclick="deleteAllMetadataRecords()" style="padding: 0.45em 0.8em; background: #c62828; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Delete All Metadata</button>
+                <span style="font-size:0.82em; color:#b71c1c; font-weight:600;">Danger zone: permanently removes all metadata, tags, and pack links.</span>
+            </div>
+            <!-- Entries list -->
+            <div id="metadata-entries-list" style="font-size: 0.92em;">Loading...</div>
+            <!-- Pagination -->
+            <div id="metadata-pagination" style="display: flex; gap: 0.5em; align-items: center; margin-top: 1em; justify-content: center; flex-wrap: wrap;"></div>
+            <!-- Editor -->
+            <div id="metadata-editor-panel" style="display:none; margin-top: 1em; padding: 1em; border: 1px solid #d9d9d9; border-radius: 8px; background: #fafafa;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:1em; margin-bottom:0.6em;">
+                    <strong>Metadata Editor</strong>
+                    <span id="metadata-editor-file" style="font-size:0.85em; color:#666;"></span>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.6em; margin-bottom:0.8em;">
+                    <label style="margin:0; font-size:0.9em; color:#444;">
+                        <input id="metadata-edit-advanced-toggle" type="checkbox" onchange="toggleMetadataEditorAdvanced()" style="margin-right:0.35em;">
+                        Allow advanced edits
+                    </label>
+                    <span style="font-size:0.8em; color:#888;">Risky fields are read-only until enabled.</span>
+                </div>
+                <input id="metadata-edit-file-id" type="hidden">
+                <div style="display:grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 0.6em;">
+                    <div id="metadata-editor-advanced-fields" style="display:block; grid-column: 1 / -1;">
+                        <div style="display:grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 0.6em; margin-bottom:0.6em;">
+                            <input id="metadata-edit-system" type="text" placeholder="System" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-client" type="text" placeholder="Client" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-map-name" type="text" placeholder="Map Name" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-source-path" type="text" placeholder="Native Source Path" style="padding:0.45em; border:1px solid #ccc; border-radius:4px; grid-column: span 2;">
+                            <input id="metadata-edit-virtual-path" type="text" placeholder="Virtual Path" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-file-extension" type="text" placeholder="Original Extension" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-content-type" type="text" placeholder="Content Type" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <input id="metadata-edit-archive-format" type="text" placeholder="Archive Format" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                            <div style="display:flex; gap:0.8em; align-items:center; padding:0.2em 0;">
+                                <label style="margin:0;"><input id="metadata-edit-is-archive" type="checkbox" style="margin-right:0.35em;">Archive</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <input id="metadata-edit-title" type="text" placeholder="Title" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-media-type" type="text" placeholder="Media Type" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-genre" type="text" placeholder="Genre" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-app-type" type="text" placeholder="App Type" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-year" type="number" placeholder="Year" min="1950" max="2030" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-release-date" type="text" placeholder="Release Date" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-release-precision" type="text" placeholder="Release Precision" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-rom-size" type="number" placeholder="ROM Size" min="0" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-publisher" type="text" placeholder="Publisher" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-region" type="text" placeholder="Region" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-language" type="text" placeholder="Language" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-metadata-provider" type="text" placeholder="Metadata Provider" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-metadata-source" type="text" placeholder="Metadata Source" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-metadata-extension" type="text" placeholder="Metadata Extension" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-transfs-path" type="text" placeholder="TransFS Path" style="padding:0.45em; border:1px solid #ccc; border-radius:4px; grid-column: span 2;">
+                    <input id="metadata-edit-tags" type="text" placeholder="Metadata Tags (comma-separated)" style="padding:0.45em; border:1px solid #ccc; border-radius:4px;">
+                    <input id="metadata-edit-pack-names" type="text" placeholder="Pack Names (comma-separated)" style="padding:0.45em; border:1px solid #ccc; border-radius:4px; grid-column: span 2;">
+                    <div style="display:flex; gap:0.8em; align-items:center; padding:0.2em 0;">
+                        <label style="margin:0;"><input id="metadata-edit-revision" type="checkbox" style="margin-right:0.35em;">Revision</label>
+                        <label style="margin:0;"><input id="metadata-edit-proto" type="checkbox" style="margin-right:0.35em;">Prototype</label>
+                        <label style="margin:0;"><input id="metadata-edit-homebrew" type="checkbox" style="margin-right:0.35em;">Homebrew</label>
+                    </div>
+                </div>
+                <div style="display:flex; gap:0.6em; align-items:center; margin-top:0.8em;">
+                    <button type="button" onclick="saveMetadataEntry()" style="padding:0.45em 0.9em; background:#2e7d32; color:#fff; border:none; border-radius:4px; cursor:pointer;">Save</button>
+                    <button type="button" onclick="deleteCurrentMetadataRecord()" style="padding:0.45em 0.9em; background:#c62828; color:#fff; border:none; border-radius:4px; cursor:pointer;">Delete This Record</button>
+                    <button type="button" onclick="closeMetadataEditor()" style="padding:0.45em 0.9em; background:#888; color:#fff; border:none; border-radius:4px; cursor:pointer;">Close</button>
+                    <span id="metadata-editor-status" style="font-size:0.9em; color:#666;"></span>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <!-- Browse Native Tab -->
     <div id="browse-native-tab" class="tab-content">
@@ -80,6 +237,21 @@
             <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
                 <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">/mnt/filestorefs/Native</div>
                 <button id="sync-native-db-btn" onclick="syncDatabaseNative()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #9C27B0; color: white; border: none; border-radius: 3px; display: none;" title="Sync database for this native folder">🔄 Sync contents</button>
+                <button id="native-scan-toggle-btn" onclick="toggleNativeScanPanel()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #1976d2; color: white; border: none; border-radius: 3px;" title="Toggle metadata scanner">🔍 Scan Metadata</button>
+            </div>
+            <!-- Metadata scanner panel (collapsible) -->
+            <div id="native-scan-panel" style="display: none; background: #f0f4ff; border: 1px solid #bbcfee; border-radius: 6px; padding: 0.8em; margin-bottom: 1em;">
+                <div style="display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap;">
+                    <label for="native-provider-select" style="font-weight: 600;">Provider:</label>
+                    <select id="native-provider-select" style="min-width: 340px; padding: 0.4em; border: 1px solid #ccc; border-radius: 4px;"></select>
+                    <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                        <input id="native-recursive" type="checkbox" checked>
+                        <span>Recursive</span>
+                    </label>
+                    <button type="button" onclick="scanNativePreview()" style="padding: 0.4em 0.8em; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Preview</button>
+                    <button type="button" onclick="applyNativeScan()" style="padding: 0.4em 0.8em; background: #2e7d32; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Apply</button>
+                </div>
+                <div id="native-scan-results" style="margin-top: 0.8em; font-size: 0.9em; color: #444; max-height: 300px; overflow-y: auto;"></div>
             </div>
             <div class="file-list" id="native-files">Loading...</div>
         </div>
@@ -166,9 +338,9 @@
                     <div>
                         <label style="display: block; margin-bottom: 0.3em; font-weight: 500;">Mode</label>
                         <select id="config_database_mode" style="width: 100%; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px;">
-                            <option value="hybrid">Hybrid</option>
-                            <option value="memory">Memory</option>
-                            <option value="sqlite">SQLite</option>
+                            <option value="enabled">Database Only (PostgreSQL)</option>
+                            <option value="hybrid">Hybrid (Database + Cache Fallback)</option>
+                            <option value="disabled">Cache Only</option>
                         </select>
                     </div>
                     <div>
@@ -225,7 +397,7 @@
                 <div style="display: flex; flex-direction: column; gap: 1em;">
                     <label style="display: flex; align-items: center; cursor: pointer;">
                         <input id="config_advanced_options" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
-                        <span>Enable Advanced Options</span>
+                        <span>Enable Advanced and Incomplete Options and features</span>
                     </label>
                     <label style="display: flex; align-items: center; cursor: pointer;">
                         <input id="config_show_real_path_tooltips" type="checkbox" style="accent-color: #2196F3; margin-right: 0.5em;">
@@ -389,42 +561,88 @@
     </div>
     
     <!-- Test Results Tab -->
-    <div id="test-results-tab" class="tab-content">
+    <!-- Debug Tab (combines Test Results and Logs) -->
+    <div id="debug-tab" class="tab-content">
         <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
-            <h2>Test Results</h2>
-            <div style="display: flex; gap: 1em; margin-bottom: 1.5em; flex-wrap: wrap;">
-                <div style="display: flex; gap: 0.5em;">
-                    <button onclick="runTests('foundation')" style="padding: 0.6em 1.2em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Foundation</button>
-                    <button onclick="runTests('systems')" style="padding: 0.6em 1.2em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Systems</button>
-                    <button onclick="runTests('performance')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚡ Performance</button>
-                    <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
+            <h2>Debug</h2>
+            
+            <!-- Debug Sub-tabs Navigation -->
+            <div style="display: flex; gap: 0.5em; margin-bottom: 1.5em; border-bottom: 2px solid #eee; flex-wrap: wrap;">
+                <button onclick="switchDebugSubtab('test-results')" class="debug-subtab-btn active" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid #2196F3; cursor: pointer; font-size: 0.95em; color: #2196F3; font-weight: 500;">Test Results</button>
+                <button onclick="switchDebugSubtab('logs')" class="debug-subtab-btn" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 0.95em; color: #666; font-weight: 500;">Logs</button>
+                <button onclick="switchDebugSubtab('config')" class="debug-subtab-btn" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 0.95em; color: #666; font-weight: 500;">Config & System</button>
+            </div>
+            
+            <!-- Test Results Subtab -->
+            <div id="debug-test-results" class="debug-subtab active">
+                <div style="display: flex; gap: 1em; margin-bottom: 1.5em; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 0.5em;">
+                        <button onclick="runTests('foundation')" style="padding: 0.6em 1.2em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Foundation</button>
+                        <button onclick="runTests('systems')" style="padding: 0.6em 1.2em; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Systems</button>
+                        <button onclick="runTests('performance')" style="padding: 0.6em 1.2em; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">⚡ Performance</button>
+                        <button onclick="runTests('snapshots')" style="padding: 0.6em 1.2em; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">✓ Snapshots</button>
+                    </div>
+                    <div style="display: flex; gap: 0.5em;">
+                        <button onclick="loadLastTestResults()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Results</button>
+                        <button onclick="clearTestResults()" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Clear</button>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 0.5em;">
-                    <button onclick="loadLastTestResults()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Reload Results</button>
-                    <button onclick="clearTestResults()" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Clear</button>
+                <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
+                    <div><strong id="test-status-text">Status</strong></div>
+                    <div id="test-run-indicator" style="margin-top: 0.5em; display: none; align-items: center; gap: 0.5em; font-size: 0.95em; color: #444;">
+                        <span id="test-run-indicator-icon" style="font-size: 1.1em;">⏳</span>
+                        <span id="test-run-indicator-text">In progress</span>
+                    </div>
+                </div>
+                <div id="test-results-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
+                    <div style="color: #999; text-align: center; padding: 2em;">No test results yet. Click "Run Tests" to start.</div>
                 </div>
             </div>
-            <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
-                <div><strong id="test-status-text">Status</strong></div>
-                <div id="test-run-indicator" style="margin-top: 0.5em; display: none; align-items: center; gap: 0.5em; font-size: 0.95em; color: #444;">
-                    <span id="test-run-indicator-icon" style="font-size: 1.1em;">⏳</span>
-                    <span id="test-run-indicator-text">In progress</span>
+            
+            <!-- Logs Subtab -->
+            <div id="debug-logs" class="debug-subtab" style="display: none;">
+                <div style="margin-bottom: 1em;">
+                    <button type="button" onclick="refreshFuseLog()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; margin-right: 0.5em;">Refresh FUSE Log</button>
+                    <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em;">Clear FUSE Log Window</button>
                 </div>
+                <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:400px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 0.9em;"></div>
             </div>
-            <div id="test-results-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
-                <div style="color: #999; text-align: center; padding: 2em;">No test results yet. Click "Run Tests" to start.</div>
+            
+            <!-- Config & System Subtab -->
+            <div id="debug-config" class="debug-subtab" style="display: none;">
+                <div style="margin-bottom: 1.5em;">
+                    <h3 style="margin: 0 0 1em 0; color: #333;">Configuration Reload</h3>
+                    <p style="color: #666; margin: 0 0 1em 0; line-height: 1.4;">
+                        Reload client and source mapping configurations from disk. This clears the config cache in the web service. 
+                        <strong>Note:</strong> If you're running in Docker, the FUSE process maintains its own config copy—you'll need to restart the container for FUSE to pick up changes.
+                    </p>
+                    <button id="reload-config-btn" onclick="reloadClientMappings()" style="padding: 0.8em 1.6em; background: #FF6B6B; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; font-weight: 500; transition: background 0.2s;">
+                        🔄 Reload Mappings from Disk
+                    </button>
+                    <div id="reload-status" style="margin-top: 1em; padding: 1em; background: #f5f5f5; border-radius: 4px; display: none; border-left: 4px solid #667eea;">
+                        <div id="reload-status-message"></div>
+                    </div>
+                </div>
+                <hr style="margin: 2em 0; border: none; border-top: 1px solid #ddd;">
+                <div>
+                    <h3 style="margin: 0 0 1em 0; color: #333;">System Information</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5em;">
+                        <div>
+                            <strong style="color: #555;">Active Client Config Set:</strong>
+                            <div id="active-client-config" style="color: #999; margin-top: 0.3em;">Loading…</div>
+                        </div>
+                        <div>
+                            <strong style="color: #555;">Active Source Config Set:</strong>
+                            <div id="active-source-config" style="color: #999; margin-top: 0.3em;">Loading…</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Logs Tab -->
-    <div id="debug-tab" class="tab-content">
-        <div style="max-width: 1400px; margin: 2em auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px #0001; padding: 2em;">
-            <h2>Logs</h2>
-            <div id="fuse-log" style="padding:1em; background:#181c20; color:#e0e0e0; height:280px; border-radius:8px; font-family:monospace; overflow-y:auto; white-space: pre; box-shadow: 0 2px 8px #0002; border: 1px solid #222; font-size: 1em;"></div>
-            <button type="button" onclick="refreshFuseLog()" style="margin-top:0.5em;">Refresh FUSE Log</button>
-            <button type="button" onclick="document.getElementById('fuse-log').textContent = ''" style="background:#888; margin-top:0.5em;">Clear FUSE Log Window</button>
-        </div>
+    <!-- HIDDEN: Old test-results-tab (preserved for backward compatibility of JavaScript) -->
+    <div id="test-results-tab" class="tab-content" style="display: none;">
     </div>
 
     <script>
@@ -439,6 +657,17 @@
         let currentPacksData = null;
         let showAllPacks = false;
         let systemsMetaMap = {};
+        let metadataCurrentPage = 1;
+        let metadataSearchTimer = null;
+        let nativeScanPanelOpen = false;
+        let metadataEditorOpen = false;
+        let metadataEditorShowAdvanced = false;
+        let metadataDatFormats = [];
+        let metadataDatActiveJobId = null;
+        let metadataDatJobPollTimer = null;
+        let metadataDatSelectedPath = '';
+        let metadataDatDefaultFolder = '';
+        let metadataDatFilesCache = [];
         
         // Initialize log state tracker for carriage return support (download progress)
         window.logState = { 
@@ -522,6 +751,8 @@
             if (!skipHistory) {
                 if (tabName === 'browse-native') {
                     history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${currentNativePath.replace('/mnt/filestorefs/Native', '')}`);
+                } else if (tabName === 'metadata') {
+                    history.pushState({ tab: 'metadata' }, '', '/metadata');
                 } else if (tabName === 'browse-virtual') {
                     await checkZaparooStatus();
                     history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
@@ -534,6 +765,13 @@
             
             if (tabName === 'browse-native') {
                 loadDirectory(currentNativePath, 'native', true);
+            } else if (tabName === 'metadata') {
+                await loadMetadataDatFormats();
+                await loadMetadataConfiguredClientNames();
+                await refreshMetadataDatFiles();
+                await refreshMetadataDatImports();
+                await loadMetadataStats();
+                await loadMetadataEntries(metadataCurrentPage);
             } else if (tabName === 'browse-virtual') {
                 await loadDirectory(currentVirtualPath, 'virtual', true);
             } else if (tabName === 'config') {
@@ -548,6 +786,1008 @@
         }
         
         // =============================================
+        // BROWSE NATIVE — METADATA SCANNER
+        // =============================================
+        async function toggleNativeScanPanel() {
+            const panel = document.getElementById('native-scan-panel');
+            const btn = document.getElementById('native-scan-toggle-btn');
+            nativeScanPanelOpen = !nativeScanPanelOpen;
+            panel.style.display = nativeScanPanelOpen ? 'block' : 'none';
+            if (btn) btn.style.background = nativeScanPanelOpen ? '#0d47a1' : '#1976d2';
+            if (nativeScanPanelOpen) {
+                await loadNativeScanProviders();
+                const resultsEl = document.getElementById('native-scan-results');
+                if (resultsEl && !resultsEl.textContent.trim()) {
+                    resultsEl.textContent = 'Navigate to a folder above, then click Preview or Apply.';
+                }
+            }
+        }
+
+        async function loadNativeScanProviders(force = false) {
+            const select = document.getElementById('native-provider-select');
+            if (!select) return;
+            if (force) select.innerHTML = '';
+            if (select.options.length > 0) return;
+            try {
+                const resp = await fetch('/api/metadata/providers');
+                const data = await resp.json();
+                const providers = data.providers || [];
+                select.innerHTML = providers.map(p =>
+                    `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} [${escapeHtml(p.kind)}]</option>`
+                ).join('');
+                if (!providers.length) select.innerHTML = '<option value="">No providers configured</option>';
+            } catch {
+                select.innerHTML = '<option value="">Error loading providers</option>';
+            }
+        }
+
+        async function scanNativePreview() {
+            const select = document.getElementById('native-provider-select');
+            const recursive = document.getElementById('native-recursive')?.checked ?? true;
+            const resultsEl = document.getElementById('native-scan-results');
+            const providerId = select?.value;
+            if (!providerId) {
+                resultsEl.innerHTML = '<span style="color:#d32f2f;">Choose a provider first.</span>';
+                return;
+            }
+            resultsEl.innerHTML = 'Scanning\u2026';
+            try {
+                const r = await fetch('/api/metadata/scan-preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder: currentNativePath, provider_id: providerId, recursive, limit: 250 }),
+                });
+                const data = await r.json();
+                if (data.error) { resultsEl.innerHTML = `<span style="color:#d32f2f;">${escapeHtml(data.error)}</span>`; return; }
+                const sample = (data.results || []).filter(x => x.matched).slice(0, 25);
+                let html = `<div><strong>Scanned:</strong> ${data.files_scanned} &nbsp;&nbsp;<strong>Matches:</strong> ${data.matches_found} &nbsp;&nbsp;<strong>Provider:</strong> ${escapeHtml(data.provider?.name || providerId)}</div>`;
+                html += '<hr style="border:none;border-top:1px solid #c8d8f0;margin:0.5em 0;">';
+                html += sample.length
+                    ? sample.map(item => {
+                        const title = item.metadata?.title ? ` \u2192 <em>${escapeHtml(item.metadata.title)}</em>` : '';
+                        const method = item.match_method ? ` <span style="color:#888;">(${escapeHtml(item.match_method)})</span>` : '';
+                        return `<div>\u2705 ${escapeHtml(item.filename)}${title}${method}</div>`;
+                      }).join('')
+                    : '<div style="color:#777;">No matches found in preview.</div>';
+                resultsEl.innerHTML = html;
+            } catch {
+                resultsEl.innerHTML = '<span style="color:#d32f2f;">Scan failed.</span>';
+            }
+        }
+
+        async function applyNativeScan() {
+            const select = document.getElementById('native-provider-select');
+            const recursive = document.getElementById('native-recursive')?.checked ?? true;
+            const resultsEl = document.getElementById('native-scan-results');
+            const providerId = select?.value;
+            if (!providerId) {
+                resultsEl.innerHTML = '<span style="color:#d32f2f;">Choose a provider first.</span>';
+                return;
+            }
+            resultsEl.innerHTML = 'Applying metadata\u2026';
+            try {
+                const r = await fetch('/api/metadata/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder: currentNativePath, provider_id: providerId, recursive, limit: 2000 }),
+                });
+                const data = await r.json();
+                if (data.error) { resultsEl.innerHTML = `<span style="color:#d32f2f;">${escapeHtml(data.error)}</span>`; return; }
+                let html = `<div><strong>Scanned:</strong> ${data.files_scanned} &nbsp;&nbsp;<strong>Matches:</strong> ${data.matches_found} &nbsp;&nbsp;<strong>Applied:</strong> ${data.applied} &nbsp;&nbsp;<strong>Skipped:</strong> ${data.skipped}</div>`;
+                if (data.errors?.length) html += data.errors.slice(0, 5).map(e => `<div style="color:#d32f2f;">${escapeHtml(e)}</div>`).join('');
+                resultsEl.innerHTML = html;
+            } catch {
+                resultsEl.innerHTML = '<span style="color:#d32f2f;">Apply failed.</span>';
+            }
+        }
+
+        // =============================================
+        // METADATA TAB — DAT IMPORTER
+        // =============================================
+        async function loadMetadataDatFormats() {
+            const formatSelect = document.getElementById('metadata-dat-format');
+            const folderInfoEl = document.getElementById('metadata-dat-folder-info');
+            const summaryEl = document.getElementById('metadata-dat-import-summary');
+            if (!formatSelect) return;
+
+            try {
+                const response = await fetch('/api/metadata/xml-formats');
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                metadataDatFormats = data.formats || [];
+                metadataDatDefaultFolder = (data.default_dat_folder || '/mnt/filestorefs/Native/DATs').trim();
+                formatSelect.innerHTML = metadataDatFormats.length
+                    ? metadataDatFormats.map(format => `<option value="${escapeHtml(format.id)}">${escapeHtml(format.id)}</option>`).join('')
+                    : '<option value="">No XML formats available</option>';
+
+                if (folderInfoEl) folderInfoEl.textContent = `DAT folder: ${metadataDatDefaultFolder}`;
+                if (summaryEl) {
+                    summaryEl.textContent = metadataDatFormats.length
+                        ? `${metadataDatFormats.length} file format definitions available`
+                        : 'No file format definitions available';
+                }
+            } catch (error) {
+                formatSelect.innerHTML = '<option value="">Failed to load formats</option>';
+                if (folderInfoEl) folderInfoEl.textContent = 'DAT folder: unavailable';
+                if (summaryEl) summaryEl.textContent = `Importer unavailable: ${error.message}`;
+            }
+        }
+
+        function metadataSlugFromFilename(name = '') {
+            const trimmed = (name || '').trim().replace(/\.[^.]+$/, '');
+            if (!trimmed) return '';
+            return trimmed
+                .replace(/[^A-Za-z0-9._-]+/g, '_')
+                .replace(/^[_\.-]+|[_\.-]+$/g, '')
+                .toLowerCase();
+        }
+
+        function applyMetadataDatSelectionDefaults(filename = '') {
+            const configSetInput = document.getElementById('metadata-generate-config-set');
+            if (!configSetInput || configSetInput.value.trim()) return;
+            const slug = metadataSlugFromFilename(filename);
+            if (slug) configSetInput.value = slug;
+        }
+
+        async function loadMetadataConfiguredClientNames() {
+            const clientNameInput = document.getElementById('metadata-generate-client-name');
+            const systemNameInput = document.getElementById('metadata-generate-system-name');
+            const optionsList = document.getElementById('metadata-generate-client-name-options');
+            const systemOptionsList = document.getElementById('metadata-generate-system-name-options');
+            if (!clientNameInput || !optionsList || !systemOptionsList) return;
+
+            try {
+                const response = await fetch('/api/metadata/configured-client-names');
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                const names = data.client_names || [];
+                const datalistMarkup = names
+                    .map(name => `<option value="${escapeHtml(name)}"></option>`)
+                    .join('');
+                optionsList.innerHTML = datalistMarkup;
+                systemOptionsList.innerHTML = datalistMarkup;
+
+                if (!clientNameInput.value.trim() && names.length) {
+                    clientNameInput.value = names[0];
+                }
+                if (!systemNameInput?.value.trim() && names.length) {
+                    systemNameInput.value = names[0];
+                }
+            } catch {
+                optionsList.innerHTML = '';
+                systemOptionsList.innerHTML = '';
+            }
+        }
+
+        async function refreshMetadataDatFiles() {
+            const listEl = document.getElementById('metadata-dat-files');
+            const summaryEl = document.getElementById('metadata-dat-import-summary');
+            const fileSelectEl = document.getElementById('metadata-dat-file-select');
+            const folderInfoEl = document.getElementById('metadata-dat-folder-info');
+            if (!listEl) return;
+
+            listEl.innerHTML = 'Loading DAT files…';
+            try {
+                const response = await fetch('/api/metadata/dat-files');
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                const files = data.files || [];
+                metadataDatFilesCache = files;
+                metadataDatDefaultFolder = (data.folder || metadataDatDefaultFolder || '').trim();
+                if (folderInfoEl) folderInfoEl.textContent = `DAT folder: ${metadataDatDefaultFolder || '/mnt/filestorefs/Native/DATs'}`;
+                const suggestedCount = files.filter(file => file.suggested).length;
+                if (summaryEl) {
+                    summaryEl.textContent = `${files.length} DAT/XML files found · ${suggestedCount} suggested for import`;
+                }
+
+                const selectedRecord = files.find(file => file.path === metadataDatSelectedPath);
+                if (!selectedRecord && files.length) {
+                    const autoPick = files.find(file => file.suggested) || files[0];
+                    metadataDatSelectedPath = autoPick.path;
+                    applyMetadataDatSelectionDefaults(autoPick.filename || '');
+                }
+
+                if (fileSelectEl) {
+                    if (!files.length) {
+                        fileSelectEl.innerHTML = '<option value="">No DAT/XML files found</option>';
+                    } else {
+                        fileSelectEl.innerHTML = [
+                            '<option value="">Select DAT/XML file</option>',
+                            ...files.map(file => `<option value="${escapeHtml(file.path)}">${escapeHtml(file.filename)} · ${escapeHtml(file.status)}</option>`),
+                        ].join('');
+                    }
+
+                    const hasSelected = files.some(file => file.path === metadataDatSelectedPath);
+                    if (hasSelected) {
+                        fileSelectEl.value = metadataDatSelectedPath;
+                    } else {
+                        metadataDatSelectedPath = '';
+                        fileSelectEl.value = '';
+                    }
+                }
+
+                if (!files.length) {
+                    listEl.innerHTML = '<div style="color:#777;">No DAT/XML files found in the selected folder.</div>';
+                    return;
+                }
+
+                listEl.innerHTML = files.map(file => {
+                    const statusColor = file.status === 'imported' ? '#2e7d32' : (file.status === 'changed' ? '#ef6c00' : '#1976d2');
+                    const importedText = (file.imports || []).length
+                        ? `${file.imports[0].xml_format} · ${new Date((file.imports[0].imported_at || 0) * 1000).toLocaleString()}`
+                        : 'Not imported yet';
+                    const isSelected = metadataDatSelectedPath && metadataDatSelectedPath === file.path;
+                    return `
+                        <div data-dat-path="${escapeHtml(file.path)}" style="display:grid; grid-template-columns: 1fr auto auto; gap:0.6em; align-items:center; padding:0.45em 0; border-bottom:1px solid #eef2f8; background:${isSelected ? '#e3f2fd' : 'transparent'};">
+                            <div>
+                                <div style="font-weight:600; color:#223;">${escapeHtml(file.filename)}</div>
+                                <div style="font-size:0.8em; color:#666;">${escapeHtml(file.path)}</div>
+                                <div style="font-size:0.78em; color:#888;">${escapeHtml(importedText)}</div>
+                            </div>
+                            <span style="font-size:0.78em; color:#fff; background:${statusColor}; border-radius:999px; padding:0.2em 0.55em; text-transform:uppercase; letter-spacing:0.03em;">${escapeHtml(file.status)}</span>
+                            <button type="button" data-role="dat-select-btn" data-dat-path="${escapeHtml(file.path)}" onclick="selectMetadataDatFile('${encodeURIComponent(file.path)}','${encodeURIComponent(file.filename)}')" style="padding:0.35em 0.65em; background:${isSelected ? '#1565c0' : '#455a64'}; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.78em;">${isSelected ? 'Selected' : 'Select'}</button>
+                        </div>`;
+                }).join('');
+                updateMetadataDatSelectionUI();
+            } catch (error) {
+                listEl.innerHTML = `<div style="color:#d32f2f;">${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function updateMetadataDatSelectionUI() {
+            const selectedPath = (metadataDatSelectedPath || '').trim();
+            const fileSelectEl = document.getElementById('metadata-dat-file-select');
+            const listEl = document.getElementById('metadata-dat-files');
+
+            if (fileSelectEl && selectedPath && fileSelectEl.value !== selectedPath) {
+                fileSelectEl.value = selectedPath;
+            }
+
+            if (!listEl) return;
+            const cards = listEl.querySelectorAll('[data-dat-path]');
+            cards.forEach(card => {
+                const cardPath = card.getAttribute('data-dat-path') || '';
+                card.style.background = (selectedPath && cardPath === selectedPath) ? '#e3f2fd' : 'transparent';
+            });
+
+            const buttons = listEl.querySelectorAll('button[data-role="dat-select-btn"]');
+            buttons.forEach(button => {
+                const buttonPath = button.getAttribute('data-dat-path') || '';
+                const isSelected = selectedPath && buttonPath === selectedPath;
+                button.textContent = isSelected ? 'Selected' : 'Select';
+                button.style.background = isSelected ? '#1565c0' : '#455a64';
+            });
+        }
+
+        function appendMetadataDatLog(message = '') {
+            const logEl = document.getElementById('metadata-dat-log');
+            if (!logEl || !message) return;
+            const existing = logEl.textContent || '';
+            logEl.textContent = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${message}`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function selectMetadataDatFile(encodedPath = '', encodedFilename = '') {
+            const path = decodeURIComponent(encodedPath || '');
+            const filename = decodeURIComponent(encodedFilename || '');
+            metadataDatSelectedPath = path;
+            applyMetadataDatSelectionDefaults(filename || path.split('/').pop() || '');
+
+            const fileSelectEl = document.getElementById('metadata-dat-file-select');
+            if (fileSelectEl) fileSelectEl.value = path;
+
+            const statusEl = document.getElementById('metadata-dat-job-status');
+            if (statusEl) statusEl.textContent = `Selected DAT file: ${filename || path}`;
+
+            updateMetadataDatSelectionUI();
+        }
+
+        function onMetadataDatDropdownChanged() {
+            const fileSelectEl = document.getElementById('metadata-dat-file-select');
+            const statusEl = document.getElementById('metadata-dat-job-status');
+            const selectedPath = (fileSelectEl?.value || '').trim();
+            const selectedFilename = selectedPath ? selectedPath.split('/').pop() : '';
+            metadataDatSelectedPath = selectedPath;
+            applyMetadataDatSelectionDefaults(selectedFilename);
+            if (statusEl) {
+                statusEl.textContent = selectedPath
+                    ? `Selected DAT file: ${selectedFilename}`
+                    : 'Idle';
+            }
+            updateMetadataDatSelectionUI();
+        }
+
+        async function uploadMetadataDatFile() {
+            const fileInput = document.getElementById('metadata-dat-upload-file');
+            const statusEl = document.getElementById('metadata-dat-job-status');
+            const logEl = document.getElementById('metadata-dat-log');
+
+            const file = fileInput?.files?.[0];
+            if (!file) {
+                if (statusEl) statusEl.textContent = 'Choose a DAT/XML file from your PC first';
+                return;
+            }
+
+            const nameLower = (file.name || '').toLowerCase();
+            if (!(nameLower.endsWith('.dat') || nameLower.endsWith('.xml'))) {
+                if (statusEl) statusEl.textContent = 'Only .dat or .xml files are supported';
+                return;
+            }
+
+            if (statusEl) statusEl.textContent = `Uploading ${file.name}…`;
+            appendMetadataDatLog(`Uploading DAT/XML from browser: ${file.name}`);
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/api/metadata/dat-upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                metadataDatSelectedPath = data.path || '';
+                applyMetadataDatSelectionDefaults(data.filename || '');
+                if (statusEl) statusEl.textContent = `Uploaded ${data.filename} to ${data.folder}`;
+                appendMetadataDatLog(`Upload complete: ${data.path}`);
+                if (fileInput) fileInput.value = '';
+
+                await refreshMetadataDatFiles();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Upload failed: ${error.message}`;
+                appendMetadataDatLog(`Upload failed: ${error.message}`);
+            }
+        }
+
+        async function startMetadataDatImport(encodedPath = '') {
+            const path = decodeURIComponent(encodedPath || '');
+            const formatSelect = document.getElementById('metadata-dat-format');
+            const logEl = document.getElementById('metadata-dat-log');
+            const statusEl = document.getElementById('metadata-dat-job-status');
+            const fileSelectEl = document.getElementById('metadata-dat-file-select');
+            const dropdownPath = (fileSelectEl?.value || '').trim();
+            let datPath = path || metadataDatSelectedPath || dropdownPath;
+            const xmlFormat = formatSelect?.value || '';
+
+            if (!datPath) {
+                if (statusEl) statusEl.textContent = 'Select a DAT file from the dropdown or list first';
+                return;
+            }
+            if (!xmlFormat) {
+                if (statusEl) statusEl.textContent = 'Choose a File Format first';
+                return;
+            }
+
+            metadataDatSelectedPath = datPath;
+            if (fileSelectEl) fileSelectEl.value = datPath;
+            appendMetadataDatLog(`Starting import for ${datPath}`);
+            if (statusEl) statusEl.textContent = 'Starting…';
+
+            try {
+                const response = await fetch('/api/metadata/dat-import/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dat_path: datPath, xml_format: xmlFormat }),
+                });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                metadataDatActiveJobId = data.job_id;
+                if (metadataDatJobPollTimer) clearTimeout(metadataDatJobPollTimer);
+                await pollMetadataDatImportJob();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Import failed: ${error.message}`;
+                if (logEl) logEl.textContent += `Import failed: ${error.message}`;
+            }
+        }
+
+        async function startMetadataDatImportFromInput() {
+            await startMetadataDatImport('');
+        }
+
+        async function pollMetadataDatImportJob() {
+            if (!metadataDatActiveJobId) return;
+            const logEl = document.getElementById('metadata-dat-log');
+            const statusEl = document.getElementById('metadata-dat-job-status');
+
+            try {
+                const response = await fetch(`/api/metadata/dat-import/jobs/${metadataDatActiveJobId}`);
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                if (logEl) {
+                    logEl.textContent = (data.logs || []).join('\n') || 'No log output yet.';
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+                if (statusEl) {
+                    const summary = data.result?.item_count ? ` · ${data.result.item_count} entries` : '';
+                    statusEl.textContent = `${data.status || 'unknown'}${summary}`;
+                }
+
+                if (data.status === 'running') {
+                    metadataDatJobPollTimer = setTimeout(() => pollMetadataDatImportJob(), 700);
+                    return;
+                }
+
+                metadataDatActiveJobId = null;
+                if (metadataDatJobPollTimer) clearTimeout(metadataDatJobPollTimer);
+                await refreshMetadataDatFiles();
+                await refreshMetadataDatImports();
+                if (data.result?.dat_import_id) {
+                    const sourceName = (data.result?.source_path || '').split('/').pop() || '';
+                    selectMetadataImportedDat(data.result.dat_import_id, encodeURIComponent(sourceName));
+                }
+                if (data.status === 'completed' && Number(data.result?.item_count || 0) === 0) {
+                    appendMetadataDatLog('Warning: 0 entries imported. Try a different File Format for this DAT.');
+                }
+                await loadNativeScanProviders(true);
+                await loadMetadataStats();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Polling failed: ${error.message}`;
+            }
+        }
+
+        async function refreshMetadataDatImports() {
+            const listEl = document.getElementById('metadata-dat-imports');
+            if (!listEl) return;
+            listEl.innerHTML = 'Loading imports…';
+            try {
+                const response = await fetch('/api/metadata/dat-imports');
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                const imports = data.imports || [];
+                if (!imports.length) {
+                    listEl.innerHTML = '<div style="color:#777;">No DAT/XML catalogs imported yet.</div>';
+                    return;
+                }
+
+                listEl.innerHTML = imports.map(record => {
+                    const activeId = document.getElementById('metadata-generate-import-id')?.value || '';
+                    const isSelected = String(record.dat_import_id) === String(activeId);
+                    const statusColor = record.status === 'completed' ? '#2e7d32' : (record.status === 'failed' ? '#d32f2f' : '#ef6c00');
+                    return `
+                        <div style="border:1px solid ${isSelected ? '#6a1b9a' : '#eceff5'}; border-radius:6px; padding:0.45em; margin-bottom:0.45em; background:${isSelected ? '#f7effc' : '#fff'};">
+                            <div style="display:flex; justify-content:space-between; gap:0.5em; align-items:center;">
+                                <div style="font-weight:600; color:#223;">${escapeHtml(record.source_name)}</div>
+                                <span style="font-size:0.75em; color:#fff; background:${statusColor}; border-radius:999px; padding:0.2em 0.5em;">${escapeHtml(record.status)}</span>
+                            </div>
+                            <div style="font-size:0.78em; color:#666; margin-top:0.2em;">${escapeHtml(record.xml_format)} · ${record.item_count || 0} entries</div>
+                            <div style="font-size:0.76em; color:#888; margin-top:0.2em;">${escapeHtml(record.source_path)}</div>
+                            <div style="margin-top:0.45em; display:flex; gap:0.4em; flex-wrap:wrap;">
+                                <button type="button" onclick="selectMetadataImportedDat(${record.dat_import_id}, '${encodeURIComponent(record.source_name)}')" style="padding:0.3em 0.55em; background:#6a1b9a; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.76em;">Use for config</button>
+                            </div>
+                        </div>`;
+                }).join('');
+            } catch (error) {
+                listEl.innerHTML = `<div style="color:#d32f2f;">${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function selectMetadataImportedDat(importId, encodedSourceName = '') {
+            const sourceName = decodeURIComponent(encodedSourceName || '');
+            const importField = document.getElementById('metadata-generate-import-id');
+            const statusEl = document.getElementById('metadata-generate-status');
+            const configSetInput = document.getElementById('metadata-generate-config-set');
+            const systemNameInput = document.getElementById('metadata-generate-system-name');
+            const systemMappingInput = document.getElementById('metadata-generate-system-mapping');
+            if (importField) importField.value = importId;
+            if (statusEl) statusEl.textContent = `Selected import #${importId}${sourceName ? ` · ${sourceName}` : ''}`;
+
+            const guess = sourceName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+            if (configSetInput && !configSetInput.value) {
+                const slug = metadataSlugFromFilename(sourceName);
+                configSetInput.value = slug || 'imported';
+            }
+            if (systemNameInput && !systemNameInput.value && guess) systemNameInput.value = guess;
+            if (systemMappingInput && !systemMappingInput.value && guess) systemMappingInput.value = guess;
+            refreshMetadataDatImports();
+        }
+
+        async function generateMetadataClientConfig() {
+            const importId = document.getElementById('metadata-generate-import-id')?.value || '';
+            const configSetName = document.getElementById('metadata-generate-config-set')?.value || '';
+            const systemName = document.getElementById('metadata-generate-system-name')?.value || '';
+            const clientName = document.getElementById('metadata-generate-client-name')?.value || 'MiSTer';
+            const outputFilename = document.getElementById('metadata-generate-output-file')?.value || 'mister.yaml';
+            const manufacturer = document.getElementById('metadata-generate-manufacturer')?.value || 'Imported';
+            const systemMappingName = document.getElementById('metadata-generate-system-mapping')?.value || '';
+            const localBasePath = document.getElementById('metadata-generate-local-base')?.value || '';
+            const statusEl = document.getElementById('metadata-generate-status');
+            const logEl = document.getElementById('metadata-dat-log');
+
+            if (!importId) {
+                if (statusEl) statusEl.textContent = 'Select an imported DAT first.';
+                appendMetadataDatLog('Generate config skipped: Select an imported DAT first.');
+                return;
+            }
+            if (!configSetName.trim() || !systemName.trim()) {
+                if (statusEl) statusEl.textContent = 'Config set name and Client name are required.';
+                appendMetadataDatLog('Generate config skipped: Config set name and Client name are required.');
+                return;
+            }
+
+            if (statusEl) statusEl.textContent = 'Generating config…';
+            appendMetadataDatLog(`Generating client config from DAT import #${importId}...`);
+            try {
+                const response = await fetch('/api/metadata/dat-imports/generate-client-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dat_import_id: Number(importId),
+                        config_set_name: configSetName,
+                        system_name: systemName,
+                        client_name: clientName,
+                        manufacturer,
+                        system_mapping_name: systemMappingName || null,
+                        local_base_path: localBasePath || null,
+                        output_filename: outputFilename || null,
+                    }),
+                });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                if (statusEl) statusEl.textContent = `Generated ${data.maps_generated?.length || 0} maps in ${data.output_path}`;
+                appendMetadataDatLog(`Generated ${data.maps_generated?.length || 0} maps in ${data.output_path}`);
+                if (logEl && data.config_preview) {
+                    appendMetadataDatLog('Generated client config preview:');
+                    appendMetadataDatLog(data.config_preview);
+                }
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Generation failed: ${error.message}`;
+                appendMetadataDatLog(`Generation failed: ${error.message}`);
+            }
+        }
+
+        // =============================================
+        // METADATA BROWSER TAB
+        // =============================================
+        function debounceMetadataSearch() {
+            clearTimeout(metadataSearchTimer);
+            metadataSearchTimer = setTimeout(() => loadMetadataEntries(1), 400);
+        }
+
+        async function loadMetadataStats() {
+            const statsEl = document.getElementById('metadata-stats');
+            if (!statsEl) return;
+            try {
+                const r = await fetch('/api/metadata/stats');
+                const data = await r.json();
+                if (data.error) { statsEl.textContent = 'Stats unavailable'; return; }
+                const providerList = Object.entries(data.by_provider || {})
+                    .map(([k, v]) => `${escapeHtml(k)}: ${v}`).join(' \u00b7 ');
+                statsEl.innerHTML =
+                    `<span>\ud83d\udcc4 <strong>${data.total_files.toLocaleString()}</strong> total files</span>` +
+                    `<span>\ud83c\udff7\ufe0f <strong>${data.total_with_metadata.toLocaleString()}</strong> with metadata</span>` +
+                    `<span style="color:#1976d2;">${data.coverage_pct}% coverage</span>` +
+                    (providerList ? `<span style="color:#888; font-size:0.85em;">${providerList}</span>` : '');
+                const pf = document.getElementById('metadata-provider-filter');
+                if (pf) {
+                    const existing = new Set(Array.from(pf.options).map(o => o.value).filter(v => v));
+                    for (const prov of Object.keys(data.by_provider || {})) {
+                        if (!existing.has(prov)) {
+                            const opt = document.createElement('option');
+                            opt.value = prov;
+                            opt.textContent = prov;
+                            pf.appendChild(opt);
+                        }
+                    }
+                }
+            } catch { if (statsEl) statsEl.textContent = 'Stats unavailable'; }
+        }
+
+        async function loadMetadataEntries(page = 1) {
+            metadataCurrentPage = page;
+            const listEl = document.getElementById('metadata-entries-list');
+            const pagEl  = document.getElementById('metadata-pagination');
+            if (!listEl) return;
+            listEl.innerHTML = '<div style="padding:10px;color:#888;">Loading\u2026</div>';
+
+            const search    = document.getElementById('metadata-search')?.value || '';
+            const year      = document.getElementById('metadata-year-filter')?.value || '';
+            const publisher = document.getElementById('metadata-publisher-filter')?.value || '';
+            const provider  = document.getElementById('metadata-provider-filter')?.value || '';
+
+            const params = new URLSearchParams({ page, limit: 50 });
+            if (search)    params.set('search', search);
+            if (year)      params.set('year', year);
+            if (publisher) params.set('publisher', publisher);
+            if (provider)  params.set('provider', provider);
+
+            try {
+                const r = await fetch(`/api/metadata/entries?${params}`);
+                const data = await r.json();
+                if (data.error) {
+                    listEl.innerHTML = `<div style="color:#d32f2f;padding:10px;">${escapeHtml(data.error)}</div>`;
+                    return;
+                }
+                if (!data.entries?.length) {
+                    listEl.innerHTML = '<div style="padding:10px; color:#888;">No metadata entries found.</div>';
+                    if (pagEl) pagEl.innerHTML = '';
+                    return;
+                }
+                const rows = data.entries.map(entry => {
+                    const encoded = encodeURIComponent(JSON.stringify(entry));
+                    const title    = entry.title
+                        ? `<span style="font-weight:600;">${escapeHtml(entry.title)}</span>`
+                        : `<span style="color:#888;">${escapeHtml(entry.filename)}</span>`;
+                    const fname    = entry.title
+                        ? ` &nbsp;<span style="color:#999; font-size:0.83em;">${escapeHtml(entry.filename)}</span>`
+                        : '';
+                    const sysInfo  = [entry.system, entry.client, entry.file_extension].filter(Boolean).map(escapeHtml).join(' · ');
+                    const yr       = entry.release_year
+                        ? `<span style="color:#555; margin-left:0.4em;">${entry.release_year}</span>`
+                        : '';
+                    const pub      = entry.publisher
+                        ? `<span style="color:#1976d2; margin-left:0.4em;">${escapeHtml(entry.publisher)}</span>`
+                        : '';
+                    const packs    = (entry.pack_names || []).length
+                        ? `<span style="color:#5e35b1; margin-left:0.4em;">${escapeHtml((entry.pack_names || []).slice(0, 2).join(', '))}${entry.pack_names.length > 2 ? '…' : ''}</span>`
+                        : '';
+                    const flags    = [];
+                    if (entry.is_prototype) flags.push('<span style="background:#ff9800;color:#fff;border-radius:3px;padding:0 0.3em;font-size:0.74em;">PROTO</span>');
+                    if (entry.is_homebrew)  flags.push('<span style="background:#9c27b0;color:#fff;border-radius:3px;padding:0 0.3em;font-size:0.74em;">HB</span>');
+                    const prov     = entry.metadata_provider
+                        ? `<span style="color:#bbb;font-size:0.76em;margin-left:0.4em;">${escapeHtml(entry.metadata_provider)}</span>`
+                        : '';
+                    const editBtn  = `<button type="button" onclick="openMetadataEditor('${encoded}')" style="padding:0.2em 0.5em; font-size:0.75em; border:1px solid #bdbdbd; border-radius:3px; background:#fff; color:#333; cursor:pointer;">Edit</button>`;
+                    return `<div class="file-item" style="cursor:default;">`
+                        + `<span class="icon">\ud83d\udcc4</span>`
+                        + `<span class="name">${title}${fname}${sysInfo ? `<div style="font-size:0.78em;color:#888;">${sysInfo}</div>` : ''}</span>`
+                        + `<span class="size" style="display:flex;align-items:center;gap:0.25em;flex-wrap:wrap;justify-content:flex-end;">${yr}${pub}${packs}${flags.join('')}${prov}${editBtn}</span>`
+                        + `</div>`;
+                });
+                listEl.innerHTML = rows.join('');
+
+                if (pagEl) {
+                    const totalPages = data.pages;
+                    if (totalPages > 1) {
+                        let ph = `<span style="color:#555;">Page ${page} of ${totalPages} (${data.total.toLocaleString()} entries)</span>`;
+                        if (page > 1) ph += `<button onclick="loadMetadataEntries(${page - 1})" style="padding:0.3em 0.6em;cursor:pointer;border-radius:3px;border:1px solid #ccc;">\u2039 Prev</button>`;
+                        const s = Math.max(1, page - 2), e = Math.min(totalPages, page + 2);
+                        for (let p = s; p <= e; p++) {
+                            const active = p === page ? 'background:#1976d2;color:#fff;border-color:#1976d2;' : '';
+                            ph += `<button onclick="loadMetadataEntries(${p})" style="padding:0.3em 0.6em;cursor:pointer;border-radius:3px;border:1px solid #ccc;${active}">${p}</button>`;
+                        }
+                        if (page < totalPages) ph += `<button onclick="loadMetadataEntries(${page + 1})" style="padding:0.3em 0.6em;cursor:pointer;border-radius:3px;border:1px solid #ccc;">Next \u203a</button>`;
+                        pagEl.innerHTML = ph;
+                    } else {
+                        pagEl.innerHTML = `<span style="color:#888;">${data.total.toLocaleString()} entries</span>`;
+                    }
+                }
+            } catch {
+                listEl.innerHTML = '<div style="color:#d32f2f;padding:10px;">Failed to load entries.</div>';
+            }
+        }
+
+        function toggleMetadataEditorAdvanced(forceValue = null) {
+            const toggle = document.getElementById('metadata-edit-advanced-toggle');
+            const panel = document.getElementById('metadata-editor-advanced-fields');
+            if (!toggle || !panel) return;
+
+            const riskyFieldIds = [
+                'metadata-edit-system',
+                'metadata-edit-client',
+                'metadata-edit-map-name',
+                'metadata-edit-source-path',
+                'metadata-edit-virtual-path',
+                'metadata-edit-file-extension',
+                'metadata-edit-content-type',
+                'metadata-edit-archive-format',
+                'metadata-edit-is-archive',
+            ];
+
+            if (typeof forceValue === 'boolean') {
+                metadataEditorShowAdvanced = forceValue;
+                toggle.checked = forceValue;
+            } else {
+                metadataEditorShowAdvanced = !!toggle.checked;
+            }
+
+            panel.style.display = 'block';
+            panel.style.opacity = metadataEditorShowAdvanced ? '1' : '0.86';
+
+            const lockIcon = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f0a94a'%3E%3Cpath d='M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm-3 8V6a3 3 0 1 1 6 0v3H9Zm3 4a2 2 0 0 1 1 3.73V19h-2v-2.27A2 2 0 0 1 12 13Z'/%3E%3C/svg%3E\")";
+
+            for (const fieldId of riskyFieldIds) {
+                const field = document.getElementById(fieldId);
+                if (!field) continue;
+                field.disabled = !metadataEditorShowAdvanced;
+                field.style.cursor = metadataEditorShowAdvanced ? '' : 'not-allowed';
+                field.style.backgroundColor = metadataEditorShowAdvanced ? '' : '#f4f4f4';
+
+                if (!metadataEditorShowAdvanced && field.tagName === 'INPUT' && field.type !== 'checkbox') {
+                    field.style.backgroundImage = lockIcon;
+                    field.style.backgroundRepeat = 'no-repeat';
+                    field.style.backgroundPosition = 'right 8px center';
+                    field.style.backgroundSize = '12px 12px';
+                    field.style.paddingRight = '24px';
+                } else {
+                    field.style.backgroundImage = '';
+                    field.style.backgroundRepeat = '';
+                    field.style.backgroundPosition = '';
+                    field.style.backgroundSize = '';
+                    field.style.paddingRight = '';
+                }
+            }
+
+            refreshMetadataEditorFieldTooltips();
+        }
+
+        function getMetadataEditorTooltipConfig() {
+            return {
+                'metadata-edit-system': 'Target system name used for virtual mapping and organization.',
+                'metadata-edit-client': 'Target client profile (for example MiSTer, RetroBat, MAME).',
+                'metadata-edit-map-name': 'Virtual map name that groups files in the mounted view.',
+                'metadata-edit-source-path': 'Canonical native source path in filestore.',
+                'metadata-edit-virtual-path': 'Indexed virtual path exposed through the TransFS mount.',
+                'metadata-edit-file-extension': 'Original indexed file extension from the source record.',
+                'metadata-edit-content-type': 'Content classification used by mapping and filtering.',
+                'metadata-edit-archive-format': 'Archive container format (zip/7z/rar/tar), if applicable.',
+                'metadata-edit-is-archive': 'Marks this entry as an archive container.',
+                'metadata-edit-title': 'Human-readable title for the file/content.',
+                'metadata-edit-media-type': 'Controlled media type classification.',
+                'metadata-edit-genre': 'Controlled genre classification.',
+                'metadata-edit-app-type': 'Controlled application/content type.',
+                'metadata-edit-year': 'Release year (numeric).',
+                'metadata-edit-release-date': 'Release date text as provided by metadata source.',
+                'metadata-edit-release-precision': 'Date precision (for example year, month, day).',
+                'metadata-edit-rom-size': 'ROM size in bytes, when known.',
+                'metadata-edit-publisher': 'Publisher name (lookup-backed).',
+                'metadata-edit-region': 'Region name (lookup-backed).',
+                'metadata-edit-language': 'Language name (lookup-backed).',
+                'metadata-edit-metadata-provider': 'Metadata provider ID that supplied these values.',
+                'metadata-edit-metadata-source': 'Provider source reference (file/path/identifier).',
+                'metadata-edit-metadata-extension': 'Metadata-specific extension value in file_metadata.',
+                'metadata-edit-transfs-path': 'TransFS path stored in file_metadata.',
+                'metadata-edit-tags': 'Comma-separated metadata tags stored as metadata_tag entries.',
+                'metadata-edit-pack-names': 'Comma-separated pack names linked to this file.',
+                'metadata-edit-revision': 'Marks file as a revision release.',
+                'metadata-edit-proto': 'Marks file as prototype content.',
+                'metadata-edit-homebrew': 'Marks file as homebrew content.',
+            };
+        }
+
+        function refreshMetadataEditorFieldTooltips() {
+            const tooltipConfig = getMetadataEditorTooltipConfig();
+            for (const [fieldId, helpText] of Object.entries(tooltipConfig)) {
+                const field = document.getElementById(fieldId);
+                if (!field) continue;
+                const fieldValue = field.type === 'checkbox' ? (field.checked ? 'Yes' : 'No') : String(field.value || '').trim();
+                if (fieldValue) {
+                    field.title = `${helpText}\nCurrent value: ${fieldValue}`;
+                } else {
+                    field.title = helpText;
+                }
+            }
+        }
+
+        function setupMetadataEditorFieldTooltips() {
+            const tooltipConfig = getMetadataEditorTooltipConfig();
+            for (const fieldId of Object.keys(tooltipConfig)) {
+                const field = document.getElementById(fieldId);
+                if (!field || field.dataset.tooltipBound === '1') continue;
+                field.dataset.tooltipBound = '1';
+                field.addEventListener('input', refreshMetadataEditorFieldTooltips);
+                field.addEventListener('change', refreshMetadataEditorFieldTooltips);
+                field.addEventListener('focus', refreshMetadataEditorFieldTooltips);
+            }
+            refreshMetadataEditorFieldTooltips();
+        }
+
+        function openMetadataEditor(encodedEntry) {
+            try {
+                const entry = JSON.parse(decodeURIComponent(encodedEntry));
+                metadataEditorOpen = true;
+                document.getElementById('metadata-editor-panel').style.display = 'block';
+                document.getElementById('metadata-edit-file-id').value = entry.file_id;
+                document.getElementById('metadata-edit-system').value = entry.system || '';
+                document.getElementById('metadata-edit-client').value = entry.client || '';
+                document.getElementById('metadata-edit-map-name').value = entry.map_name || '';
+                document.getElementById('metadata-edit-source-path').value = entry.source_path || '';
+                document.getElementById('metadata-edit-virtual-path').value = entry.virtual_path || '';
+                document.getElementById('metadata-edit-file-extension').value = entry.file_extension || '';
+                document.getElementById('metadata-edit-content-type').value = entry.content_type || '';
+                document.getElementById('metadata-edit-archive-format').value = entry.archive_format || '';
+                document.getElementById('metadata-edit-title').value = entry.title || '';
+                document.getElementById('metadata-edit-media-type').value = entry.media_type || '';
+                document.getElementById('metadata-edit-genre').value = entry.genre || '';
+                document.getElementById('metadata-edit-app-type').value = entry.app_type || '';
+                document.getElementById('metadata-edit-year').value = entry.release_year || '';
+                document.getElementById('metadata-edit-release-date').value = entry.release_date || '';
+                document.getElementById('metadata-edit-release-precision').value = entry.release_precision || '';
+                document.getElementById('metadata-edit-rom-size').value = entry.rom_size || '';
+                document.getElementById('metadata-edit-publisher').value = entry.publisher || '';
+                document.getElementById('metadata-edit-region').value = entry.region || '';
+                document.getElementById('metadata-edit-language').value = entry.language || '';
+                document.getElementById('metadata-edit-metadata-provider').value = entry.metadata_provider || '';
+                document.getElementById('metadata-edit-metadata-source').value = entry.metadata_source || '';
+                document.getElementById('metadata-edit-metadata-extension').value = entry.metadata_extension || '';
+                document.getElementById('metadata-edit-transfs-path').value = entry.transfs_path || '';
+                document.getElementById('metadata-edit-tags').value = (entry.metadata_tags || []).join(', ');
+                document.getElementById('metadata-edit-pack-names').value = (entry.pack_names || []).join(', ');
+                document.getElementById('metadata-edit-is-archive').checked = !!entry.is_archive;
+                document.getElementById('metadata-edit-revision').checked = !!entry.is_revision;
+                document.getElementById('metadata-edit-proto').checked = !!entry.is_prototype;
+                document.getElementById('metadata-edit-homebrew').checked = !!entry.is_homebrew;
+                document.getElementById('metadata-editor-file').textContent = `file_id=${entry.file_id} • ${entry.filename}`;
+                document.getElementById('metadata-editor-status').textContent = '';
+                toggleMetadataEditorAdvanced(false);
+                refreshMetadataEditorFieldTooltips();
+            } catch {
+                const status = document.getElementById('metadata-editor-status');
+                if (status) {
+                    status.style.color = '#d32f2f';
+                    status.textContent = 'Failed to open editor.';
+                }
+            }
+        }
+
+        function closeMetadataEditor() {
+            metadataEditorOpen = false;
+            const panel = document.getElementById('metadata-editor-panel');
+            if (panel) panel.style.display = 'none';
+        }
+
+        async function saveMetadataEntry() {
+            const status = document.getElementById('metadata-editor-status');
+            const parseCsv = (value) => value
+                .split(',')
+                .map(v => v.trim())
+                .filter(v => !!v);
+
+            const payload = {
+                file_id: Number(document.getElementById('metadata-edit-file-id').value),
+                transfs_path: document.getElementById('metadata-edit-transfs-path').value,
+                metadata_extension: document.getElementById('metadata-edit-metadata-extension').value,
+                title: document.getElementById('metadata-edit-title').value,
+                media_type: document.getElementById('metadata-edit-media-type').value,
+                genre: document.getElementById('metadata-edit-genre').value,
+                app_type: document.getElementById('metadata-edit-app-type').value,
+                release_year: document.getElementById('metadata-edit-year').value ? Number(document.getElementById('metadata-edit-year').value) : null,
+                release_date: document.getElementById('metadata-edit-release-date').value,
+                release_precision: document.getElementById('metadata-edit-release-precision').value,
+                rom_size: document.getElementById('metadata-edit-rom-size').value ? Number(document.getElementById('metadata-edit-rom-size').value) : null,
+                is_revision: document.getElementById('metadata-edit-revision').checked,
+                publisher: document.getElementById('metadata-edit-publisher').value,
+                region: document.getElementById('metadata-edit-region').value,
+                language: document.getElementById('metadata-edit-language').value,
+                is_prototype: document.getElementById('metadata-edit-proto').checked,
+                is_homebrew: document.getElementById('metadata-edit-homebrew').checked,
+                metadata_provider: document.getElementById('metadata-edit-metadata-provider').value,
+                metadata_source: document.getElementById('metadata-edit-metadata-source').value,
+                metadata_tags: parseCsv(document.getElementById('metadata-edit-tags').value),
+                pack_names: parseCsv(document.getElementById('metadata-edit-pack-names').value),
+            };
+
+            if (metadataEditorShowAdvanced) {
+                payload.source_path = document.getElementById('metadata-edit-source-path').value;
+                payload.virtual_path = document.getElementById('metadata-edit-virtual-path').value;
+                payload.file_extension = document.getElementById('metadata-edit-file-extension').value;
+                payload.system = document.getElementById('metadata-edit-system').value;
+                payload.client = document.getElementById('metadata-edit-client').value;
+                payload.map_name = document.getElementById('metadata-edit-map-name').value;
+                payload.content_type = document.getElementById('metadata-edit-content-type').value;
+                payload.is_archive = document.getElementById('metadata-edit-is-archive').checked;
+                payload.archive_format = document.getElementById('metadata-edit-archive-format').value;
+            }
+
+            status.style.color = '#666';
+            status.textContent = 'Saving...';
+            try {
+                const response = await fetch('/api/metadata/entry/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.error) {
+                    status.style.color = '#d32f2f';
+                    status.textContent = data.error;
+                    return;
+                }
+                status.style.color = '#2e7d32';
+                status.textContent = 'Saved.';
+                await loadMetadataStats();
+                await loadMetadataEntries(metadataCurrentPage);
+            } catch {
+                status.style.color = '#d32f2f';
+                status.textContent = 'Save failed.';
+            }
+        }
+
+        async function deleteCurrentMetadataRecord() {
+            const status = document.getElementById('metadata-editor-status');
+            const fileIdRaw = document.getElementById('metadata-edit-file-id')?.value;
+            const fileId = Number(fileIdRaw);
+            const fileLabel = document.getElementById('metadata-editor-file')?.textContent || `file_id=${fileIdRaw || '?'}`;
+
+            if (!fileId || Number.isNaN(fileId)) {
+                if (status) {
+                    status.style.color = '#d32f2f';
+                    status.textContent = 'No metadata record is currently open.';
+                }
+                return;
+            }
+
+            const ok = confirm(`Delete metadata for this record?\n\n${fileLabel}\n\nThis removes metadata/tags/pack links for this file only and cannot be undone.`);
+            if (!ok) return;
+
+            if (status) {
+                status.style.color = '#666';
+                status.textContent = 'Deleting metadata record...';
+            }
+
+            try {
+                const response = await fetch('/api/metadata/entry/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_id: fileId }),
+                });
+                const data = await response.json();
+                if (data.error) {
+                    if (status) {
+                        status.style.color = '#d32f2f';
+                        status.textContent = data.error;
+                    }
+                    return;
+                }
+
+                if (status) {
+                    status.style.color = '#2e7d32';
+                    status.textContent = 'Metadata record deleted.';
+                }
+                await loadMetadataStats();
+                await loadMetadataEntries(metadataCurrentPage);
+                closeMetadataEditor();
+            } catch {
+                if (status) {
+                    status.style.color = '#d32f2f';
+                    status.textContent = 'Delete failed.';
+                }
+            }
+        }
+
+        async function deleteAllMetadataRecords() {
+            const proceed = confirm(
+                'Delete ALL metadata records?\n\nThis will remove metadata for every file and cannot be undone.'
+            );
+            if (!proceed) return;
+
+            const confirmation = prompt('Type DELETE ALL METADATA to confirm this action:');
+            if (confirmation === null) return;
+            if ((confirmation || '').trim() !== 'DELETE ALL METADATA') {
+                alert('Delete cancelled: confirmation text did not match exactly.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/metadata/clear-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm_text: confirmation.trim() }),
+                });
+                const data = await response.json();
+                if (data.error) {
+                    alert(`Delete failed: ${data.error}`);
+                    return;
+                }
+
+                closeMetadataEditor();
+                await loadMetadataStats();
+                await loadMetadataEntries(1);
+                alert(`Deleted metadata records: ${data.metadata_deleted || 0}\nDeleted metadata tags: ${data.tags_deleted || 0}\nDeleted pack links: ${data.pack_links_deleted || 0}`);
+            } catch {
+                alert('Delete failed due to a network or server error.');
+            }
+        }
+
+        // =============================================
         // CLIENT/SYSTEM/PACKS LOADING
         // =============================================
         function escapeHtml(text) {
@@ -558,7 +1798,7 @@
                 '"': '&quot;',
                 "'": '&#39;'
             };
-            return text.replace(/[&<>"']/g, m => map[m]);
+            return String(text ?? '').replace(/[&<>"']/g, m => map[m]);
         }
 
         async function loadData() {
@@ -647,14 +1887,21 @@
                     return;
                 }
                 
-                const systemDisplayNames = await response.json();
+                const clientSystemNames = await response.json();
+                const normalizedClientNames = new Set(
+                    clientSystemNames.map(n => String(n || '').toLowerCase())
+                );
                 
                 // Filter allSystemsMeta to only show systems for this client
                 const filteredMeta = {};
                 for (const manufacturer in allSystemsMeta) {
                     const filteredSystems = allSystemsMeta[manufacturer].filter(s => {
                         const displayName = s.display_name || s.name || s.mapping_name;
-                        return systemDisplayNames.includes(displayName);
+                        const mappingName = s.mapping_name || '';
+                        const systemName = s.name || '';
+                        return normalizedClientNames.has(String(displayName).toLowerCase())
+                            || normalizedClientNames.has(String(mappingName).toLowerCase())
+                            || normalizedClientNames.has(String(systemName).toLowerCase());
                     });
                     
                     if (filteredSystems.length > 0) {
@@ -1315,7 +2562,9 @@
                 document.getElementById('config_advanced_options').checked = data.ui?.advanced_options || false;
                 document.getElementById('config_show_real_path_tooltips').checked = data.ui?.show_real_path_tooltips || false;
                 
-                document.getElementById('config_database_mode').value = data.database?.mode || 'hybrid';
+                const dbMode = data.database?.mode || 'enabled';
+                const supportedDbModes = ['enabled', 'hybrid', 'disabled'];
+                document.getElementById('config_database_mode').value = supportedDbModes.includes(dbMode) ? dbMode : 'enabled';
                 document.getElementById('config_database_path').value = data.database?.path || '/mnt/filestorefs/.transfs_metadata.db';
                 document.getElementById('config_database_auto_sync').checked = data.database?.auto_sync || false;
                 document.getElementById('config_database_sync_on_startup').checked = data.database?.sync_on_startup || false;
@@ -3302,6 +4551,93 @@
         }
 
         // =============================================
+        // DEBUG TAB - SUBTAB SWITCHING
+        // =============================================
+        function switchDebugSubtab(subtab) {
+            // Hide all subtabs
+            document.querySelectorAll('.debug-subtab').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.debug-subtab-btn').forEach(btn => {
+                btn.style.borderBottomColor = 'transparent';
+                btn.style.color = '#666';
+            });
+            
+            // Show selected subtab
+            const subtabEl = document.getElementById(`debug-${subtab}`);
+            if (subtabEl) {
+                subtabEl.style.display = 'block';
+            }
+            
+            // Highlight selected button
+            const selectedBtn = Array.from(document.querySelectorAll('.debug-subtab-btn')).find(btn => 
+                btn.textContent.toLowerCase().includes(subtab === 'test-results' ? 'test' : subtab)
+            );
+            if (selectedBtn) {
+                selectedBtn.style.borderBottomColor = '#2196F3';
+                selectedBtn.style.color = '#2196F3';
+            }
+            
+            // Load system info when switching to config subtab
+            if (subtab === 'config') {
+                updateSystemInfo();
+            }
+        }
+
+        // =============================================
+        // CONFIG RELOAD & SYSTEM INFO
+        // =============================================
+        async function reloadClientMappings() {
+            const btn = document.getElementById('reload-config-btn');
+            const statusDiv = document.getElementById('reload-status');
+            const statusMsg = document.getElementById('reload-status-message');
+            
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            statusDiv.style.display = 'block';
+            statusMsg.textContent = '⏳ Reloading configuration mappings...';
+            statusDiv.style.borderLeftColor = '#667eea';
+            
+            try {
+                const response = await fetch('/api/config/reload', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    statusMsg.innerHTML = `
+                        <strong style="color: #4CAF50;">✓ Config cache cleared successfully!</strong>
+                        <div style="margin-top: 0.5em; font-size: 0.9em; color: #666;">
+                            <p>${data.message}</p>
+                            <p style="margin-top: 0.5em;"><strong>Web Service:</strong> Changes will be loaded on next request.</p>
+                            <p><strong>FUSE Process:</strong> Requires Docker container restart: <code style="background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px;">docker compose restart transfs</code></p>
+                        </div>
+                    `;
+                    statusDiv.style.borderLeftColor = '#4CAF50';
+                } else {
+                    statusMsg.innerHTML = `<strong style="color: #d32f2f;">✗ Failed to reload config</strong><div style="margin-top: 0.5em; font-size: 0.9em; color: #666;">${data.error || 'Unknown error'}</div>`;
+                    statusDiv.style.borderLeftColor = '#d32f2f';
+                }
+            } catch (error) {
+                statusMsg.innerHTML = `<strong style="color: #d32f2f;">✗ Request failed</strong><div style="margin-top: 0.5em; font-size: 0.9em; color: #666;">${error.message}</div>`;
+                statusDiv.style.borderLeftColor = '#d32f2f';
+            } finally {
+                btn.disabled = false;
+                btn.style.opacity = '1';
+            }
+        }
+
+        async function updateSystemInfo() {
+            try {
+                const response = await fetch('/api/config/sets/active');
+                const data = await response.json();
+                
+                document.getElementById('active-client-config').textContent = data.active_client_config || 'default';
+                document.getElementById('active-source-config').textContent = data.active_source_config || 'default';
+            } catch (error) {
+                document.getElementById('active-client-config').textContent = 'Error loading...';
+                document.getElementById('active-source-config').textContent = 'Error loading...';
+                console.error('Failed to load config sets:', error);
+            }
+        }
+
+        // =============================================
         // FUSE LOG
         // =============================================
         async function refreshFuseLog() {
@@ -3324,7 +4660,22 @@
         // Parse URL on page load to restore browse state
         async function initializeFromURL() {
             const path = window.location.pathname;
-            if (path.startsWith('/browse/native')) {
+            if (path.startsWith('/metadata')) {
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+
+                document.getElementById('metadata-tab').classList.add('active');
+                const metadataBtn = document.querySelector('[onclick*="metadata"]');
+                if (metadataBtn) metadataBtn.classList.add('active');
+
+                await loadMetadataDatFormats();
+                await loadMetadataConfiguredClientNames();
+                await refreshMetadataDatFiles();
+                await refreshMetadataDatImports();
+                await loadMetadataStats();
+                await loadMetadataEntries(1);
+                history.replaceState({ tab: 'metadata' }, '', '/metadata');
+            } else if (path.startsWith('/browse/native')) {
                 const dirPath = path.replace('/browse/native', '') || '';
                 const fullPath = '/mnt/filestorefs/Native' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
                 currentNativePath = fullPath;
@@ -3391,6 +4742,7 @@
             await loadLastTestResults();
             await updateAdvancedOptionsVisibility();
             await updateDbSyncButtonsVisibility();
+            setupMetadataEditorFieldTooltips();
         });
 
         async function updateAdvancedOptionsVisibility() {
@@ -3399,13 +4751,13 @@
                 const data = await response.json();
                 const advancedEnabled = data.ui?.advanced_options || false;
                 
-                const testResultsBtn = document.getElementById('test-results-tab-btn');
                 const debugBtn = document.getElementById('debug-tab-btn');
+                const metadataGenerateSection = document.getElementById('metadata-generate-config-section');
                 
                 const displayStyle = advancedEnabled ? 'inline-block' : 'none';
                 
-                if (testResultsBtn) testResultsBtn.style.display = displayStyle;
                 if (debugBtn) debugBtn.style.display = displayStyle;
+                if (metadataGenerateSection) metadataGenerateSection.style.display = advancedEnabled ? 'block' : 'none';
             } catch (error) {
                 console.error('Failed to check advanced options:', error);
             }
@@ -3416,18 +4768,28 @@
             if (event.state) {
                 document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
                 document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                const setActiveButton = (tabName) => {
+                    const btn = Array.from(document.querySelectorAll('.tab-button')).find(
+                        element => (element.getAttribute('onclick') || '').includes(`switchTab('${tabName}')`)
+                    );
+                    if (btn) btn.classList.add('active');
+                };
                 
-                if (event.state.tab === 'browse-native') {
+                if (event.state.tab === 'metadata') {
+                    document.getElementById('metadata-tab').classList.add('active');
+                    setActiveButton('metadata');
+                    loadMetadataEntries(metadataCurrentPage);
+                } else if (event.state.tab === 'browse-native') {
                     document.getElementById('browse-native-tab').classList.add('active');
-                    document.querySelectorAll('.tab-button')[1].classList.add('active');
+                    setActiveButton('browse-native');
                     loadDirectory(event.state.path || currentNativePath, 'native', true);
                 } else if (event.state.tab === 'browse-virtual') {
                     document.getElementById('browse-virtual-tab').classList.add('active');
-                    document.querySelectorAll('.tab-button')[2].classList.add('active');
+                    setActiveButton('browse-virtual');
                     loadDirectory(event.state.path || currentVirtualPath, 'virtual', true);
                 } else {
                     document.getElementById('download-tab').classList.add('active');
-                    document.querySelectorAll('.tab-button')[0].classList.add('active');
+                    setActiveButton('download');
                 }
             }
         });

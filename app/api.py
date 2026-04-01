@@ -20,10 +20,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
 from pathlib import Path
+from typing import Optional
 from urllib.parse import unquote, urlparse
 
 import internetarchive
@@ -32,7 +34,7 @@ import py7zr
 import rarfile  # pylint: disable=import-error
 import requests
 import yaml
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from mega import Mega
 from pydantic import BaseModel
@@ -42,6 +44,7 @@ from config import (
     get_manufacturers_and_canonical_names,
     get_system_config,
     read_config,
+    read_app_config,
     read_clients_config,
 )
 from post_process import PostProcessor
@@ -72,6 +75,9 @@ Downloads are shared across all clients - the same source files work for MiSTer,
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+_dat_import_jobs: dict[str, dict] = {}
+_dat_import_jobs_lock = threading.Lock()
 
 
 # ============================================================================
@@ -393,6 +399,117 @@ class PackInstallRequestNoClient(BaseModel):
     update_db: bool = True  # Run database sync after install
 
 
+class MetadataScanRequest(BaseModel):
+    """Request model for metadata scan preview and apply."""
+    folder: str
+    provider_id: str
+    recursive: bool = True
+    limit: int = 200
+
+
+class DatImportStartRequest(BaseModel):
+    """Request model for starting a tracked DAT/XML import."""
+    dat_path: str
+    xml_format: str
+
+
+class DatGenerateClientConfigRequest(BaseModel):
+    """Request model for generating a client config from an imported DAT catalog."""
+    dat_import_id: int
+    config_set_name: str
+    system_name: str
+    client_name: str = "MiSTer"
+    manufacturer: str = "Imported"
+    system_mapping_name: Optional[str] = None
+    local_base_path: Optional[str] = None
+    output_filename: Optional[str] = None
+
+
+class MetadataEntryUpdateRequest(BaseModel):
+    """Request model for updating a metadata entry."""
+    file_id: int
+    source_path: Optional[str] = None
+    virtual_path: Optional[str] = None
+    file_extension: Optional[str] = None
+    system: Optional[str] = None
+    client: Optional[str] = None
+    map_name: Optional[str] = None
+    content_type: Optional[str] = None
+    is_archive: Optional[bool] = None
+    archive_format: Optional[str] = None
+    transfs_path: Optional[str] = None
+    metadata_extension: Optional[str] = None
+    title: Optional[str] = None
+    media_type: Optional[str] = None
+    release_year: Optional[int] = None
+    release_date: Optional[str] = None
+    release_precision: Optional[str] = None
+    rom_size: Optional[int] = None
+    genre: Optional[str] = None
+    app_type: Optional[str] = None
+    is_revision: Optional[bool] = None
+    publisher: Optional[str] = None
+    region: Optional[str] = None
+    language: Optional[str] = None
+    is_prototype: Optional[bool] = None
+    is_homebrew: Optional[bool] = None
+    metadata_provider: Optional[str] = None
+    metadata_source: Optional[str] = None
+    metadata_tags: Optional[list[str]] = None
+    pack_names: Optional[list[str]] = None
+
+
+class MetadataEntryDeleteRequest(BaseModel):
+    """Request model for deleting metadata for a single file."""
+    file_id: int
+
+
+class MetadataClearAllRequest(BaseModel):
+    """Request model for deleting all metadata records."""
+    confirm_text: str
+
+
+def _ensure_db_for_metadata() -> None:
+    """Best-effort DB pool initialization for metadata endpoints."""
+    try:
+        from db.connection import init_database  # pylint: disable=import-outside-toplevel
+        init_database(pool_size=30, max_overflow=40)
+    except Exception:
+        # Pool is likely already initialized.
+        pass
+
+
+def _ensure_metadata_schema_compat() -> None:
+    """Ensure metadata columns needed by browser/editor exist on older DBs."""
+    from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+    with get_cursor() as cursor:
+        cursor.execute("ALTER TABLE file_metadata ADD COLUMN IF NOT EXISTS metadata_provider TEXT")
+        cursor.execute("ALTER TABLE file_metadata ADD COLUMN IF NOT EXISTS metadata_source TEXT")
+        cursor.execute("ALTER TABLE file_metadata ADD COLUMN IF NOT EXISTS metadata_applied_at BIGINT")
+
+
+def _append_dat_import_log(job_id: str, message: str) -> None:
+    with _dat_import_jobs_lock:
+        job = _dat_import_jobs.get(job_id)
+        if not job:
+            return
+        logs = job.setdefault("logs", [])
+        logs.append(message)
+        if len(logs) > 1000:
+            del logs[:-1000]
+        job["updated_at"] = int(time.time())
+
+
+def _update_dat_import_job(job_id: str, **fields) -> None:
+    with _dat_import_jobs_lock:
+        job = _dat_import_jobs.get(job_id)
+        if not job:
+            return
+        job.update(fields)
+        job["updated_at"] = int(time.time())
+
+
 @app.get("/logs", response_class=PlainTextResponse, tags=["System"])
 def get_logs():
     try:
@@ -494,7 +611,7 @@ def api_browse_directory(path: str):
     start_time = time.time()
     
     # Validate path is within allowed directories
-    allowed_prefixes = ["/mnt/filestorefs/Native", "/mnt/transfs"]
+    allowed_prefixes = ["/mnt/filestorefs", "/mnt/transfs"]
     if not any(path.startswith(prefix) for prefix in allowed_prefixes):
         return {"error": "Access denied - path must be within allowed directories"}
     
@@ -601,6 +718,789 @@ def api_browse_directory(path: str):
         return {"error": "Permission denied"}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
+
+
+@app.get("/metadata/providers", tags=["Metadata"])
+def metadata_providers():
+    """List available metadata providers for the active source config set."""
+    try:
+        from metadata.providers import MetadataProviderRegistry
+
+        registry = MetadataProviderRegistry(config_dir="config")
+        providers = registry.list_providers()
+        return {
+            "providers": [
+                {
+                    "id": provider.id,
+                    "name": provider.name,
+                    "kind": provider.kind,
+                    "config": provider.config,
+                }
+                for provider in providers
+            ]
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/xml-formats", tags=["Metadata"])
+def metadata_xml_formats():
+    """List configured XML/DAT parser formats available for manual import."""
+    try:
+        from metadata.dat_importer import DatImportService
+
+        service = DatImportService(config_dir="config")
+        return {
+            "default_dat_folder": service.default_dat_folder(),
+            "formats": [
+                {"id": name, "definition": definition}
+                for name, definition in sorted(service.xml_formats().items())
+            ],
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/dat-files", tags=["Metadata"])
+def metadata_dat_files(folder: str = ""):
+    """List candidate DAT/XML files and highlight which are new or changed since import."""
+    try:
+        _ensure_db_for_metadata()
+        from metadata.dat_importer import DatImportService
+
+        service = DatImportService(config_dir="config")
+        return service.list_dat_files(folder=folder or None)
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/configured-client-names", tags=["Metadata"])
+def metadata_configured_client_names():
+    """List configured client names across config/clients/* sets for combobox suggestions."""
+    try:
+        config_dir = "config"
+        app_cfg = read_app_config(config_dir) or {}
+        active_client_config = app_cfg.get("config_sets", {}).get("active_client_config", "default")
+
+        client_sets_dir = os.path.join(config_dir, "clients")
+        config_sets: list[str] = []
+        if os.path.isdir(client_sets_dir):
+            for entry in sorted(os.listdir(client_sets_dir)):
+                candidate = os.path.join(client_sets_dir, entry)
+                if os.path.isdir(candidate):
+                    config_sets.append(entry)
+
+        if not config_sets:
+            config_sets = [active_client_config]
+
+        by_config_set: dict[str, list[str]] = {}
+        all_names: set[str] = set()
+        for config_set in config_sets:
+            loaded = read_clients_config(config_dir, config_set=config_set) or {"clients": []}
+            names = sorted({
+                client.get("name", "").strip()
+                for client in loaded.get("clients", [])
+                if isinstance(client, dict) and client.get("name")
+            })
+            by_config_set[config_set] = names
+            all_names.update(names)
+
+        return {
+            "active_client_config": active_client_config,
+            "client_names": sorted(all_names),
+            "by_config_set": by_config_set,
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/dat-upload", tags=["Metadata"])
+async def metadata_dat_upload(
+    folder: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Upload a DAT/XML file from browser and store it in the selected DAT folder."""
+    try:
+        from metadata.dat_importer import DatImportService
+
+        service = DatImportService(config_dir="config")
+        target_folder = os.path.normpath((folder or "").strip() or service.default_dat_folder())
+        if not target_folder.startswith("/mnt/filestorefs"):
+            return {"error": "Folder must be inside /mnt/filestorefs"}
+
+        os.makedirs(target_folder, exist_ok=True)
+        filename = _safe_filename(file.filename or "")
+        if not filename.lower().endswith((".dat", ".xml")):
+            return {"error": "Only .dat or .xml files are supported"}
+
+        destination_path = _safe_join(target_folder, filename)
+        total_bytes = 0
+        with open(destination_path, "wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                total_bytes += len(chunk)
+
+        return {
+            "folder": target_folder,
+            "filename": filename,
+            "path": destination_path,
+            "size": total_bytes,
+            "mtime": int(os.path.getmtime(destination_path)),
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+    finally:
+        try:
+            await file.close()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
+@app.get("/metadata/dat-imports", tags=["Metadata"])
+def metadata_dat_imports():
+    """List imported DAT/XML catalogs tracked in the database."""
+    try:
+        _ensure_db_for_metadata()
+        from metadata.dat_importer import DatImportService
+
+        service = DatImportService(config_dir="config")
+        return {"imports": service.list_imports()}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/dat-import/start", tags=["Metadata"])
+def metadata_dat_import_start(req: DatImportStartRequest):
+    """Start a tracked DAT/XML import job and stream progress via polling."""
+    try:
+        _ensure_db_for_metadata()
+        job_id = str(uuid.uuid4())
+        with _dat_import_jobs_lock:
+            _dat_import_jobs[job_id] = {
+                "job_id": job_id,
+                "status": "running",
+                "dat_path": os.path.normpath(req.dat_path),
+                "xml_format": (req.xml_format or "").lower().strip(),
+                "logs": [],
+                "started_at": int(time.time()),
+                "updated_at": int(time.time()),
+                "result": None,
+                "error": None,
+            }
+
+        def run_job() -> None:
+            from metadata.dat_importer import DatImportService
+
+            service = DatImportService(config_dir="config")
+            try:
+                result = service.import_dat(
+                    dat_path=req.dat_path,
+                    xml_format=req.xml_format,
+                    log_callback=lambda message: _append_dat_import_log(job_id, message),
+                )
+                _update_dat_import_job(job_id, status="completed", result=result)
+            except Exception as exc:  # pylint: disable=broad-except
+                service.mark_import_failed(req.dat_path, req.xml_format, str(exc))
+                _append_dat_import_log(job_id, f"Import failed: {exc}")
+                _update_dat_import_job(job_id, status="failed", error=str(exc))
+
+        threading.Thread(target=run_job, daemon=True).start()
+        return {"job_id": job_id, "status": "running"}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/dat-import/jobs/{job_id}", tags=["Metadata"])
+def metadata_dat_import_job(job_id: str):
+    """Poll a DAT/XML import job for live logs and completion state."""
+    with _dat_import_jobs_lock:
+        job = _dat_import_jobs.get(job_id)
+        if not job:
+            return {"error": f"Unknown job_id: {job_id}"}
+        return {
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "dat_path": job.get("dat_path"),
+            "xml_format": job.get("xml_format"),
+            "started_at": job.get("started_at"),
+            "updated_at": job.get("updated_at"),
+            "logs": list(job.get("logs") or []),
+            "result": job.get("result"),
+            "error": job.get("error"),
+        }
+
+
+@app.post("/metadata/dat-imports/generate-client-config", tags=["Metadata"])
+def metadata_generate_client_config(req: DatGenerateClientConfigRequest):
+    """Generate or update a client config set from imported DAT path structure."""
+    try:
+        from metadata.dat_importer import DatImportService
+
+        service = DatImportService(config_dir="config")
+        return service.generate_client_config(
+            dat_import_id=req.dat_import_id,
+            config_set_name=req.config_set_name,
+            system_name=req.system_name,
+            client_name=req.client_name,
+            manufacturer=req.manufacturer,
+            system_mapping_name=req.system_mapping_name,
+            local_base_path=req.local_base_path,
+            output_filename=req.output_filename,
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/scan-preview", tags=["Metadata"])
+def metadata_scan_preview(req: MetadataScanRequest):
+    """Scan a folder and preview metadata matches from a selected provider."""
+    try:
+        folder = os.path.normpath(req.folder)
+        if not folder.startswith("/mnt/filestorefs"):
+            return {"error": "Folder must be inside /mnt/filestorefs"}
+        if not os.path.isdir(folder):
+            return {"error": f"Folder does not exist: {folder}"}
+
+        from metadata.providers import MetadataScanService
+
+        service = MetadataScanService(config_dir="config")
+        return service.scan_folder(
+            folder=folder,
+            provider_id=req.provider_id,
+            recursive=req.recursive,
+            limit=req.limit,
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/apply", tags=["Metadata"])
+def metadata_apply(req: MetadataScanRequest):
+    """Apply metadata matches from a selected provider to database metadata tables."""
+    try:
+        folder = os.path.normpath(req.folder)
+        if not folder.startswith("/mnt/filestorefs"):
+            return {"error": "Folder must be inside /mnt/filestorefs"}
+        if not os.path.isdir(folder):
+            return {"error": f"Folder does not exist: {folder}"}
+
+        from metadata.providers import MetadataScanService
+
+        service = MetadataScanService(config_dir="config")
+        return service.apply_scan_results(
+            folder=folder,
+            provider_id=req.provider_id,
+            recursive=req.recursive,
+            limit=max(req.limit, 2000),
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/stats", tags=["Metadata"])
+def metadata_stats():
+    """Get summary statistics about metadata coverage in the database."""
+    try:
+        _ensure_db_for_metadata()
+        _ensure_metadata_schema_compat()
+        from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) as total_files FROM files WHERE is_directory = false"
+            )
+            row = cursor.fetchone()
+            total_files = row["total_files"] if isinstance(row, dict) else row[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM files f JOIN file_metadata fm ON f.file_id = fm.file_id"
+            )
+            row = cursor.fetchone()
+            total_with_metadata = row["total"] if isinstance(row, dict) else row[0]
+
+            cursor.execute(
+                """
+                SELECT fm.metadata_provider, COUNT(*) as cnt
+                FROM file_metadata fm
+                GROUP BY fm.metadata_provider
+                ORDER BY cnt DESC
+                """
+            )
+            provider_rows = cursor.fetchall()
+            by_provider = {}
+            for r in provider_rows:
+                key = (r["metadata_provider"] if isinstance(r, dict) else r[0]) or "unknown"
+                val = r["cnt"] if isinstance(r, dict) else r[1]
+                by_provider[key] = val
+
+        return {
+            "total_files": total_files,
+            "total_with_metadata": total_with_metadata,
+            "coverage_pct": round(total_with_metadata / total_files * 100, 1) if total_files else 0.0,
+            "by_provider": by_provider,
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/metadata/entries", tags=["Metadata"])
+def metadata_entries(
+    search: str = "",
+    publisher: str = "",
+    year: int = None,
+    tag: str = "",
+    provider: str = "",
+    page: int = 1,
+    limit: int = 50,
+):
+    """List files that have metadata in the database, with optional filtering."""
+    try:
+        _ensure_db_for_metadata()
+        _ensure_metadata_schema_compat()
+        from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+        offset = (max(page, 1) - 1) * limit
+        conditions = []
+        params: list = []
+
+        if search:
+            conditions.append("(f.filename ILIKE %s OR fm.title ILIKE %s)")
+            params.extend([f"%{search}%", f"%{search}%"])
+        if publisher:
+            conditions.append("pub.name ILIKE %s")
+            params.append(f"%{publisher}%")
+        if year:
+            conditions.append("fm.release_year = %s")
+            params.append(year)
+        if tag:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = f.file_id AND ft.tag_value = %s)"
+            )
+            params.append(tag)
+        if provider:
+            conditions.append("fm.metadata_provider = %s")
+            params.append(provider)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        base_from = (
+            "FROM files f "
+            "JOIN file_metadata fm ON f.file_id = fm.file_id "
+            "LEFT JOIN publishers pub ON fm.publisher_id = pub.id "
+            "LEFT JOIN regions reg ON fm.region_id = reg.id "
+            "LEFT JOIN languages lang ON fm.language_id = lang.id "
+            "LEFT JOIN media_types mt ON fm.media_type_id = mt.id "
+            "LEFT JOIN genres gen ON fm.genre_id = gen.id "
+            "LEFT JOIN app_types appt ON fm.app_type_id = appt.id"
+        )
+
+        with get_cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) as total {base_from} {where}", params)
+            row = cursor.fetchone()
+            total = row["total"] if isinstance(row, dict) else row[0]
+
+            cursor.execute(
+                f"""
+                                SELECT f.file_id, f.filename, f.source_path, f.virtual_path,
+                                             f.extension AS file_extension,
+                                             f.system, f.client, f.map_name, f.content_type,
+                                             f.is_archive, f.archive_format,
+                                             fm.transfs_path, fm.extension AS metadata_extension,
+                                             fm.title, fm.release_year, fm.release_date, fm.release_precision,
+                                             fm.rom_size, fm.is_revision,
+                                             mt.name AS media_type,
+                                             gen.name AS genre,
+                                             appt.name AS app_type,
+                       pub.name AS publisher,
+                       reg.name AS region,
+                       lang.name AS language,
+                       fm.is_prototype, fm.is_homebrew,
+                                             fm.metadata_provider, fm.metadata_source, fm.metadata_applied_at,
+                                             (
+                                                 SELECT array_agg(ft.tag_value ORDER BY ft.tag_value)
+                                                 FROM file_tags ft
+                                                 WHERE ft.file_id = f.file_id AND ft.tag_type = 'metadata_tag'
+                                             ) AS metadata_tags,
+                                             (
+                                                 SELECT array_agg(p.name ORDER BY p.name)
+                                                 FROM file_packs fp
+                                                 JOIN packs p ON p.pack_id = fp.pack_id
+                                                 WHERE fp.file_id = f.file_id
+                                             ) AS pack_names,
+                                             (
+                                                 SELECT array_agg(p.source ORDER BY p.name)
+                                                 FROM file_packs fp
+                                                 JOIN packs p ON p.pack_id = fp.pack_id
+                                                 WHERE fp.file_id = f.file_id
+                                             ) AS pack_sources
+                {base_from}
+                {where}
+                ORDER BY fm.title NULLS LAST, f.filename
+                LIMIT %s OFFSET %s
+                """,
+                params + [limit, offset],
+            )
+            rows = cursor.fetchall()
+
+        def _row_to_dict(r):
+            def _to_list(value):
+                if value is None:
+                    return []
+                if isinstance(value, list):
+                    return value
+                if isinstance(value, tuple):
+                    return list(value)
+                return [value]
+
+            if isinstance(r, dict):
+                return {
+                    "file_id": r["file_id"],
+                    "filename": r["filename"],
+                    "source_path": r["source_path"],
+                    "virtual_path": r["virtual_path"],
+                    "file_extension": r["file_extension"],
+                    "system": r["system"],
+                    "client": r["client"],
+                    "map_name": r["map_name"],
+                    "content_type": r["content_type"],
+                    "is_archive": bool(r["is_archive"]),
+                    "archive_format": r["archive_format"],
+                    "transfs_path": r["transfs_path"],
+                    "metadata_extension": r["metadata_extension"],
+                    "title": r["title"],
+                    "release_year": r["release_year"],
+                    "release_date": r["release_date"],
+                    "release_precision": r["release_precision"],
+                    "rom_size": r["rom_size"],
+                    "is_revision": bool(r["is_revision"]),
+                    "media_type": r["media_type"],
+                    "genre": r["genre"],
+                    "app_type": r["app_type"],
+                    "publisher": r["publisher"],
+                    "region": r["region"],
+                    "language": r["language"],
+                    "is_prototype": bool(r["is_prototype"]),
+                    "is_homebrew": bool(r["is_homebrew"]),
+                    "metadata_provider": r["metadata_provider"],
+                    "metadata_source": r["metadata_source"],
+                    "metadata_applied_at": r["metadata_applied_at"],
+                    "metadata_tags": _to_list(r["metadata_tags"]),
+                    "pack_names": _to_list(r["pack_names"]),
+                    "pack_sources": [p for p in _to_list(r["pack_sources"]) if p],
+                }
+            return {
+                "file_id": r[0], "filename": r[1], "source_path": r[2],
+                "virtual_path": r[3], "file_extension": r[4],
+                "system": r[5], "client": r[6], "map_name": r[7], "content_type": r[8],
+                "is_archive": bool(r[9]), "archive_format": r[10],
+                "transfs_path": r[11], "metadata_extension": r[12],
+                "title": r[13], "release_year": r[14], "release_date": r[15],
+                "release_precision": r[16], "rom_size": r[17], "is_revision": bool(r[18]),
+                "media_type": r[19], "genre": r[20], "app_type": r[21],
+                "publisher": r[22], "region": r[23], "language": r[24],
+                "is_prototype": bool(r[25]), "is_homebrew": bool(r[26]),
+                "metadata_provider": r[27], "metadata_source": r[28], "metadata_applied_at": r[29],
+                "metadata_tags": _to_list(r[30]), "pack_names": _to_list(r[31]),
+                "pack_sources": [p for p in _to_list(r[32]) if p],
+            }
+
+        return {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": math.ceil(total / limit) if total else 0,
+            "entries": [_row_to_dict(r) for r in rows],
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/entry/update", tags=["Metadata"])
+def metadata_entry_update(req: MetadataEntryUpdateRequest):
+    """Update editable metadata fields for a single file_metadata record."""
+    try:
+        _ensure_db_for_metadata()
+        _ensure_metadata_schema_compat()
+        from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+        def _lookup_id(cursor, table: str, name: Optional[str]) -> Optional[int]:
+            if name is None:
+                return None
+            normalized = name.strip()
+            if not normalized:
+                return None
+            cursor.execute(
+                f"INSERT INTO {table} (name) VALUES (%s) ON CONFLICT (name) DO NOTHING RETURNING id",
+                (normalized,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row["id"] if isinstance(row, dict) else row[0]
+            cursor.execute(f"SELECT id FROM {table} WHERE name = %s", (normalized,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return row["id"] if isinstance(row, dict) else row[0]
+
+        def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+            if value is None:
+                return None
+            normalized = value.strip()
+            return normalized or None
+
+        def _replace_metadata_tags(cursor, file_id: int, tags: list[str]) -> None:
+            cursor.execute(
+                "DELETE FROM file_tags WHERE file_id = %s AND tag_type = 'metadata_tag'",
+                (file_id,),
+            )
+            for tag in sorted({t.strip() for t in tags if t and t.strip()}):
+                cursor.execute(
+                    "INSERT INTO file_tags (file_id, tag_type, tag_value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (file_id, "metadata_tag", tag),
+                )
+
+        def _replace_pack_membership(cursor, file_id: int, pack_names: list[str]) -> None:
+            normalized = sorted({p.strip() for p in pack_names if p and p.strip()})
+            pack_ids: list[int] = []
+            for pack_name in normalized:
+                cursor.execute(
+                    "INSERT INTO packs (name) VALUES (%s) ON CONFLICT (name) DO NOTHING RETURNING pack_id",
+                    (pack_name,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    pack_ids.append(row["pack_id"] if isinstance(row, dict) else row[0])
+                    continue
+                cursor.execute("SELECT pack_id FROM packs WHERE name = %s", (pack_name,))
+                row = cursor.fetchone()
+                if row:
+                    pack_ids.append(row["pack_id"] if isinstance(row, dict) else row[0])
+
+            cursor.execute("DELETE FROM file_packs WHERE file_id = %s", (file_id,))
+            for pack_id in pack_ids:
+                cursor.execute(
+                    "INSERT INTO file_packs (file_id, pack_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (file_id, pack_id),
+                )
+
+        with get_cursor() as cursor:
+            cursor.execute("SELECT file_id FROM files WHERE file_id = %s", (req.file_id,))
+            if not cursor.fetchone():
+                return {"error": f"File not found for file_id={req.file_id}"}
+
+            cursor.execute(
+                "INSERT INTO file_metadata (file_id) VALUES (%s) ON CONFLICT(file_id) DO NOTHING",
+                (req.file_id,),
+            )
+
+            updates = []
+            params = []
+
+            file_updates = []
+            file_params = []
+
+            if req.source_path is not None:
+                file_updates.append("source_path = %s")
+                file_params.append(_normalize_optional_text(req.source_path))
+            if req.virtual_path is not None:
+                file_updates.append("virtual_path = %s")
+                file_params.append(_normalize_optional_text(req.virtual_path))
+            if req.file_extension is not None:
+                file_updates.append("extension = %s")
+                file_params.append(_normalize_optional_text(req.file_extension))
+            if req.system is not None:
+                file_updates.append("system = %s")
+                file_params.append(_normalize_optional_text(req.system))
+            if req.client is not None:
+                file_updates.append("client = %s")
+                file_params.append(_normalize_optional_text(req.client))
+            if req.map_name is not None:
+                file_updates.append("map_name = %s")
+                file_params.append(_normalize_optional_text(req.map_name))
+            if req.content_type is not None:
+                file_updates.append("content_type = %s")
+                file_params.append(_normalize_optional_text(req.content_type))
+            if req.is_archive is not None:
+                file_updates.append("is_archive = %s")
+                file_params.append(req.is_archive)
+            if req.archive_format is not None:
+                file_updates.append("archive_format = %s")
+                file_params.append(_normalize_optional_text(req.archive_format))
+
+            if req.title is not None:
+                updates.append("title = %s")
+                params.append(_normalize_optional_text(req.title))
+            if req.transfs_path is not None:
+                updates.append("transfs_path = %s")
+                params.append(_normalize_optional_text(req.transfs_path))
+            if req.metadata_extension is not None:
+                updates.append("extension = %s")
+                params.append(_normalize_optional_text(req.metadata_extension))
+            if req.media_type is not None:
+                updates.append("media_type_id = %s")
+                params.append(_lookup_id(cursor, "media_types", req.media_type))
+            if req.release_year is not None:
+                updates.append("release_year = %s")
+                params.append(req.release_year)
+            if req.release_date is not None:
+                updates.append("release_date = %s")
+                params.append(_normalize_optional_text(req.release_date))
+            if req.release_precision is not None:
+                updates.append("release_precision = %s")
+                params.append(_normalize_optional_text(req.release_precision))
+            if req.rom_size is not None:
+                updates.append("rom_size = %s")
+                params.append(req.rom_size)
+            if req.genre is not None:
+                updates.append("genre_id = %s")
+                params.append(_lookup_id(cursor, "genres", req.genre))
+            if req.app_type is not None:
+                updates.append("app_type_id = %s")
+                params.append(_lookup_id(cursor, "app_types", req.app_type))
+            if req.is_revision is not None:
+                updates.append("is_revision = %s")
+                params.append(req.is_revision)
+            if req.publisher is not None:
+                updates.append("publisher_id = %s")
+                params.append(_lookup_id(cursor, "publishers", req.publisher))
+            if req.region is not None:
+                updates.append("region_id = %s")
+                params.append(_lookup_id(cursor, "regions", req.region))
+            if req.language is not None:
+                updates.append("language_id = %s")
+                params.append(_lookup_id(cursor, "languages", req.language))
+            if req.is_prototype is not None:
+                updates.append("is_prototype = %s")
+                params.append(req.is_prototype)
+            if req.is_homebrew is not None:
+                updates.append("is_homebrew = %s")
+                params.append(req.is_homebrew)
+            if req.metadata_provider is not None:
+                updates.append("metadata_provider = %s")
+                params.append(_normalize_optional_text(req.metadata_provider))
+            if req.metadata_source is not None:
+                updates.append("metadata_source = %s")
+                params.append(_normalize_optional_text(req.metadata_source))
+
+            if file_updates:
+                file_params.append(req.file_id)
+                cursor.execute(
+                    f"UPDATE files SET {', '.join(file_updates)} WHERE file_id = %s",
+                    file_params,
+                )
+
+            if updates:
+                params.append(req.file_id)
+                cursor.execute(
+                    f"UPDATE file_metadata SET {', '.join(updates)} WHERE file_id = %s",
+                    params,
+                )
+
+            if req.metadata_tags is not None:
+                _replace_metadata_tags(cursor, req.file_id, req.metadata_tags)
+
+            if req.pack_names is not None:
+                _replace_pack_membership(cursor, req.file_id, req.pack_names)
+
+            if not updates and not file_updates and req.metadata_tags is None and req.pack_names is None:
+                return {"success": True, "message": "No fields to update"}
+
+        return {"success": True, "file_id": req.file_id}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/entry/delete", tags=["Metadata"])
+def metadata_entry_delete(req: MetadataEntryDeleteRequest):
+    """Delete metadata-only records for a single file_id (keeps the file record)."""
+    try:
+        _ensure_db_for_metadata()
+        _ensure_metadata_schema_compat()
+        from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+        with get_cursor() as cursor:
+            cursor.execute("SELECT file_id FROM files WHERE file_id = %s", (req.file_id,))
+            if not cursor.fetchone():
+                return {"error": f"File not found for file_id={req.file_id}"}
+
+            cursor.execute("DELETE FROM file_tags WHERE file_id = %s AND tag_type = 'metadata_tag'", (req.file_id,))
+            tags_deleted = cursor.rowcount or 0
+
+            cursor.execute("DELETE FROM file_packs WHERE file_id = %s", (req.file_id,))
+            packs_deleted = cursor.rowcount or 0
+
+            cursor.execute("DELETE FROM file_metadata WHERE file_id = %s", (req.file_id,))
+            metadata_deleted = cursor.rowcount or 0
+
+        if metadata_deleted == 0 and tags_deleted == 0 and packs_deleted == 0:
+            return {
+                "success": True,
+                "file_id": req.file_id,
+                "message": "No metadata existed for this file",
+                "metadata_deleted": metadata_deleted,
+                "tags_deleted": tags_deleted,
+                "pack_links_deleted": packs_deleted,
+            }
+
+        return {
+            "success": True,
+            "file_id": req.file_id,
+            "metadata_deleted": metadata_deleted,
+            "tags_deleted": tags_deleted,
+            "pack_links_deleted": packs_deleted,
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/metadata/clear-all", tags=["Metadata"])
+def metadata_clear_all(req: MetadataClearAllRequest):
+    """Delete all metadata records, metadata tags, and file-pack metadata links."""
+    try:
+        if (req.confirm_text or "").strip() != "DELETE ALL METADATA":
+            return {"error": "Confirmation text mismatch. Type 'DELETE ALL METADATA' to proceed."}
+
+        _ensure_db_for_metadata()
+        _ensure_metadata_schema_compat()
+        from db.connection import get_cursor  # pylint: disable=import-outside-toplevel
+
+        with get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) AS total FROM file_metadata")
+            row = cursor.fetchone()
+            metadata_before = row["total"] if isinstance(row, dict) else row[0]
+
+            cursor.execute("SELECT COUNT(*) AS total FROM file_tags WHERE tag_type = 'metadata_tag'")
+            row = cursor.fetchone()
+            tags_before = row["total"] if isinstance(row, dict) else row[0]
+
+            cursor.execute("SELECT COUNT(*) AS total FROM file_packs")
+            row = cursor.fetchone()
+            pack_links_before = row["total"] if isinstance(row, dict) else row[0]
+
+            cursor.execute("DELETE FROM file_tags WHERE tag_type = 'metadata_tag'")
+            tags_deleted = cursor.rowcount or 0
+
+            cursor.execute("DELETE FROM file_packs")
+            pack_links_deleted = cursor.rowcount or 0
+
+            cursor.execute("DELETE FROM file_metadata")
+            metadata_deleted = cursor.rowcount or 0
+
+        return {
+            "success": True,
+            "metadata_deleted": metadata_deleted,
+            "tags_deleted": tags_deleted,
+            "pack_links_deleted": pack_links_deleted,
+            "metadata_before": metadata_before,
+            "tags_before": tags_before,
+            "pack_links_before": pack_links_before,
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
 
 @app.get("/cache/status", tags=["Cache"])
 def cache_status(path: str):
@@ -1173,6 +2073,41 @@ async def import_config_set(file: bytes, config_type: str, config_set_name: str)
         return {"success": False, "error": str(e)}
 
 
+@app.post("/config/reload", tags=["System"])
+def reload_client_mappings():
+    """Reload client and source configuration mappings from disk.
+    
+    This clears the config cache and forces re-reading of client/source YAML files
+    on the next access. This is useful when you've modified config files (which are
+    bind-mounted in Docker) without restarting the container.
+    
+    Returns:
+        - success: True if cache was cleared
+        - timestamp: Time when reload was triggered
+        - message: Human-readable status message
+    
+    Note: The FUSE process maintains its own copy of the config in memory. For FUSE
+    to pick up changes, you will need to restart the TransFS container (docker compose restart transfs).
+    The web service (this API) will immediately use the reloaded config on next request.
+    """
+    try:
+        from config import reload_config
+        reload_config()
+        return {
+            "success": True,
+            "timestamp": time.time(),
+            "message": "Config cache cleared. Web service will reload mappings on next request. FUSE requires container restart.",
+            "scope": "web_service_only"
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(f"Failed to reload config: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
+
+
 # ============================================================================
 # TEST ENDPOINTS
 # ============================================================================
@@ -1204,6 +2139,41 @@ def get_test_suites():
             }
         ]
     }
+
+
+@app.post("/fuse/reload-config", tags=["System"])
+def reload_fuse_config_endpoint():
+    """Reload configuration in the FUSE process without restarting.
+    
+    This triggers a reload of client and source configuration mappings directly
+    in the FUSE process, allowing changes to take effect immediately without
+    requiring a container restart.
+    
+    Returns:
+        - success: True if reload was successful
+        - timestamp: Time when reload was triggered
+        - message: Human-readable status message
+        - scope: Indicates this reloads the FUSE process config
+    """
+    try:
+        from transfs import reload_fuse_config
+        result = reload_fuse_config()
+        
+        if result.get('success'):
+            result['timestamp'] = time.time()
+            result['scope'] = 'fuse_process'
+            return result
+        else:
+            result['timestamp'] = time.time()
+            return result
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(f"Failed to trigger FUSE config reload: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
+
 
 # Global storage for test runs (in production, use a database)
 _test_runs = {}

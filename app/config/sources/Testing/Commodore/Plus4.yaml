@@ -1,0 +1,9 @@
+# Commodore Plus4 Software Sources
+
+base_path: Commodore/Plus4/Software
+
+sources:
+  - name: TOSEC Plus4 Collection
+    type: ddl
+    url: https://archive.org/download/Plus4_TOSEC_2012_04_23/Plus4_TOSEC_2012_04_23.zip
+    folder: Disks
