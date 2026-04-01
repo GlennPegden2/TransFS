@@ -4593,20 +4593,20 @@
             btn.disabled = true;
             btn.style.opacity = '0.6';
             statusDiv.style.display = 'block';
-            statusMsg.textContent = '⏳ Reloading configuration mappings...';
+            statusMsg.textContent = '⏳ Reloading FUSE configuration...';
             statusDiv.style.borderLeftColor = '#667eea';
             
             try {
-                const response = await fetch('/api/config/reload', { method: 'POST' });
+                const response = await fetch('/api/fuse/reload-config', { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.success) {
                     statusMsg.innerHTML = `
-                        <strong style="color: #4CAF50;">✓ Config cache cleared successfully!</strong>
+                        <strong style="color: #4CAF50;">✓ FUSE configuration reloaded successfully!</strong>
                         <div style="margin-top: 0.5em; font-size: 0.9em; color: #666;">
                             <p>${data.message}</p>
-                            <p style="margin-top: 0.5em;"><strong>Web Service:</strong> Changes will be loaded on next request.</p>
-                            <p><strong>FUSE Process:</strong> Requires Docker container restart: <code style="background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px;">docker compose restart transfs</code></p>
+                            <p style="margin-top: 0.5em;"><strong>Scope:</strong> ${data.scope || 'fuse_process'}</p>
+                            <p>Changes take effect immediately for new filesystem operations.</p>
                         </div>
                     `;
                     statusDiv.style.borderLeftColor = '#4CAF50';
