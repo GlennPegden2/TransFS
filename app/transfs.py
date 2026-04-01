@@ -3629,6 +3629,16 @@ async def main_async(mount_path: str, root_path: str):
     # Store global reference for API access
     _fuse_instance = fs
     
+    # Write FUSE process PID to a file for API access
+    fuse_pid = os.getpid()
+    pid_file = "/tmp/transfs_fuse.pid"
+    try:
+        with open(pid_file, 'w') as f:
+            f.write(str(fuse_pid))
+        logger.info(f"FUSE process PID {fuse_pid} written to {pid_file}")
+    except Exception as e:  # pylint: disable=broad-except
+        logger.warning(f"Failed to write PID file {pid_file}: {e}")
+    
     # Register SIGHUP handler for config reload
     def sighup_handler(signum, frame):
         logger.info("Received SIGHUP - reloading config...")
@@ -3694,24 +3704,53 @@ async def main_async(mount_path: str, root_path: str):
 
 
 def reload_fuse_config() -> dict:
-    """Trigger config reload in the FUSE instance from the API.
+    """Trigger config reload in the FUSE process from the API.
+    
+    Sends SIGHUP signal to the FUSE process which triggers the registered
+    signal handler to safely reload configuration.
     
     Returns:
         Dictionary with success status and result message
     """
-    global _fuse_instance
+    import signal as signal_module
     
-    if _fuse_instance is None:
-        return {
-            "success": False,
-            "error": "FUSE instance not initialized yet"
-        }
+    # Read FUSE process PID from file
+    pid_file = "/tmp/transfs_fuse.pid"
     
     try:
-        result = _fuse_instance.reload_config_from_disk()
-        return result
+        try:
+            with open(pid_file, 'r') as f:
+                fuse_pid = int(f.read().strip())
+        except (FileNotFoundError, ValueError) as e:
+            logger.error(f"Failed to read FUSE PID from {pid_file}: {e}")
+            return {
+                "success": False,
+                "error": "FUSE process PID not found - ensure FUSE process has started"
+            }
+        
+        # Send SIGHUP to FUSE process
+        logger.info(f"Sending SIGHUP to FUSE process (PID {fuse_pid})")
+        os.kill(fuse_pid, signal_module.SIGHUP)
+        
+        return {
+            "success": True,
+            "message": "SIGHUP signal sent to FUSE process - configuration reload initiated",
+            "fuse_pid": fuse_pid
+        }
+    except ProcessLookupError:
+        logger.error(f"FUSE process with PID {fuse_pid} not found")
+        return {
+            "success": False,
+            "error": f"FUSE process (PID {fuse_pid}) not found - may have crashed"
+        }
+    except PermissionError:
+        logger.error(f"Permission denied sending signal to FUSE process (PID {fuse_pid})")
+        return {
+            "success": False,
+            "error": "Permission denied - cannot signal FUSE process"
+        }
     except Exception as e:  # pylint: disable=broad-except
-        logger.error(f"Failed to reload FUSE config: {e}", exc_info=True)
+        logger.error(f"Failed to signal FUSE process: {e}", exc_info=True)
         return {
             "success": False,
             "error": str(e)
