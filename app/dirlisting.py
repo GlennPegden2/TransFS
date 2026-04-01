@@ -562,21 +562,21 @@ def parse_trans_path(config,root,full_path: str) -> list:
     mount_path = config.get('mount_path', '/mnt/transfs')
     rel_path = '/'.join(rel_path_parts)
     db_subdirs = _get_subdirectories_from_db(mount_path, rel_path)
-    if db_subdirs:
-        return db_subdirs
+    result = list(db_subdirs) if db_subdirs else []
     
     # If database query failed but we're at a category level, try to list systems
     # that have maps with this category, AND list direct file maps
     if len(rel_path_parts) == 2:  # Client + Category level (e.g., RetroBat/ROMS or RetroBat/bios)
         possible_category = rel_path_parts[1]
-        result = []
+        possible_category_lower = possible_category.lower()
         if 'systems' in client:
             for system in client['systems']:
                 # Check if any maps in this system have the matching category
                 for map_entry in (system.get('maps') or []):
                     map_name = list(map_entry.keys())[0]
                     map_config = list(map_entry.values())[0]
-                    if isinstance(map_config, dict) and map_config.get('category') == possible_category:
+                    map_category = map_config.get('category') if isinstance(map_config, dict) else None
+                    if isinstance(map_config, dict) and str(map_category or '').lower() == possible_category_lower:
                         # If map has 'file' key, add the map name as a direct file entry
                         if 'file' in map_config:
                             if map_name not in result:
@@ -813,19 +813,29 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
         return []
-    display_or_actual_name = path.parts[len(root_parts) + 1]
-    # Resolve display name to actual system name
-    from pathutils import resolve_system_name
-    system_name = resolve_system_name(client, display_or_actual_name)
-    if not system_name:
-        return []
-    system = next((s for s in client['systems'] if s['name'] == system_name), None)
+    rel_parts = path.parts[len(root_parts):]
+
+    # Resolve system for both non-category and category paths.
+    # Examples:
+    # - /RetroBat/AcornAtom/FDs
+    # - /RetroBat/ROMS/3DO/CDs
+    from pathutils import resolve_system_name, get_system_info
+    system = get_system_info(client, list(rel_parts))
     if not system:
         return []
-    
+
+    system_idx = None
+    for idx, part in enumerate(rel_parts):
+        resolved = resolve_system_name(client, part)
+        if resolved == system.get('name'):
+            system_idx = idx
+            break
+
+    if system_idx is None:
+        return []
+
     # For nested paths (e.g., /RetroBat/AcornAtom/FDs/bios), construct the full map path
-    rel_parts = path.parts[len(root_parts):]
-    map_parts = rel_parts[2:]  # Everything after client and system
+    map_parts = rel_parts[system_idx + 1:]  # Everything after resolved system segment
     map_path = '/'.join(map_parts)  # e.g., "FDs/bios"
     map_name = map_parts[0] if map_parts else ""  # e.g., "FDs"
     
@@ -898,8 +908,17 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     if cache_enabled:
         _cache_misses += 1
 
-    # Parts after /<mount>/<client>/<system>/<map_name>/
-    subpath = path.parts[len(root_parts) + 3:]
+    # Parts after the resolved map directory.
+    # Supports both:
+    # - /<client>/<system>/<map>/...
+    # - /<client>/<category>/<system>/<map>/...
+    rel_parts = list(path.parts[len(root_parts):])
+    try:
+        map_idx = rel_parts.index(map_name)
+        subpath = rel_parts[map_idx + 1:]
+    except ValueError:
+        # Fallback to legacy non-category offset.
+        subpath = path.parts[len(root_parts) + 3:]
 
     try:
         from db.queries import query_files_by_system_and_query
@@ -907,11 +926,29 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         system_id = get_system_identifier(system)
         system_name = system.get("name") if isinstance(system, dict) else None
+        system_mapping_name = system.get("system_mapping_name") if isinstance(system, dict) else None
+        canonical_name = system.get("cananonical_system_name") if isinstance(system, dict) else None
+
         system_candidates = []
-        if system_id:
-            system_candidates.append(system_id)
-        if system_name and system_name not in system_candidates:
-            system_candidates.append(system_name)
+
+        def _add_system_candidate(value):
+            candidate = str(value or "").strip()
+            if candidate and candidate not in system_candidates:
+                system_candidates.append(candidate)
+
+        # Preferred modern identifier first.
+        _add_system_candidate(system_id)
+
+        # Add legacy/fallback system identifiers used by older sync runs.
+        _add_system_candidate(system_name)
+        _add_system_candidate(system_mapping_name)
+        _add_system_candidate(canonical_name)
+
+        # Case variants help with legacy lowercase-only system values (e.g., "3do").
+        _add_system_candidate(str(system_name or "").lower())
+        _add_system_candidate(str(system_mapping_name or "").lower())
+        _add_system_candidate(str(canonical_name or "").lower())
+
         if not system_candidates:
             logger.warning(f"Query map requested but no system identifier found for {system.get('name')}")
             return []
@@ -1039,6 +1076,35 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                                     pass
                 except Exception as e:
                     logger.warning(f"Filesystem fallback error in list_query_map: {e}")
+
+                # For source_based layouts, content may live in nested source folders.
+                # If no direct files were found, walk recursively and include matching extensions.
+                if not fs_only_files and system.get("download_layout") == "source_based":
+                    try:
+                        allowed_exts = {str(ext).upper() for ext in extensions if ext and str(ext) != '*'}
+                        for root_dir, _, filenames in os.walk(scan_dir):
+                            for filename in filenames:
+                                if not show_hidden and filename.startswith('.'):
+                                    continue
+                                _, ext = os.path.splitext(filename)
+                                ext_upper = ext[1:].upper() if ext else ''
+                                if allowed_exts and ext_upper not in allowed_exts:
+                                    continue
+
+                                file_path = os.path.join(root_dir, filename)
+                                try:
+                                    stat_info = os.stat(file_path)
+                                    fs_only_files.append({
+                                        'filename': filename,
+                                        'source_path': file_path,
+                                        'extension': ext_upper,
+                                        'size': stat_info.st_size,
+                                        'mtime': stat_info.st_mtime,
+                                    })
+                                except Exception:
+                                    continue
+                    except Exception as e:
+                        logger.warning(f"Recursive source_based fallback error in list_query_map: {e}")
                 
                 if fs_only_files:
                     logger.info(f"list_query_map: filesystem fallback found {len(fs_only_files)} files not in database")
