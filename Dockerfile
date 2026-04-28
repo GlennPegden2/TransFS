@@ -1,8 +1,17 @@
+# Build stage: extract chdman binary from mame-tools without bloating the final image
+FROM python:3.10-slim AS chdman-builder
+RUN apt-get update && \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
+    apt-get install -y --no-install-recommends mame-tools
+
+# Runtime image
 FROM python:3.10-slim
 
+COPY --from=chdman-builder /usr/bin/chdman /usr/bin/chdman
 
-RUN apt-get update
-RUN apt-get install -y build-essential fuse3 libfuse3-dev pkg-config samba wget unzip libguestfs-tools p7zip unrar-free
+RUN apt-get update && \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
+    apt-get install -y --no-install-recommends build-essential fuse3 libfuse3-dev pkg-config samba wget unzip libguestfs-tools p7zip unrar-free
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
@@ -16,6 +25,8 @@ RUN echo 'user_allow_other' >> /etc/fuse.conf
 # Add a basic Samba config
 COPY platform/linux/smb.conf /etc/samba/smb.conf
 COPY platform/linux/smbusers /etc/samba/smbusers
+COPY platform/linux/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Note: Samba user credentials are configured at app startup from app.yaml
 # via app/smb_config.py, not at build time
@@ -25,14 +36,5 @@ EXPOSE 445
 EXPOSE 80
 
 WORKDIR /app
-#COPY ./app /app
 
-# Start Samba and the FUSE filesystem
-CMD service smbd start && \
-    service nmbd start && \
-    python3 -m transfs 2>&1 | tee /tmp/transfs.log & \
-    WEB_PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['port'])" 2>/dev/null || echo "8000") && \
-    WEB_HOST=$(python3 -c "import yaml; print(yaml.safe_load(open('transfs.yaml'))['web_api']['host'])" 2>/dev/null || echo "0.0.0.0") && \
-    echo "Starting Web UI on ${WEB_HOST}:${WEB_PORT}" && \
-    uvicorn main:app --host "${WEB_HOST}" --port "${WEB_PORT}" & \
-    tail -f /dev/null
+ENTRYPOINT ["/entrypoint.sh"]

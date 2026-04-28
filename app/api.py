@@ -1575,9 +1575,10 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
     logger = logging.getLogger("api")
     
     try:
-        from config import read_config
+        from config import read_config, reload_config
         from feature_flags import FeatureFlagManager
         
+        reload_config()  # Always re-read YAML from disk before syncing
         config = read_config()
         flags = FeatureFlagManager(config)
         
@@ -4018,6 +4019,22 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                 else:
                                     yield f"      ⚠ Source file not found: {from_name}\n"
                     
+                    elif source_type == "IA-COL":
+                        # Internet Archive collection download
+                        url = url_entries[0]["url"] if url_entries else None
+                        folder = url_entries[0]["folder"] if url_entries else ""
+                        filetypes = source.get("filetypes")
+                        
+                        if not url:
+                            yield f"   ⚠ Source '{source_name}' has no URL configured\n"
+                        else:
+                            try:
+                                for msg in download_ia_collection(url, base_path, folder, filetypes=filetypes):
+                                    yield msg
+                                yield f"   ✓ IA-COL download complete: {os.path.join(base_path, folder)}\n"
+                            except Exception as exc:  # pylint: disable=broad-except
+                                yield f"   ✗ Failed to download IA-COL '{source_name}': {exc}\n"
+
                     else:
                         yield f"   ⚠ Source type '{source_type}' not yet supported for pack installation\n"
                 
@@ -4116,6 +4133,10 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                 yield "🔄 Starting database synchronization...\n"
                 yield "=" * 60 + "\n\n"
                 
+                # Yield control to the event loop so the above messages are flushed
+                # to the browser before the blocking sync operation begins
+                await asyncio.sleep(0)
+                
                 # Flush to ensure header is sent immediately
                 sys.stdout.flush()
                 sys.stderr.flush()
@@ -4132,10 +4153,15 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                 sync_logger.addHandler(log_handler)
                 sync_logger.setLevel(logging.INFO)
                 
-                # Create DatabaseSync instance and run full sync
+                # Create DatabaseSync instance and run full sync in a thread to avoid
+                # blocking the async event loop (which would prevent other requests from
+                # being served while the sync processes potentially hundreds of files)
                 sync_config = read_config()
                 db_sync = DatabaseSync(sync_config)
-                db_sync.full_sync(client_filter=client_name, system_filter=system_name)
+                await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: db_sync.full_sync(client_filter=client_name, system_filter=system_name)
+                )
                 
                 # Stream captured log output
                 sync_output = log_capture.getvalue()
@@ -4522,28 +4548,62 @@ def download_ia_collection(url, base_path, folder, filetypes=None):
     collection_name = match.group(1)
     yield f"Fetching Internet Archive collection: {collection_name}\n"
 
-    for item in internetarchive.search_items(f'collection:{collection_name}'):
-        item_id = item['identifier']
-#        yield f"Processing item: {item_id}\n"
-        ia_item = internetarchive.get_item(item_id)
-        ia_files = ia_item.files
+    # Extensions used by IA for thumbnails and metadata - skip unless an explicit filetype filter is set
+    IA_METADATA_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'xml', 'sqlite', 'torrent', 'md5', 'sha1'}
+
+    def _download_ia_item(ia_item, item_id):
+        """Download matching files from a single IA item. Yields progress strings."""
         files_to_download = []
-        for f in ia_files:
-            ext = f['name'].split('.')[-1].lower() if '.' in f['name'] else ''
+        for f in ia_item.files:
+            name = f['name']
+            ext = name.split('.')[-1].lower() if '.' in name else ''
+            # Skip IA-generated metadata/derivative files unless caller requested them explicitly
+            if not filetypes_set:
+                if f.get('source') == 'metadata' or name.startswith('_'):
+                    continue
+                if ext in IA_METADATA_EXTENSIONS:
+                    continue
             if not filetypes_set or ext in filetypes_set:
-                files_to_download.append(f['name'])
-        if files_to_download:
-            yield f"Downloading {len(files_to_download)} file(s) from item: {item_id}\n"
-            ia_item.download(
-                destdir=dest_dir,
-                files=files_to_download,
-                verbose=False,
-                checksum=True,
-                no_directory=True
-            )
- #           yield f"Downloaded item: {item_id}\n"
-        else:
+                files_to_download.append(name)
+        if not files_to_download:
             yield f"No matching files in item: {item_id}\n"
+            return
+        yield f"Downloading {len(files_to_download)} content file(s) from item: {item_id}\n"
+        # Download one file at a time: gives per-file progress, isolates errors,
+        # and avoids a single timeout killing the entire batch.
+        for fname in files_to_download:
+            try:
+                ia_item.download(
+                    destdir=dest_dir,
+                    files=[fname],
+                    verbose=False,
+                    checksum=True,
+                    no_directory=True,
+                    timeout=300,
+                )
+                yield f"   ✓ {fname}\n"
+            except Exception as exc:  # pylint: disable=broad-except
+                yield f"   ✗ Failed '{fname}': {exc}\n"
+
+    # First try treating the identifier as a collection (search for member items).
+    # If the search returns nothing the identifier is likely a single item itself
+    # (e.g. https://archive.org/details/rr-3do is one item, not a collection of items).
+    search_results = list(internetarchive.search_items(f'collection:{collection_name}'))
+    if search_results:
+        yield f"Found {len(search_results)} item(s) in collection '{collection_name}'\n"
+        for result in search_results:
+            item_id = result['identifier']
+            ia_item = internetarchive.get_item(item_id)
+            yield from _download_ia_item(ia_item, item_id)
+    else:
+        # Fall back: treat the identifier as a direct single-item download
+        yield f"No collection found for '{collection_name}', trying as a direct item...\n"
+        ia_item = internetarchive.get_item(collection_name)
+        if not ia_item.metadata:
+            yield f"Item '{collection_name}' not found on Internet Archive\n"
+            return
+        yield f"Found item: {ia_item.metadata.get('title', collection_name)}\n"
+        yield from _download_ia_item(ia_item, collection_name)
 
 
 def get_filename_from_response(resp, url):

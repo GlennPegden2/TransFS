@@ -2,8 +2,7 @@
 Database schema definitions for metadata storage.
 
 Tables:
-- files: Core file information (path, size, timestamps)
-- metadata: Extended metadata (genre, language, tags, etc.)
+- files: Core file information (path, size, timestamps)- file_client_maps: Per-client mappings (client, system, map_name, virtual_path) for each physical file- metadata: Extended metadata (genre, language, tags, etc.)
 - collections: User-defined collections
 - collection_members: Files within collections
 - transforms: Transform pipeline configurations
@@ -11,7 +10,7 @@ Tables:
 """
 
 # PostgreSQL schema with indexes optimized for common queries
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 CREATE_TABLES = """
 -- Core files table
@@ -299,6 +298,24 @@ CREATE TABLE IF NOT EXISTS transforms (
 
 CREATE INDEX IF NOT EXISTS idx_transforms_file_id ON transforms(file_id);
 CREATE INDEX IF NOT EXISTS idx_transforms_is_active ON transforms(file_id, is_active);
+
+-- Per-client file mappings: allows the same physical file to appear under multiple clients/systems
+-- This separates stable physical-file metadata (files table) from client-specific routing.
+CREATE TABLE IF NOT EXISTS file_client_maps (
+    id SERIAL PRIMARY KEY,
+    file_id INTEGER NOT NULL REFERENCES files(file_id) ON DELETE CASCADE,
+    client TEXT NOT NULL,
+    system TEXT NOT NULL,
+    map_name TEXT NOT NULL,
+    virtual_path TEXT,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    UNIQUE(file_id, client, system, map_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_client_maps_file_id ON file_client_maps(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_client_maps_client_system_map ON file_client_maps(client, system, map_name);
+CREATE INDEX IF NOT EXISTS idx_file_client_maps_virtual_path ON file_client_maps(virtual_path);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (

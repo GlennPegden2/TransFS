@@ -489,6 +489,7 @@ TRANSFORM_SHORTCUTS = {
     'strip_footer_64': {'type': 'strip_footer', 'bytes': 64},
     'pad_header_64': {'type': 'pad_header', 'bytes': 64},
     'two_mg': {'type': 'two_mg'},
+    'chd': {'type': 'chd'},
 }
 
 

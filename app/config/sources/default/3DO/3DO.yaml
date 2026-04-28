@@ -6,16 +6,7 @@ sources:
   - name: bios
     type: ddl
     urls: 
-     - https://github.com/trapexit/3do-bios/blob/master/3do_arcade_saot.bin
-     - https://github.com/trapexit/3do-bios/blob/master/goldstar.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz1-kanji.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz1.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10-patched.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil-patched.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10ja-anvil-kanji.bin
-     - https://github.com/trapexit/3do-bios/blob/master/sanyotry.bin
+     - Unknown
     folder: BIOS
 
     

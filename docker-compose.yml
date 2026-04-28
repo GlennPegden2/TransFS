@@ -68,39 +68,7 @@ services:
       - SMB_ADVERTISE_PORT=${SMB_ADVERTISE_PORT:-3445}
       - SMB_ADVERTISE_SHARE=${SMB_ADVERTISE_SHARE:-TransFS}
       # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
-    entrypoint: >
-      bash -c "
-        mkdir -p /mnt/filestorefs &&
-        mkdir -p /mnt/filestorefs/.transfs_logs &&
-        python3 -c \"import sys; sys.path.insert(0, '/app'); from smb_config import setup_samba_from_config; import yaml; config = yaml.safe_load(open('/app/config/app.yaml')); setup_samba_from_config(config)\" &&
-        echo 'Starting FUSE filesystem...' &&
-        if [ \"$$DEBUG_MODE\" = \"1\" ]; then
-          echo 'Starting in debug mode...';
-          python3 -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/transfs.py 2>&1 | tee -a /mnt/filestorefs/.transfs_logs/transfs.log &
-        else
-          echo 'Starting in normal mode...';
-          python3 -m transfs 2>&1 | tee -a /mnt/filestorefs/.transfs_logs/transfs.log &
-        fi &&
-        echo 'Starting SMB services...' &&
-        service smbd start &&
-        service nmbd start &&
-        echo 'Waiting for FUSE mount...' &&
-        for i in {1..120}; do
-          if mountpoint -q /mnt/transfs; then
-            echo 'FUSE mount ready';
-            break;
-          fi;
-          sleep 1;
-        done &&
-        if ! mountpoint -q /mnt/transfs; then
-          echo 'WARNING: FUSE not mounted after 120 seconds; continuing with SMB/Web startup';
-        fi &&
-        WEB_PORT=$$(python3 -c \"import yaml; print(yaml.safe_load(open('/app/transfs.yaml'))['web_api']['port'])\" 2>/dev/null || echo \"8000\") &&
-        WEB_HOST=$$(python3 -c \"import yaml; print(yaml.safe_load(open('/app/transfs.yaml'))['web_api']['host'])\" 2>/dev/null || echo \"0.0.0.0\") &&
-        echo \"Starting FastAPI web service on $${WEB_HOST}:$${WEB_PORT}...\" &&
-        uvicorn main:app --host \"$${WEB_HOST}\" --port \"$${WEB_PORT}\" --reload 2>&1 | tee -a /mnt/filestorefs/.transfs_logs/web.log &&
-        tail -f /dev/null
-      "
+    entrypoint: ["/entrypoint.sh"]
 
 volumes:
   postgres_data:

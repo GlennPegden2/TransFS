@@ -576,7 +576,12 @@ def parse_trans_path(config,root,full_path: str) -> list:
                     map_name = list(map_entry.keys())[0]
                     map_config = list(map_entry.values())[0]
                     map_category = map_config.get('category') if isinstance(map_config, dict) else None
-                    if isinstance(map_config, dict) and str(map_category or '').lower() == possible_category_lower:
+                    map_category_lower = str(map_category or '').lower()
+                    category_matches = (
+                        map_category_lower == possible_category_lower
+                        or (map_category_lower == 'shared_bios' and possible_category_lower == 'bios')
+                    )
+                    if isinstance(map_config, dict) and category_matches:
                         # If map has 'file' key, add the map name as a direct file entry
                         if 'file' in map_config:
                             if map_name not in result:
@@ -613,6 +618,8 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
         map_name = list(map_entry.keys())[0]
         # Extract the first component (e.g., 'bios' from 'bios/atom.zip')
         top_level = map_name.split('/')[0]
+        if top_level == '.':
+            continue
         if top_level not in seen:
             result.append(top_level)
             seen.add(top_level)
@@ -621,14 +628,26 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
     mount_path = config.get('mount_path', '/mnt/transfs')
     db_subdirs = _get_subdirectories_from_db(mount_path, client_name)
     
-    # Add database-discovered directories (categories like ROMS, BIOS, or systems)
+    # Add database-discovered directories (categories like ROMS/BIOS, or legacy systems)
+    # For category-path clients, only keep expected top-level category directories to
+    # avoid stale system names (e.g. "3DO") leaking into client root.
+    allowed_top_levels = None
+    has_category_paths = 'category_paths' in client and client['category_paths']
+    if has_category_paths:
+        allowed_top_levels = set()
+        for template in (client.get('category_paths') or {}).values():
+            template_parts = str(template).split('/')
+            for part in template_parts:
+                if part and not part.startswith('{') and not part.endswith('}'):
+                    allowed_top_levels.add(part)
+                    break
+
     for subdir in db_subdirs:
+        if allowed_top_levels is not None and subdir not in allowed_top_levels:
+            continue
         if subdir not in seen:
             result.append(subdir)
             seen.add(subdir)
-    
-    # Check if client uses category paths
-    has_category_paths = 'category_paths' in client and client['category_paths']
     
     # If client uses category paths and database query returned nothing,
     # fall back to listing category directories from configuration
@@ -661,6 +680,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     """List all maps and dynamic SoftwareArchives for a system."""
     from pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name, get_system_info
     
+    show_hidden = config.get('show_hidden_files', True)
     client_name = path.parts[len(root_parts)]
     client = next((c for c in config['clients'] if c['name'] == client_name), None)
     if not client:
@@ -676,6 +696,29 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
         return []
     
     system = system_info
+    rel_path_parts = path.parts[len(root_parts):]
+
+    # If browsing via category path (/client/<category>/<system>), only include maps
+    # that resolve to that visible category directory.
+    active_category_dir = None
+    try:
+        system_idx = rel_path_parts.index(system.get('name'))
+    except ValueError:
+        system_idx = -1
+    if system_idx >= 2:
+        active_category_dir = rel_path_parts[1]
+
+    def _category_to_visible_dir(category_name: str) -> str:
+        if not category_name:
+            return ''
+        template = (client.get('category_paths') or {}).get(category_name)
+        if not template:
+            return ''
+        for part in str(template).split('/'):
+            if part and not part.startswith('{') and not part.endswith('}'):
+                return part
+        return ''
+
     maps = []
     mapped_names = set()
     # Track top-level virtual directories (e.g., "MMBs" from "MMBs/beeb1_mmb.VHD")
@@ -691,6 +734,13 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
     # First: Add all configured maps (FILE maps, QUERY maps, etc.)
     for map_entry in (system.get('maps') or []):
         map_name = list(map_entry.keys())[0]
+        map_config = list(map_entry.values())[0] if map_entry else {}
+
+        if active_category_dir:
+            map_category = map_config.get('category') if isinstance(map_config, dict) else None
+            visible_dir = _category_to_visible_dir(str(map_category or ''))
+            if not visible_dir or visible_dir.lower() != active_category_dir.lower():
+                continue
         
         # Skip flattened maps (.) - their contents appear directly in this directory
         if is_flatten_map(map_name):
@@ -734,10 +784,15 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
                 mapped_names.add(db_entry)
     
     # Handle flattened maps (.) - merge their contents directly into this listing
+    # Only include if the flatten map's category matches the current directory context.
     flatten_map_entry = next((m for m in (system.get('maps') or []) if list(m.keys())[0] == '.'), None)
     if flatten_map_entry:
         flatten_config = flatten_map_entry['.']
-        if 'query' in flatten_config:
+        flatten_category = flatten_config.get('category') if isinstance(flatten_config, dict) else None
+        flatten_visible_dir = _category_to_visible_dir(str(flatten_category or ''))
+        if active_category_dir and flatten_visible_dir and flatten_visible_dir.lower() != active_category_dir.lower():
+            flatten_config = None  # Category mismatch - don't include
+        if flatten_config and 'query' in flatten_config:
             # For flattened query maps, list the files from the source_dir
             query_cfg = flatten_config['query']
             source_dir = query_cfg.get('source_dir', 'Software')
@@ -848,6 +903,27 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     from pathutils import find_map_entry, get_map_config, is_query_map
     map_entry = find_map_entry(system, map_name)
     map_config = get_map_config(map_entry)
+
+    # Category-aware access control: when under /client/<category>/<system>/..., only
+    # allow maps whose category resolves to that visible category directory.
+    if map_config:
+        active_category_dir = None
+        if system_idx >= 2:
+            active_category_dir = rel_parts[1]
+        if active_category_dir:
+            map_category = map_config.get('category') if isinstance(map_config, dict) else None
+            if map_category:
+                category_template = (client.get('category_paths') or {}).get(map_category, '')
+                visible_dir = ''
+                for part in str(category_template).split('/'):
+                    if part and not part.startswith('{') and not part.endswith('}'):
+                        visible_dir = part
+                        break
+                if not visible_dir or visible_dir.lower() != str(active_category_dir).lower():
+                    return []
+            else:
+                return []
+
     if map_config and is_query_map(map_config):
         return list_query_map(config, path, root_parts, system, map_name, map_config)
     sa_entry = find_software_archive_entry(system)
@@ -866,6 +942,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     global _cache_hits, _cache_misses
     t_func_start = time.time()
 
+    show_hidden = config.get('show_hidden_files', True)
     query_cfg = map_config.get("query", {})
     extensions = query_cfg.get("extensions", [])
     extension_map = query_cfg.get("extension_map", {}) or {}
@@ -874,15 +951,10 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         query_cfg.get("source_dir", "Software"),
         system,
     )
-    supports_zip = query_cfg.get("supports_zip", True)
+    transform_zip = query_cfg.get("transform_zip", True)
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
     preserve_structure = query_cfg.get("preserve_structure", False)  # New: preserve source directory structure
     
-    # CRITICAL DEBUG: Log config loading
-    logger.warning(f"[CRITICAL] list_query_map called for {map_name}. map_config keys: {list(map_config.keys())}")
-    logger.warning(f"[CRITICAL] query_cfg keys: {list(query_cfg.keys())}")
-    logger.warning(f"[CRITICAL] preserve_structure value: {preserve_structure} (type: {type(preserve_structure).__name__})")
-
     cache_key = str(path)
     cache_enabled = False  # Directory listing cache is disabled
 
@@ -995,7 +1067,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             )
             # Check for zip navigation
             zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
-            if zip_idx is not None and supports_zip and zip_mode != "file":
+            if zip_idx is not None and transform_zip and zip_mode != "file":
                 zip_name = subpath[zip_idx]
                 inner_parts = subpath[zip_idx + 1:]
                 zip_path = os.path.join(base_dir, zip_name)
@@ -1030,17 +1102,31 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         query_db = dict(query_cfg)
         query_db["source_dir"] = source_dir
 
-        db_entries = []
+        # Collect from all system candidates and deduplicate by filename.
+        # Do NOT break on first non-empty match: the same system may have been
+        # indexed under different case variants (e.g. "3DO" and "3do") in the
+        # database, causing different files to land under different keys.
+        db_entries_by_filename: dict[str, dict] = {}
         for system_key in system_candidates:
             logger.info(f"QUERY MAP: system={system_key}, map={map_name}, extensions={extensions}")
-            db_entries = query_files_by_system_and_query(
+            candidate_entries = query_files_by_system_and_query(
                 system=system_key,
                 query=query_db,
                 system_config=system,
                 limit=10000
             )
-            if db_entries:
-                break
+            for entry in candidate_entries:
+                fname = entry.get('filename', '') if isinstance(entry, dict) else str(entry)
+                if fname not in db_entries_by_filename:
+                    db_entries_by_filename[fname] = entry
+                else:
+                    # Prefer the entry whose source_path actually exists on disk
+                    existing = db_entries_by_filename[fname]
+                    existing_path = existing.get('source_path', '') if isinstance(existing, dict) else ''
+                    new_path = entry.get('source_path', '') if isinstance(entry, dict) else ''
+                    if new_path and os.path.exists(new_path) and not os.path.exists(existing_path):
+                        db_entries_by_filename[fname] = entry
+        db_entries = list(db_entries_by_filename.values())
 
         if not db_entries:
             # FILESYSTEM FALLBACK: Check for files on disk not yet in database
@@ -1169,7 +1255,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             
             if filename.lower().endswith('.zip'):
                 zip_entries.append(filename)
-                if zip_mode == "file" or not supports_zip:
+                if zip_mode == "file" or not transform_zip:
                     entries.add(filename)
                 elif zip_mode == "hierarchical":
                     entries.add(filename)
@@ -1208,7 +1294,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             else:
                 entries.add(final_entry)
 
-        if zip_mode == "flatten" and supports_zip and zip_entries:
+        if zip_mode == "flatten" and transform_zip and zip_entries:
             base_dir = os.path.join(
                 config.get("filestore", "/mnt/filestorefs"),
                 "Native",
@@ -1231,7 +1317,6 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         # When preserve_structure is enabled, build virtual directory tree from relative paths
         if preserve_structure and entries:
-            logger.warning(f"[CRITICAL] About to build virtual tree. preserve_structure={preserve_structure}, entries count={len(entries)}")
             virtual_tree: set[str] = set()
             for entry in entries:
                 # Split paths and extract components for virtual directory structure
@@ -1358,7 +1443,7 @@ def list_dynamic_map(
     t_func_start = time.time()
     
     filetypes = sa_entry["...SoftwareArchives..."].get("filetypes", [])
-    supports_zip = sa_entry["...SoftwareArchives..."].get("supports_zip", True)
+    transform_zip = sa_entry["...SoftwareArchives..."].get("transform_zip", True)
     zip_mode = sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
     source_dir = os.path.join(
         config["filestore"],
@@ -1600,9 +1685,9 @@ def list_dynamic_map(
                     entry_path = os.path.join(listdir_path, entry)
                     if os.path.isdir(entry_path):
                         entries.add(entry)
-                    elif entry.lower().endswith(".zip") and supports_zip:
+                    elif entry.lower().endswith(".zip") and transform_zip:
                         entries.add(entry)
-                    elif entry.lower().endswith(".zip") and not supports_zip:
+                    elif entry.lower().endswith(".zip") and not transform_zip:
                         # Treat as regular file with extension mapping
                         name, ext = os.path.splitext(entry)
                         if ext[1:].upper() == real_ext.upper():
@@ -1616,7 +1701,7 @@ def list_dynamic_map(
                 continue
 
             # Inside a zip (possibly with inner path)
-            if in_zip and supports_zip:
+            if in_zip and transform_zip:
                 try:
                     target = zip_path if not zip_inner else f"{zip_path}/{zip_inner}"
                     logger.debug(f"ZIPPATH_LISTDIR: target={target}, zip_path={zip_path}, zip_inner={zip_inner}")
@@ -1650,10 +1735,10 @@ def list_dynamic_map(
                 if is_directory:
                     entries.add(entry_name)
                     logger.debug(f"Added DIR: {entry_name}")
-                elif entry_name.lower().endswith(".zip") and supports_zip:
+                elif entry_name.lower().endswith(".zip") and transform_zip:
                     entries.add(entry_name)
                     logger.debug(f"Added ZIP: {entry_name}")
-                elif entry_name.lower().endswith(".zip") and not supports_zip:
+                elif entry_name.lower().endswith(".zip") and not transform_zip:
                     # Treat as regular file
                     name, ext = os.path.splitext(entry_name)
                     if ext[1:].upper() == real_ext.upper():
@@ -1727,7 +1812,7 @@ def list_dynamic_map(
                     entry_path = os.path.join(source_dir, ext_dir_name, entry)
                     if os.path.isdir(entry_path):
                         entries.add(entry)
-                    elif entry.lower().endswith(".zip") and supports_zip and flatten_enabled:
+                    elif entry.lower().endswith(".zip") and transform_zip and flatten_enabled:
                         # Flatten: enumerate ZIP contents at this level
                         try:
                             internal = zippath_listdir(entry_path)
@@ -1746,7 +1831,7 @@ def list_dynamic_map(
                 continue
 
             # Deeper paths in flatten mode: treat as hierarchical (no change)
-            if in_zip and supports_zip:
+            if in_zip and transform_zip:
                 try:
                     target = zip_path if not zip_inner else f"{zip_path}/{zip_inner}"
                     internal = zippath_listdir(target)
@@ -1770,7 +1855,7 @@ def list_dynamic_map(
                 entry_path = os.path.join(dir_path, entry)
                 if os.path.isdir(entry_path):
                     entries.add(entry)
-                elif entry.lower().endswith(".zip") and supports_zip:
+                elif entry.lower().endswith(".zip") and transform_zip:
                     entries.add(entry)
                 else:
                     name, ext = os.path.splitext(entry)

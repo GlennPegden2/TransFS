@@ -419,7 +419,9 @@ class DatabaseSync:
                         'extension_map': query_cfg.get("extension_map", {}),
                         'transforms': map_config.get("transforms", {}),
                         'preserve_structure': query_cfg.get("preserve_structure", False),
-                        'preserve_exact_filenames': query_cfg.get("preserve_exact_filenames", False)
+                        'preserve_exact_filenames': query_cfg.get("preserve_exact_filenames", False),
+                        'transform_zip': query_cfg.get("transform_zip", False),
+                        'zip_mode': query_cfg.get("zip_mode", "none"),
                     })
                     logger.debug(f"    Found query map: {map_name}")
             else:
@@ -754,19 +756,36 @@ class DatabaseSync:
                         # Check if extension matches: either literal match or wildcard "*"
                         # Wildcard also matches files with no extension (only when "*" is used)
                         extension_matches = ext in map_info['extensions'] or "*" in map_info['extensions']
-                        
-                        if extension_matches:
-                            # Check if file is under the map's source_dir
-                            source_dir = map_info['source_dir']
-                            # Normalize paths for comparison (handle both forward and back slashes)
-                            rel_path_normalized = relative_path.replace('\\', '/')
-                            source_dir_normalized = source_dir.replace('\\', '/').rstrip('/')
-                            
-                            # File must be under the source_dir to belong to this map
-                            if not rel_path_normalized.startswith(source_dir_normalized + '/'):
-                                continue  # File not in this map's directory, try next map
-                            
-                            # File extension matches this map AND it's in the right directory
+
+                        # Check for ZIP expansion: a .zip containing files of the target extension
+                        zip_expand = (
+                            ext == "ZIP"
+                            and map_info.get('transform_zip', False)
+                            and map_info.get('zip_mode', 'none') == 'flatten'
+                        )
+
+                        if not extension_matches and not zip_expand:
+                            continue
+
+                        # Check if file is under the map's source_dir
+                        source_dir = map_info['source_dir']
+                        # Normalize paths for comparison (handle both forward and back slashes)
+                        rel_path_normalized = relative_path.replace('\\', '/')
+                        source_dir_normalized = source_dir.replace('\\', '/').rstrip('/')
+
+                        # File must be under the source_dir to belong to this map
+                        if not rel_path_normalized.startswith(source_dir_normalized + '/'):
+                            continue  # File not in this map's directory, try next map
+
+                        if zip_expand:
+                            # Expand ZIP contents and add each matching inner file individually
+                            added = self._add_zip_entries_to_database(
+                                file_path, client_name, system_name, map_info,
+                                client_config, system_config
+                            )
+                            file_count += added
+                        else:
+                            # Normal file match
                             preserve_exact = map_info.get('preserve_exact_filenames', False)
                             preserve_structure = map_info.get('preserve_structure', False)
                             self._add_file_to_database(
@@ -778,8 +797,8 @@ class DatabaseSync:
                                 preserve_structure=preserve_structure
                             )
                             file_count += 1
-                            matched = True
-                            break  # File matched to first applicable map
+                        matched = True
+                        break  # File matched to first applicable map
                     
                     if not matched and ext:
                         # File has extension but didn't match any map
@@ -990,6 +1009,40 @@ class DatabaseSync:
             return source_dir
         return os.path.join(source_dir, "Sources")
     
+    def _add_zip_entries_to_database(self, zip_path: str, client_name: str, system_name: str,
+                                     map_info: dict, client_config: dict,
+                                     system_config: dict) -> int:
+        """
+        Expand a ZIP file and add inner files matching the map's extensions to the database.
+        Used when transform_zip=True and zip_mode='flatten'.
+        Returns the number of entries added.
+        """
+        import zipfile
+        extensions = map_info['extensions']
+        added = 0
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    inner_name = info.filename
+                    _, inner_ext = os.path.splitext(inner_name)
+                    inner_ext_upper = inner_ext[1:].upper() if inner_ext else ""
+                    if inner_ext_upper not in extensions and "*" not in extensions:
+                        continue
+                    inner_source_path = f"{zip_path}#ZIP#{inner_name}"
+                    self._add_file_to_database(
+                        inner_source_path, client_name, system_name, map_info['name'],
+                        inner_ext_upper, map_info['extension_map'], map_info['transforms'],
+                        map_info.get('preserve_exact_filenames', False),
+                        map_info['config'], client_config, system_config,
+                    )
+                    added += 1
+        except Exception as e:
+            logger.warning(f"Could not expand ZIP {zip_path}: {e}")
+            self.stats['errors'] += 1
+        return added
+
     def _add_file_to_database(self, source_path: str, client_name: str, system_name: str,
                              map_name: str, extension: str, extension_map: dict, 
                              transforms: dict, preserve_exact_filenames: bool = False,
@@ -1034,9 +1087,16 @@ class DatabaseSync:
                     logger.debug(f"File {source_path} already in batch with map {existing_entry['map_name']}, skipping map {map_name}")
                     return
             
-            # Get file stats
-            stat = os.stat(source_path)
-            filename = os.path.basename(source_path)
+            # Get file stats - for ZIP inner file entries (source_path="a.zip#ZIP#b.bin"),
+            # stat the container zip file rather than the virtual inner path.
+            # Use the inner path's basename as the display filename.
+            if '#ZIP#' in source_path:
+                fs_path, inner_path = source_path.split('#ZIP#', 1)
+                filename = os.path.basename(inner_path)
+            else:
+                fs_path = source_path
+                filename = os.path.basename(source_path)
+            stat = os.stat(fs_path)
             relative_dir = ""
 
             # Preserve source subdirectory structure when requested
@@ -1070,13 +1130,14 @@ class DatabaseSync:
             base_name, _ = os.path.splitext(filename)
             virtual_filename = f"{base_name}.{virtual_ext.lower()}"
             
-            # Check if this source_path already exists in database
-            # If it does, use its existing virtual_path and filename (skip duplicate detection)
+            # Check if this source_path already exists in database FOR THIS CLIENT.
+            # Only reuse the virtual filename from an existing record for the same client —
+            # records from other clients may use different transforms or extension maps.
             existing_entry = None
             try:
                 self.cursor.execute(
-                    "SELECT virtual_path, filename FROM files WHERE source_path = %s",
-                    (source_path,)
+                    "SELECT virtual_path, filename FROM files WHERE source_path = %s AND client = %s",
+                    (source_path, client_name)
                 )
                 existing_entry = self.cursor.fetchone()
                 if existing_entry:
@@ -1279,6 +1340,7 @@ class DatabaseSync:
             
             # Execute batch upsert and collect returned file_ids for metadata enrichment
             file_ids_for_enrichment = []
+            client_map_rows = []
             for idx, batch_row in enumerate(batch_data):
                 cursor.execute(upsert_query, batch_row)
                 result = cursor.fetchone()
@@ -1288,7 +1350,30 @@ class DatabaseSync:
                         'file_id': file_id,
                         'file_info': self.file_batch[idx]
                     })
-            
+                    fi = self.file_batch[idx]
+                    client_map_rows.append((
+                        file_id,
+                        fi['client'],
+                        fi['system'],
+                        fi['map_name'],
+                        fi['virtual_path'],
+                        fi['now'],
+                        fi['now'],
+                    ))
+
+            # UPSERT per-client mappings so the same physical file can be listed under multiple clients.
+            if client_map_rows:
+                client_maps_query = """
+                    INSERT INTO file_client_maps
+                        (file_id, client, system, map_name, virtual_path, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (file_id, client, system, map_name) DO UPDATE SET
+                        virtual_path = EXCLUDED.virtual_path,
+                        updated_at = EXCLUDED.updated_at
+                """
+                for row in client_map_rows:
+                    cursor.execute(client_maps_query, row)
+
             # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
             self.stats['files_updated'] += len(self.file_batch)
             

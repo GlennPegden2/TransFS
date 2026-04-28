@@ -1,4 +1,4 @@
-<# 
+﻿<# 
 =============================================================================
 TransFS RetroBat Shared BIOS Copy Setup Script
 =============================================================================
@@ -6,10 +6,10 @@ TransFS RetroBat Shared BIOS Copy Setup Script
 This script automates the setup of RetroBat BIOS files on a TransFS share.
 
 DEFAULT CONFIGURATION (resolved by TransFS setup profile):
-  • SMB Server Host:     {{TRANSFS_SMB_HOST}}
-  • SMB Server Username: {{TRANSFS_SMB_USERNAME}}
-  • SMB Server Port:     {{TRANSFS_SMB_PORT}}
-  • Default Share Name:  {{TRANSFS_SHARE_NAME}}
+  â€¢ SMB Server Host:     {{TRANSFS_SMB_HOST}}
+  â€¢ SMB Server Username: {{TRANSFS_SMB_USERNAME}}
+  â€¢ SMB Server Port:     {{TRANSFS_SMB_PORT}}
+  â€¢ Default Share Name:  {{TRANSFS_SHARE_NAME}}
 
 USAGE:
   1. Download this script to your Windows machine
@@ -35,6 +35,7 @@ $DefaultSmbPort = "{{TRANSFS_SMB_PORT}}"
 $DefaultShareName = "{{TRANSFS_SHARE_NAME}}"
 $DefaultNativeShareName = "{{TRANSFS_NATIVE_SHARE_NAME}}"
 $script:RestartExplorerAfterExit = $false
+$script:EnableLegacyRetroBatBiosCopy = $false
 
 function Write-Info([string]$Message) { Write-Host "[INFO] $Message" -ForegroundColor Cyan }
 function Write-Ok([string]$Message) { Write-Host "[ OK ] $Message" -ForegroundColor Green }
@@ -321,7 +322,10 @@ function Ensure-DriveLetterAvailableOrOfferRemoval([string]$Letter) {
 	return $true
 }
 
-function Get-RetroBatInstallDir {
+function Get-RetroBatInstallCandidates {
+	$candidates = @()
+	$seen = @{}
+
 	$regCandidates = @(
 		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\RetroBat" },
 		@{ Hive = "HKLM:"; SubKey = "SOFTWARE\WOW6432Node\RetroBat" },
@@ -331,13 +335,18 @@ function Get-RetroBatInstallDir {
 	foreach ($candidate in $regCandidates) {
 		$keyPath = Join-Path $candidate.Hive $candidate.SubKey
 		if (Test-Path $keyPath) {
+			Write-Info "RetroBat detect: registry key found $keyPath"
 			$item = Get-ItemProperty -Path $keyPath
 			foreach ($name in @("InstallPath", "RootPath", "Path")) {
 				if ($item.PSObject.Properties.Name -contains $name) {
 					$pathValue = [string]$item.$name
 					if (-not [string]::IsNullOrWhiteSpace($pathValue) -and (Test-Path $pathValue)) {
 						if (Test-Path (Join-Path $pathValue "emulationstation\emulatorLauncher.cfg")) {
-							return $pathValue
+							$normalized = $pathValue.Trim().ToLowerInvariant()
+							if (-not $seen.ContainsKey($normalized)) {
+								$candidates += [pscustomobject]@{ Path = $pathValue; Source = "registry:$keyPath/$name" }
+								$seen[$normalized] = $true
+							}
 						}
 					}
 				}
@@ -348,11 +357,46 @@ function Get-RetroBatInstallDir {
 	$fallbacks = @("C:\RetroBat", "D:\RetroBat", "E:\Games\RetroBat", "E:\RetroBat")
 	foreach ($path in $fallbacks) {
 		if (Test-Path (Join-Path $path "emulationstation\emulatorLauncher.cfg")) {
-			return $path
+			$normalized = $path.Trim().ToLowerInvariant()
+			if (-not $seen.ContainsKey($normalized)) {
+				$candidates += [pscustomobject]@{ Path = $path; Source = "fallback" }
+				$seen[$normalized] = $true
+			}
 		}
 	}
 
-	return $null
+	return $candidates
+}
+
+
+function Get-RetroBatInstallDir {
+	# Force array semantics so .Count works for 0/1/many candidates.
+	$candidates = @(Get-RetroBatInstallCandidates)
+	if (-not $candidates -or $candidates.Count -eq 0) {
+		Write-Info "RetroBat detect: no valid installations found."
+		return $null
+	}
+
+	Write-Info "RetroBat detect: found $($candidates.Count) installation candidate(s)."
+	for ($i = 0; $i -lt $candidates.Count; $i++) {
+		$idx = $i + 1
+		Write-Info "  [$idx] $($candidates[$i].Path) ($($candidates[$i].Source))"
+	}
+
+	if ($candidates.Count -eq 1) {
+		return [string]$candidates[0].Path
+	}
+
+	$choice = Prompt-WithDefault "Select RetroBat install to use [1-$($candidates.Count)]" "1"
+	if ($choice -notmatch '^[0-9]+$') {
+		$choice = "1"
+	}
+	$selected = [int]$choice
+	if ($selected -lt 1 -or $selected -gt $candidates.Count) {
+		$selected = 1
+	}
+
+	return [string]$candidates[$selected - 1].Path
 }
 
 function Get-MameInstallDir {
@@ -507,7 +551,7 @@ function New-TransFSDriveMapping(
 		return $null
 	}
 
-	Write-Ok "Successfully mapped $localPath → $remotePath"
+	Write-Ok "Successfully mapped $localPath â†’ $remotePath"
 	return @{
 		DriveLetter = $driveLetter
 		LocalPath = $localPath
@@ -519,16 +563,16 @@ function New-TransFSDriveMapping(
 
 function Offer-NativeMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host "Native Filestore Mapping (Optional)" -ForegroundColor Cyan
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host ""
 	Write-Host "The Native mapping provides direct access to the filestore with NO virtual filesystem transforms." -ForegroundColor Gray
 	Write-Host "" 
 	Write-Host "Benefits:" -ForegroundColor Yellow
-	Write-Host "  • Bypass mode for maximum performance" -ForegroundColor Gray
-	Write-Host "  • Direct file browsing and upload" -ForegroundColor Gray
-	Write-Host "  • Access to raw filestore structure" -ForegroundColor Gray
+	Write-Host "  â€¢ Bypass mode for maximum performance" -ForegroundColor Gray
+	Write-Host "  â€¢ Direct file browsing and upload" -ForegroundColor Gray
+	Write-Host "  â€¢ Access to raw filestore structure" -ForegroundColor Gray
 	Write-Host ""
 	Write-Host "You can map this to N: (Native) or skip if you only need virtual emulator paths." -ForegroundColor Gray
 	Write-Host ""
@@ -565,16 +609,16 @@ function Offer-RetroBatMapping([hashtable]$ConnectionConfig, [hashtable]$Default
 	}
 
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host "RetroBat Mapping Detected" -ForegroundColor Cyan
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host ""
 	Write-Host "Detected RetroBat installation: $retroBatDir" -ForegroundColor Green
 	Write-Host ""
 	Write-Host "This will:" -ForegroundColor Yellow
-	Write-Host "  • Map R: drive to TransFS /RetroBat virtual filesystem" -ForegroundColor Gray
-	Write-Host "  • Optionally copy shared BIOS files to the network" -ForegroundColor Gray
-	Write-Host "  • Update RetroBat config to use the network BIOS path" -ForegroundColor Gray
+	Write-Host "  â€¢ Map R: drive to TransFS /RetroBat virtual filesystem" -ForegroundColor Gray
+	Write-Host "  â€¢ Optionally copy shared BIOS files to the network" -ForegroundColor Gray
+	Write-Host "  â€¢ Update RetroBat config to use the network BIOS path" -ForegroundColor Gray
 	Write-Host ""
 
 	$defaultDrive = if ($Defaults['RetroBatDriveLetter']) { [string]$Defaults['RetroBatDriveLetter'] } else { "R" }
@@ -601,6 +645,57 @@ function Offer-RetroBatMapping([hashtable]$ConnectionConfig, [hashtable]$Default
 	return $mapping
 }
 
+function Resolve-RetroBatLinkMapping([hashtable]$Defaults, [hashtable]$ConnectionConfig, [string]$RetroBatDir) {
+	$candidateLetters = @()
+	if ($Defaults['RetroBatDriveLetter']) {
+		$candidateLetters += [string]$Defaults['RetroBatDriveLetter']
+	}
+	$candidateLetters += 'R'
+
+	$candidateLetters = @(
+		$candidateLetters |
+			Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+			ForEach-Object { [string]$_ } |
+			ForEach-Object { $_.Trim().TrimEnd(':').ToUpperInvariant() } |
+			Where-Object { $_ -match '^[A-Z]$' } |
+			Select-Object -Unique
+	)
+
+	foreach ($driveLetter in $candidateLetters) {
+		$localPath = "${driveLetter}:"
+		$driveRoot = "${localPath}\"
+		if (-not (Test-Path $driveRoot -PathType Container)) {
+			continue
+		}
+
+		$remotePath = ""
+		try {
+			$smbMapping = Get-SmbMapping -LocalPath $localPath -ErrorAction Stop | Select-Object -First 1
+			if ($smbMapping -and $smbMapping.RemotePath) {
+				$remotePath = [string]$smbMapping.RemotePath
+			}
+		}
+		catch {
+			$remotePath = ""
+		}
+
+		if ([string]::IsNullOrWhiteSpace($remotePath)) {
+			$remotePath = "\\$($ConnectionConfig.ServerName)\$DefaultShareName\RetroBat"
+		}
+
+		return @{
+			DriveLetter = $driveLetter
+			LocalPath = $localPath
+			RemotePath = $remotePath
+			DriveRoot = $driveRoot
+			VirtualPath = 'RetroBat'
+			RetroBatDir = $RetroBatDir
+		}
+	}
+
+	return $null
+}
+
 function Offer-MameMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
 	$mameDir = Get-MameInstallDir
 	
@@ -610,9 +705,9 @@ function Offer-MameMapping([hashtable]$ConnectionConfig, [hashtable]$Defaults) {
 	}
 
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host "MAME Mapping Detected" -ForegroundColor Cyan
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host ""
 	Write-Host "Detected MAME installation: $mameDir" -ForegroundColor Green
 	Write-Host ""
@@ -768,16 +863,588 @@ function Update-RomPaths([string]$RetroBatDir, [string]$NativeDriveLetter) {
 	}
 }
 
+function Get-UniqueBackupPath([string]$Path) {
+	$parent = Split-Path -Parent $Path
+	$name = Split-Path -Leaf $Path
+	$baseBackup = Join-Path $parent ("${name}_bak")
+
+	if (-not (Test-Path $baseBackup)) {
+		return $baseBackup
+	}
+
+	$counter = 1
+	while ($true) {
+		$candidate = Join-Path $parent ("${name}_bak${counter}")
+		if (-not (Test-Path $candidate)) {
+			return $candidate
+		}
+		$counter++
+	}
+}
+
+function Test-IsReparseDirectory([string]$Path) {
+	if (-not (Test-Path $Path)) {
+		return $false
+	}
+
+	$item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+	return $item.PSIsContainer -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+function Test-IsAdministrator {
+	try {
+		$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+		$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+		return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+	}
+	catch {
+		return $false
+	}
+}
+
+function Copy-DirectoryContentsWithProgress([string]$SourceDir, [string]$DestinationDir, [string]$ActivityLabel) {
+	$files = @(Get-ChildItem -LiteralPath $SourceDir -Recurse -File -ErrorAction Stop)
+	$total = $files.Count
+
+	if ($total -eq 0) {
+		Write-Info "No files to copy for $ActivityLabel"
+		return 0
+	}
+
+	Write-Info "Copying $total file(s) for $ActivityLabel..."
+	$copied = 0
+	foreach ($file in $files) {
+		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\\', '/')
+		$destPath = Join-Path $DestinationDir $relative
+		$destDir = Split-Path -Parent $destPath
+		if (-not (Test-Path $destDir)) {
+			New-Item -Path $destDir -ItemType Directory -Force | Out-Null
+		}
+
+		Copy-Item -LiteralPath $file.FullName -Destination $destPath -Force -ErrorAction Stop
+		$copied++
+		$percent = [int](($copied * 100) / $total)
+		Write-Progress -Activity "Merging backup $ActivityLabel" -Status "$copied / ${total}: $relative" -PercentComplete $percent
+
+		if (($copied % 250) -eq 0 -or $copied -eq $total) {
+			Write-Info "Merge progress for ${ActivityLabel}: $copied / $total"
+		}
+	}
+
+	Write-Progress -Activity "Merging backup $ActivityLabel" -Completed
+	return $copied
+}
+
+function Invoke-ElevatedRetroBatLinkSetup(
+	[string]$RomsPath,
+	[string]$RomsTarget,
+	[string]$BiosPath,
+	[string]$BiosTarget,
+	[string]$MergeRomsChoice = "N",
+	[string]$MergeBiosChoice = "Y",
+	[string]$RetroArchSystemPath = "",
+	[string]$RetroArchSystemTarget = ""
+) {
+	$sharedDiagRoot = Join-Path $env:PUBLIC "Documents\TransFS\SetupTemp"
+	if (-not (Test-Path $sharedDiagRoot)) {
+		New-Item -ItemType Directory -Path $sharedDiagRoot -Force | Out-Null
+	}
+
+	$tempScript = Join-Path $sharedDiagRoot ("transfs-retrobat-link-" + [Guid]::NewGuid().ToString("N") + ".ps1")
+	$tempLog = Join-Path $sharedDiagRoot ("transfs-retrobat-link-" + [Guid]::NewGuid().ToString("N") + ".log")
+	$tempResult = Join-Path $sharedDiagRoot ("transfs-retrobat-link-" + [Guid]::NewGuid().ToString("N") + ".json")
+	
+	$scriptBody = @'
+param(
+	[string]$RomsPath,
+	[string]$RomsTarget,
+	[string]$BiosPath,
+	[string]$BiosTarget,
+	[string]$LogPath,
+	[string]$ResultPath,
+	[string]$MergeRomsChoice = "N",
+	[string]$MergeBiosChoice = "Y",
+	[string]$RetroArchSystemPath = "",
+	[string]$RetroArchSystemTarget = ""
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Ensure log directory exists
+if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+	$logDir = Split-Path -Parent $LogPath
+	if (-not (Test-Path $logDir)) {
+		[void](New-Item -ItemType Directory -Path $logDir -Force)
+	}
+}
+
+function Write-Log([string]$Message, [string]$Level = "INFO") {
+	$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+	$line = "[$timestamp] [$Level] $Message"
+	Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+	Write-Host $line
+}
+
+function Copy-DirectoryContentsWithProgress([string]$SourceDir, [string]$DestinationDir, [string]$ActivityLabel) {
+	$files = @(Get-ChildItem -LiteralPath $SourceDir -Recurse -File -ErrorAction Stop)
+	$total = $files.Count
+
+	if ($total -eq 0) {
+		Write-Log "No files to copy for $ActivityLabel" "INFO"
+		return 0
+	}
+
+	Write-Log "Copying $total file(s) for $ActivityLabel..." "INFO"
+	$copied = 0
+	foreach ($file in $files) {
+		$relative = $file.FullName.Substring($SourceDir.Length).TrimStart('\\', '/')
+		$destPath = Join-Path $DestinationDir $relative
+		$destDir = Split-Path -Parent $destPath
+		if (-not (Test-Path $destDir)) {
+			New-Item -Path $destDir -ItemType Directory -Force | Out-Null
+		}
+
+		Copy-Item -LiteralPath $file.FullName -Destination $destPath -Force -ErrorAction Stop
+		$copied++
+		$percent = [int](($copied * 100) / $total)
+		Write-Progress -Activity "Merging backup $ActivityLabel" -Status "$copied / ${total}: $relative" -PercentComplete $percent
+
+		if (($copied % 250) -eq 0 -or $copied -eq $total) {
+			Write-Log "Merge progress for ${ActivityLabel}: $copied / $total" "INFO"
+		}
+	}
+
+	Write-Progress -Activity "Merging backup $ActivityLabel" -Completed
+	return $copied
+}
+
+try {
+	Write-Log "Elevated script started: RomsPath=$RomsPath, BiosPath=$BiosPath"
+
+	function Get-UniqueBackupPath([string]$Path) {
+		$parent = Split-Path -Parent $Path
+		$name = Split-Path -Leaf $Path
+		$baseBackup = Join-Path $parent ("${name}_bak")
+
+		if (-not (Test-Path $baseBackup)) {
+			return $baseBackup
+		}
+
+		$counter = 1
+		while ($true) {
+			$candidate = Join-Path $parent ("${name}_bak${counter}")
+			if (-not (Test-Path $candidate)) {
+				return $candidate
+			}
+			$counter++
+		}
+	}
+
+	function Test-IsReparseDirectory([string]$Path) {
+		if (-not (Test-Path $Path)) {
+			return $false
+		}
+
+		$item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+		return $item.PSIsContainer -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+	}
+
+	function Merge-BackupIntoLinkedFolder([string]$BackupPath, [string]$LinkedPath, [string]$Label, [string]$DefaultChoice = "Y") {
+		if (-not (Test-Path $BackupPath -PathType Container)) {
+			Write-Log "No backup folder found for $Label at $BackupPath" "INFO"
+			return $false
+		}
+
+		if (-not (Test-Path $LinkedPath -PathType Container)) {
+			Write-Log "Linked path missing for ${Label}: $LinkedPath" "WARN"
+			return $false
+		}
+
+		# In elevated context, use default choice without prompting (non-interactive)
+		Write-Log "Auto-merge (elevated mode): $Label from backup [$DefaultChoice]" "DEBUG"
+		if ($DefaultChoice.ToUpperInvariant() -ne "Y") {
+			Write-Log "Skipped merge from backup for $Label." "INFO"
+			return $false
+		}
+
+		$sourceItems = Join-Path $BackupPath "*"
+		try {
+			$copied = Copy-DirectoryContentsWithProgress -SourceDir $BackupPath -DestinationDir $LinkedPath -ActivityLabel $Label
+			Write-Log "Merged backup contents into linked $Label folder. Files copied: $copied" "OK"
+			return $true
+		}
+		catch {
+			Write-Log "Merge skipped for ${Label}: $($_.Exception.Message)" "WARN"
+			return $false
+		}
+	}
+
+	function Replace-DirectoryWithSymlink([string]$ExistingPath, [string]$TargetPath, [string]$Label, [string]$MergeDefault = "N") {
+		Write-Log "Processing ${Label}: ExistingPath=$ExistingPath, TargetPath=$TargetPath" "DEBUG"
+		
+		if (-not (Test-Path $ExistingPath)) {
+			Write-Log "$Label folder not found at $ExistingPath - skipping." "WARN"
+			return $false
+		}
+
+		$item = Get-Item -LiteralPath $ExistingPath -Force -ErrorAction Stop
+		if (-not $item.PSIsContainer) {
+			Write-Log "$Label path is not a directory: $ExistingPath - skipping." "WARN"
+			return $false
+		}
+
+		if (Test-IsReparseDirectory $ExistingPath) {
+			Write-Log "$Label already uses a symlink/junction: $ExistingPath" "INFO"
+			$existingBackup = "${ExistingPath}_bak"
+			Merge-BackupIntoLinkedFolder -BackupPath $existingBackup -LinkedPath $ExistingPath -Label $Label -DefaultChoice "N" | Out-Null
+			return $false
+		}
+
+		if (-not (Test-Path $TargetPath -PathType Container)) {
+			Write-Log "$Label target path does not exist: $TargetPath" "WARN"
+			return $false
+		}
+
+		$backupPath = Get-UniqueBackupPath $ExistingPath
+		Write-Log "Renaming $ExistingPath to $backupPath" "DEBUG"
+		Rename-Item -LiteralPath $ExistingPath -NewName (Split-Path -Leaf $backupPath) -ErrorAction Stop
+		Write-Log "$Label folder backed up to $backupPath" "OK"
+
+		Write-Log "Creating symlink: $ExistingPath -> $TargetPath" "DEBUG"
+		New-Item -ItemType SymbolicLink -Path $ExistingPath -Target $TargetPath -ErrorAction Stop | Out-Null
+		Write-Log "$Label folder now links to $TargetPath" "OK"
+		Merge-BackupIntoLinkedFolder -BackupPath $backupPath -LinkedPath $ExistingPath -Label $Label -DefaultChoice $MergeDefault | Out-Null
+		return $true
+	}
+
+	$changed = $false
+	$changed = (Replace-DirectoryWithSymlink -ExistingPath $RomsPath -TargetPath $RomsTarget -Label "RetroBat ROMs" -MergeDefault $MergeRomsChoice) -or $changed
+	$changed = (Replace-DirectoryWithSymlink -ExistingPath $BiosPath -TargetPath $BiosTarget -Label "RetroBat BIOS" -MergeDefault $MergeBiosChoice) -or $changed
+	if (-not [string]::IsNullOrWhiteSpace($RetroArchSystemPath) -and -not [string]::IsNullOrWhiteSpace($RetroArchSystemTarget)) {
+		$changed = (Replace-DirectoryWithSymlink -ExistingPath $RetroArchSystemPath -TargetPath $RetroArchSystemTarget -Label "RetroArch system" -MergeDefault "N") -or $changed
+	}
+
+	if ($changed) {
+		Write-Log "Elevated symlink setup completed." "OK"
+	}
+	else {
+		Write-Log "No link changes were required." "INFO"
+	}
+
+	@{ success = $true; changed = $changed; error = "" } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+}
+catch {
+	$err = $_.Exception.Message
+	Write-Log "ERROR: $($_.Exception.Message)" "ERROR"
+	Write-Log "Stack: $($_.ScriptStackTrace)" "ERROR"
+	@{ success = $false; changed = $false; error = $err } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+	exit 1
+}
+'@
+
+	Set-Content -LiteralPath $tempScript -Value $scriptBody -Encoding UTF8
+
+	try {
+$arguments = @(
+"-NoProfile",
+"-NonInteractive",
+"-ExecutionPolicy", "Bypass",
+"-File", $tempScript,
+"-RomsPath", $RomsPath,
+"-RomsTarget", $RomsTarget,
+"-BiosPath", $BiosPath,
+"-BiosTarget", $BiosTarget,
+	"-LogPath", $tempLog,
+	"-ResultPath", $tempResult,
+	"-MergeRomsChoice", $MergeRomsChoice,
+	"-MergeBiosChoice", $MergeBiosChoice,
+	"-RetroArchSystemPath", $RetroArchSystemPath,
+	"-RetroArchSystemTarget", $RetroArchSystemTarget
+)
+
+Write-Info "Requesting Administrator privileges for symlink creation (UAC prompt)..."
+$proc = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs -PassThru
+$waitSeconds = 180
+$elapsedSeconds = 0
+while (-not $proc.HasExited -and $elapsedSeconds -lt $waitSeconds) {
+Start-Sleep -Seconds 1
+$elapsedSeconds++
+}
+if (-not $proc.HasExited) {
+Write-ErrMsg "Elevated symlink setup timed out after $waitSeconds seconds."
+Write-ErrMsg "An elevated window may still be waiting for input or blocked by permissions."
+return @{ success = $false; changed = $false }
+}
+
+# Give elevated process time to flush the log
+Start-Sleep -Milliseconds 500
+		
+		# Try to read and display the log output with retry logic
+		$logContent = ""
+		$retryCount = 0
+		while ($retryCount -lt 3) {
+			try {
+				if (Test-Path $tempLog) {
+					$logContent = Get-Content -LiteralPath $tempLog -Raw -ErrorAction Stop
+					if (-not [string]::IsNullOrWhiteSpace($logContent)) {
+						Write-Host $logContent
+						break
+					}
+				}
+			}
+			catch {
+				# Ignore transient read errors and retry below.
+			}
+
+			$retryCount++
+			if ($retryCount -lt 3 -and [string]::IsNullOrWhiteSpace($logContent)) {
+				Start-Sleep -Milliseconds 200
+			}
+		}
+		
+		if ([string]::IsNullOrWhiteSpace($logContent) -and (Test-Path $tempLog)) {
+			# Log file exists but is empty
+			Write-WarnMsg "Elevated script completed but produced no output log."
+		}
+		elseif ([string]::IsNullOrWhiteSpace($logContent)) {
+			# Log file doesn't exist - elevated script may have crashed
+			Write-WarnMsg "No log file found at $tempLog - elevated script may have failed to start."
+			Write-Info "Temp script was at: $tempScript"
+		}
+		
+		if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+			$code = if ($proc) { $proc.ExitCode } else { -1 }
+			Write-ErrMsg "Elevated symlink setup failed (exit code $code). See output above for details."
+			if (Test-Path $tempResult) {
+				try {
+					$result = Get-Content -LiteralPath $tempResult -Raw | ConvertFrom-Json
+					if ($result.error) {
+						Write-ErrMsg "Elevated detail: $($result.error)"
+					}
+				}
+				catch {
+					# Ignore result parse errors and keep original failure output.
+				}
+			}
+			return @{ success = $false; changed = $false }
+		}
+
+		if (Test-Path $tempResult) {
+			try {
+				$result = Get-Content -LiteralPath $tempResult -Raw | ConvertFrom-Json
+				if (-not $result.success) {
+					Write-ErrMsg "Elevated link setup reported failure: $($result.error)"
+					return @{ success = $false; changed = $false }
+				}
+				Write-Ok "Elevated symlink setup completed."
+				return @{ success = $true; changed = [bool]$result.changed }
+			}
+			catch {
+				Write-WarnMsg "Could not parse elevated result file; falling back to process exit status."
+			}
+		}
+
+		Write-Ok "Elevated symlink setup completed."
+		return @{ success = $true; changed = $false }
+	}
+	catch {
+		Write-ErrMsg "Unable to complete elevated symlink setup: $($_.Exception.Message)"
+		return @{ success = $false; changed = $false }
+	}
+	finally {
+		# Keep temp files if there was an error, for debugging
+		if ($null -ne $proc -and $proc.ExitCode -eq 0) {
+			Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+			Remove-Item -LiteralPath $tempLog -Force -ErrorAction SilentlyContinue
+			Remove-Item -LiteralPath $tempResult -Force -ErrorAction SilentlyContinue
+		}
+		else {
+			Write-Info "Temp script kept at: $tempScript"
+			Write-Info "Temp log kept at: $tempLog"
+			Write-Info "Temp result kept at: $tempResult"
+		}
+	}
+}
+
+function Replace-DirectoryWithSymlink([string]$ExistingPath, [string]$TargetPath, [string]$Label, [string]$MergeDefault = "N") {
+	if (-not (Test-Path $ExistingPath)) {
+		Write-WarnMsg "$Label folder not found at $ExistingPath - skipping."
+		return $false
+	}
+
+	$item = Get-Item -LiteralPath $ExistingPath -Force -ErrorAction Stop
+	if (-not $item.PSIsContainer) {
+		Write-WarnMsg "$Label path is not a directory: $ExistingPath - skipping."
+		return $false
+	}
+
+	if (Test-IsReparseDirectory $ExistingPath) {
+		Write-Info "$Label already uses a symlink/junction: $ExistingPath"
+		$existingBackup = "${ExistingPath}_bak"
+		$mergeChoice = Prompt-WithDefault "Merge files from '$existingBackup' into linked '$ExistingPath'? (Y/N)" "N"
+		if ($mergeChoice.ToUpperInvariant() -eq "Y") {
+			if (Test-Path $existingBackup -PathType Container) {
+				Copy-Item -Path (Join-Path $existingBackup "*") -Destination $ExistingPath -Recurse -Force -ErrorAction Stop
+				Write-Ok "Merged backup contents into linked $Label folder."
+			}
+			else {
+				Write-WarnMsg "Backup folder not found: $existingBackup"
+			}
+		}
+		return $false
+	}
+
+	if (-not (Test-Path $TargetPath -PathType Container)) {
+		Write-WarnMsg "$Label target path does not exist: $TargetPath"
+		return $false
+	}
+
+	$backupPath = Get-UniqueBackupPath $ExistingPath
+	Rename-Item -LiteralPath $ExistingPath -NewName (Split-Path -Leaf $backupPath) -ErrorAction Stop
+	Write-Ok "$Label folder backed up to $backupPath"
+
+	try {
+		$linkTypeUsed = "SymbolicLink"
+		try {
+			New-Item -ItemType SymbolicLink -Path $ExistingPath -Target $TargetPath -ErrorAction Stop | Out-Null
+		}
+		catch {
+			Write-WarnMsg "Symbolic link creation failed for $Label; trying directory junction instead."
+			New-Item -ItemType Junction -Path $ExistingPath -Target $TargetPath -ErrorAction Stop | Out-Null
+			$linkTypeUsed = "Junction"
+		}
+		Write-Ok "$Label folder now links to $TargetPath ($linkTypeUsed)"
+		$mergeChoice = if ($Label -eq "RetroBat ROMs") {
+			Write-Info "Skipping ROM backup merge (temporarily disabled)."
+			"N"
+		}
+		else {
+			Prompt-WithDefault "Merge files from '$backupPath' into linked '$ExistingPath'? (Y/N)" "Y"
+		}
+		if ($mergeChoice.ToUpperInvariant() -eq "Y") {
+			try {
+				$copied = Copy-DirectoryContentsWithProgress -SourceDir $backupPath -DestinationDir $ExistingPath -ActivityLabel $Label
+				Write-Ok "Merged backup contents into linked $Label folder. Files copied: $copied"
+			}
+			catch {
+				Write-WarnMsg "Merge skipped for ${Label}: $($_.Exception.Message)"
+			}
+		}
+		return $true
+	}
+	catch {
+		Write-ErrMsg "Failed to create symlink for ${Label}: $($_.Exception.Message)"
+		if (-not (Test-Path $ExistingPath) -and (Test-Path $backupPath)) {
+			Rename-Item -LiteralPath $backupPath -NewName (Split-Path -Leaf $ExistingPath) -ErrorAction SilentlyContinue
+		}
+		throw
+	}
+}
+
+function Configure-RetroBatDriveLinks([string]$RetroBatDir, [string]$RetroBatDriveRoot, [string]$RetroBatRemotePath = "") {
+	$romsPath = Join-Path $RetroBatDir "roms"
+	$biosPath = Join-Path $RetroBatDir "bios"
+	$romsTarget = Join-Path $RetroBatDriveRoot "ROMS"
+	$biosTarget = Join-Path $RetroBatDriveRoot "bios"
+	$romsTargetForElevation = if (-not [string]::IsNullOrWhiteSpace($RetroBatRemotePath)) { Join-Path $RetroBatRemotePath "ROMS" } else { $romsTarget }
+	$biosTargetForElevation = if (-not [string]::IsNullOrWhiteSpace($RetroBatRemotePath)) { Join-Path $RetroBatRemotePath "bios" } else { $biosTarget }
+	$retroarchSystemPath = Join-Path $RetroBatDir "emulators\retroarch\system"
+	$retroarchSystemTarget = $biosTarget
+	$retroarchSystemTargetForElevation = $biosTargetForElevation
+
+	Write-Host ""
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
+	Write-Host "RetroBat Folder Link Setup (Optional)" -ForegroundColor Cyan
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
+	Write-Host ""
+	Write-Host "This will check your RetroBat installation for local 'roms' and 'bios' folders." -ForegroundColor Gray
+	Write-Host "If they are normal directories, each will be renamed to '<name>_bak' and replaced" -ForegroundColor Gray
+	Write-Host "with a symbolic link to the mapped TransFS RetroBat drive." -ForegroundColor Gray
+	Write-Host ""
+	Write-Host "  ROMs target: $romsTarget" -ForegroundColor Gray
+	Write-Host "  BIOS target: $biosTarget" -ForegroundColor Gray
+	Write-Host "  RetroArch system target (optional): $retroarchSystemTarget" -ForegroundColor Gray
+	Write-Info "RetroBat link debug: admin=$([bool](Test-IsAdministrator))"
+	Write-Info "RetroBat link debug: romsPath=$romsPath"
+	Write-Info "RetroBat link debug: biosPath=$biosPath"
+	Write-Info "RetroBat link debug: retroarchSystemPath=$retroarchSystemPath"
+	if (-not [string]::IsNullOrWhiteSpace($RetroBatRemotePath)) {
+		Write-Info "RetroBat link debug: elevated targets use UNC root $RetroBatRemotePath"
+	}
+	Write-Host ""
+
+	$proceed = Prompt-WithDefault "Replace local RetroBat roms/bios folders with symlinks? (Y/N)" "Y"
+	if ($proceed.ToUpperInvariant() -ne "Y") {
+		Write-Info "Skipped RetroBat folder link setup."
+		return $false
+	}
+
+	Write-Host ""
+	$linkRetroArchSystem = (Prompt-WithDefault "Also link RetroArch system folder ($retroarchSystemPath) to BIOS target? (Y/N)" "N").ToUpperInvariant() -eq "Y"
+	$retroarchSystemPathForSetup = if ($linkRetroArchSystem) { $retroarchSystemPath } else { "" }
+	$retroarchSystemTargetForSetup = if ($linkRetroArchSystem) { $retroarchSystemTargetForElevation } else { "" }
+
+	if (-not (Test-IsAdministrator)) {
+		Write-Info "Not running as Administrator. Proper symbolic links require elevation (or Developer Mode policy)."
+		$useElevation = Prompt-WithDefault "Use UAC elevation to create proper symbolic links? (Y/N)" "Y"
+		if ($useElevation.ToUpperInvariant() -eq "Y") {
+			$mergeRoms = "N"
+			Write-Info "ROM backup merge is temporarily disabled (writes should target the Native share layout)."
+			$mergeBios = Prompt-WithDefault "After linking, merge BIOS backup into linked folder? (Y/N)" "Y"
+
+			$elevatedResult = Invoke-ElevatedRetroBatLinkSetup `
+				-RomsPath $romsPath `
+				-RomsTarget $romsTargetForElevation `
+				-BiosPath $biosPath `
+				-BiosTarget $biosTargetForElevation `
+				-MergeRomsChoice $mergeRoms `
+				-MergeBiosChoice $mergeBios `
+				-RetroArchSystemPath $retroarchSystemPathForSetup `
+				-RetroArchSystemTarget $retroarchSystemTargetForSetup
+
+			if ($elevatedResult.success -and $elevatedResult.changed) {
+				$script:RestartExplorerAfterExit = $true
+			}
+
+			if ($elevatedResult.success) {
+				return [bool]$elevatedResult.changed
+			}
+
+			$fallback = Prompt-WithDefault "Elevation did not complete successfully. Fallback to junction links without admin? (Y/N)" "N"
+			if ($fallback.ToUpperInvariant() -ne "Y") {
+				Write-Info "Skipped fallback link setup."
+				return $false
+			}
+		}
+
+		Write-Info "Proceeding without elevation. Will use directory junction fallback when symbolic links are blocked."
+	}
+
+	$changed = $false
+	$changed = (Replace-DirectoryWithSymlink -ExistingPath $RomsPath -TargetPath $RomsTarget -Label "RetroBat ROMs" -MergeDefault "N") -or $changed
+	$changed = (Replace-DirectoryWithSymlink -ExistingPath $BiosPath -TargetPath $BiosTarget -Label "RetroBat BIOS" -MergeDefault "Y") -or $changed
+	if ($linkRetroArchSystem) {
+		$changed = (Replace-DirectoryWithSymlink -ExistingPath $retroarchSystemPath -TargetPath $retroarchSystemTarget -Label "RetroArch system" -MergeDefault "N") -or $changed
+	}
+
+	if ($changed) {
+		$script:RestartExplorerAfterExit = $true
+	}
+
+	return $changed
+}
+
 try {
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host "        TransFS Windows Setup - N:/R:/M: Drive Mapping         " -ForegroundColor White
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 	Write-Host ""
 	Write-Info "This script will configure optional drive mappings for TransFS:"
-	Write-Host "  • N: → Native filestore (bypass, direct access)" -ForegroundColor Gray
-	Write-Host "  • R: → RetroBat virtual filesystem (if installed)" -ForegroundColor Gray
-	Write-Host "  • M: → MAME virtual filesystem (if installed)" -ForegroundColor Gray
+	Write-Host "  â€¢ N: â†’ Native filestore (bypass, direct access)" -ForegroundColor Gray
+	Write-Host "  â€¢ R: â†’ RetroBat virtual filesystem (if installed)" -ForegroundColor Gray
+	Write-Host "  â€¢ M: â†’ MAME virtual filesystem (if installed)" -ForegroundColor Gray
 	Write-Host ""
 
 	Write-Info "Loading saved settings..."
@@ -805,9 +1472,31 @@ try {
 
 	# Step 3: Offer RetroBat mapping (optional, detection-based)
 	$retroBatMapping = Offer-RetroBatMapping -ConnectionConfig $connectionConfig -Defaults $defaults
+	$retroBatLinkMapping = $retroBatMapping
 
 	# Step 4: Offer MAME mapping (optional, detection-based)
 	$mameMapping = Offer-MameMapping -ConnectionConfig $connectionConfig -Defaults $defaults
+
+	if (-not $retroBatLinkMapping) {
+		$retroBatDirForLinks = Get-RetroBatInstallDir
+		if ($retroBatDirForLinks) {
+			Write-Host ""
+			$runLinkOnly = Prompt-WithDefault "Configure RetroBat symlinks only (without creating/changing mappings)? (Y/N)" "Y"
+			if ($runLinkOnly.ToUpperInvariant() -eq "Y") {
+				$retroBatLinkMapping = Resolve-RetroBatLinkMapping -Defaults $defaults -ConnectionConfig $connectionConfig -RetroBatDir $retroBatDirForLinks
+				if ($retroBatLinkMapping) {
+					Write-Ok "Using existing $($retroBatLinkMapping.DriveLetter): mapping for RetroBat symlink setup."
+				}
+				else {
+					Write-WarnMsg "No existing RetroBat mapped drive was detected for symlink setup."
+					Write-Info "Map RetroBat to a drive letter (for example R:) and rerun setup, or allow RetroBat mapping in this run."
+				}
+			}
+			else {
+				Write-Info "Skipped RetroBat symlink setup."
+			}
+		}
+	}
 
 	# Save settings
 	$settingsToSave = @{
@@ -832,11 +1521,11 @@ try {
 	Write-Ok "Saved settings to registry: HKCU\Software\TransFS\RetroBatSync"
 
 	# Step 5: Handle RetroBat BIOS copy if RetroBat was mapped
-	if ($retroBatMapping -and $nativeMapping) {
+	if ($script:EnableLegacyRetroBatBiosCopy -and $retroBatMapping -and $nativeMapping) {
 		Write-Host ""
-		Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+		Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 		Write-Host "RetroBat BIOS Setup (Optional)" -ForegroundColor Cyan
-		Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor White
+		Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor White
 		Write-Host ""
 		Write-Info "For network BIOSes to work, we can copy files from your local RetroBat"
 		Write-Info "installation to the Native filestore and update RetroBat's config."
@@ -885,7 +1574,7 @@ try {
 					$dstCount = (Get-ChildItem -Path $targetBiosDir -Recurse -File).Count
 
 					if ($dstCount -ge $srcCount) {
-						Write-Ok "Copy verified. Files: $srcCount → $dstCount"
+						Write-Ok "Copy verified. Files: $srcCount â†’ $dstCount"
 					}
 					else {
 						Write-WarnMsg "Copy may be incomplete. Source: $srcCount, Destination: $dstCount"
@@ -946,27 +1635,35 @@ try {
 			Write-Info "Skipped BIOS copy."
 		}
 	}
-	elseif ($retroBatMapping -and -not $nativeMapping) {
+	elseif (-not $script:EnableLegacyRetroBatBiosCopy -and $retroBatMapping) {
+		Write-Info "Skipping legacy RetroBat BIOS copy/update flow (disabled while symlink mode is active)."
+	}
+	elseif ($script:EnableLegacyRetroBatBiosCopy -and $retroBatMapping -and -not $nativeMapping) {
 		Write-Host ""
 		Write-WarnMsg "RetroBat mapped but Native drive not available."
 		Write-Info "BIOS copy requires Native mapping (N:) for direct filestore access."
 		Write-Info "Re-run this script and accept Native mapping to enable BIOS copy."
 	}
 
+	if ($retroBatLinkMapping) {
+		Write-Host ""
+		Configure-RetroBatDriveLinks -RetroBatDir $retroBatLinkMapping['RetroBatDir'] -RetroBatDriveRoot $retroBatLinkMapping.DriveRoot -RetroBatRemotePath $retroBatLinkMapping.RemotePath | Out-Null
+	}
+
 	Write-Host ""
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Green
 	Write-Host "                        Setup Complete                         " -ForegroundColor Green
-	Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+	Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Green
 	Write-Host ""
 	
 	if ($nativeMapping) {
-		Write-Ok "$($nativeMapping.DriveLetter): → Native filestore"
+		Write-Ok "$($nativeMapping.DriveLetter): â†’ Native filestore"
 	}
 	if ($retroBatMapping) {
-		Write-Ok "$($retroBatMapping.DriveLetter): → RetroBat virtual filesystem"
+		Write-Ok "$($retroBatMapping.DriveLetter): â†’ RetroBat virtual filesystem"
 	}
 	if ($mameMapping) {
-		Write-Ok "$($mameMapping.DriveLetter): → MAME virtual filesystem"
+		Write-Ok "$($mameMapping.DriveLetter): â†’ MAME virtual filesystem"
 	}
 	
 	Write-Host ""
@@ -985,3 +1682,7 @@ catch {
 	$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 	exit 1
 }
+
+
+
+

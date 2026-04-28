@@ -2274,7 +2274,7 @@
         }
         
         async function submitInstallAndUpdateDb() {
-            await submitInstallPacks(true);
+            await submitInstallPacks(false);  // install only; client-side SSE sync below gives better progress feedback
             await runDbSync();
         }
         

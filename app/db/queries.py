@@ -489,64 +489,71 @@ def query_files_by_client_system_and_map(
     """
     try:
         with get_cursor(commit=False) as cursor:
-            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at FROM files WHERE client = %s AND system = %s AND map_name = %s"
+            # Join through file_client_maps so the same physical file can appear under multiple clients.
+            query = (
+                "SELECT f.file_id, f.source_path, fcm.virtual_path, f.filename, f.extension, "
+                "f.size, f.mtime, f.created_at, f.updated_at "
+                "FROM files f "
+                "JOIN file_client_maps fcm ON f.file_id = fcm.file_id "
+                "WHERE fcm.client = %s AND fcm.system = %s AND fcm.map_name = %s"
+            )
             params = [client, system, map_name]
-            
+
             # Build extension filter with optional size constraints
             # Strategy: For each extension, if it has size filters apply them, otherwise match as-is
             if extensions:
                 conditions = []
-                
+
                 for ext in extensions:
                     ext_lower = ext.lower()
-                    
+
                     # Check if this extension has size constraints
                     if extension_filters and ext in extension_filters:
                         filters = extension_filters[ext]
                         size_parts = []
-                        
+
                         if 'max_size' in filters:
                             max_size = filters['max_size']
-                            size_parts.append(f"size <= {max_size}")
+                            size_parts.append(f"f.size <= {max_size}")
                             logger.info(f"Query: {ext} <= {max_size} bytes")
-                        
+
                         if 'min_size' in filters:
                             min_size = filters['min_size']
-                            size_parts.append(f"size >= {min_size}")
+                            size_parts.append(f"f.size >= {min_size}")
                             logger.info(f"Query: {ext} >= {min_size} bytes")
-                        
+
                         # Combine with extension match
                         if size_parts:
                             size_clause = " AND ".join(size_parts)
-                            conditions.append(f"(LOWER(extension) = '{ext_lower}' AND {size_clause})")
+                            conditions.append(f"(LOWER(f.extension) = '{ext_lower}' AND {size_clause})")
                         else:
-                            conditions.append(f"LOWER(extension) = '{ext_lower}'")
+                            conditions.append(f"LOWER(f.extension) = '{ext_lower}'")
                     else:
                         # No size filter for this extension, match it directly
-                        conditions.append(f"LOWER(extension) = '{ext_lower}'")
-                
+                        conditions.append(f"LOWER(f.extension) = '{ext_lower}'")
+
                 # Combine all conditions with OR
                 if conditions:
                     query += f" AND ({' OR '.join(conditions)})"
                     logger.info(f"Final SQL condition: {' OR '.join(conditions)}")
-            
-            query += " ORDER BY filename"
+
+            query += " ORDER BY f.filename"
             if limit:
                 query += f" LIMIT {limit}"
-            
+
             logger.info(f"Final SQL query: {query}")
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            
+
             if not rows:
                 logger.info(f"No files found for client={client}, system={system}, map={map_name}")
                 return []
-            
+
             result = [dict(row) for row in rows]
-            
+
             logger.info(f"query_files_by_client_system_and_map: found {len(result)} files for {client}/{system}/{map_name}")
             return result
-        
+
     except Exception as e:
         logger.error(f"Error querying files for {client}/{system}/{map_name}: {e}", exc_info=True)
         return []
@@ -574,20 +581,27 @@ def query_file_by_client_system_map_and_name(
     """
     try:
         with get_cursor(commit=False) as cursor:
-            query = "SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at FROM files WHERE client = %s AND system = %s AND map_name = %s AND filename = %s"
+            # Join through file_client_maps so the same physical file can appear under multiple clients.
+            query = (
+                "SELECT f.file_id, f.source_path, fcm.virtual_path, f.filename, f.extension, "
+                "f.size, f.mtime, f.created_at, f.updated_at "
+                "FROM files f "
+                "JOIN file_client_maps fcm ON f.file_id = fcm.file_id "
+                "WHERE fcm.client = %s AND fcm.system = %s AND fcm.map_name = %s AND f.filename = %s"
+            )
             params = [client, system, map_name, filename]
-            
+
             logger.info(f"Querying single file: client={client}, system={system}, map={map_name}, filename={filename}")
             cursor.execute(query, params)
             row = cursor.fetchone()
-            
+
             if row:
                 logger.info(f"Found file: {dict(row)}")
                 return dict(row)
             else:
                 logger.info(f"File not found: {filename}")
                 return None
-        
+
     except Exception as e:
         logger.error(f"Error querying file {client}/{system}/{map_name}/{filename}: {e}", exc_info=True)
         return None
@@ -602,11 +616,14 @@ def query_file_by_virtual_path(virtual_path: str) -> Optional[Dict[str, Any]]:
     """
     try:
         with get_cursor(commit=False) as cursor:
+            # Query through file_client_maps so per-client virtual paths are resolved correctly.
             query = """
-                SELECT file_id, source_path, virtual_path, filename, extension, size, mtime, created_at, updated_at,
-                       client, system, map_name
-                FROM files
-                WHERE virtual_path = %s
+                SELECT f.file_id, f.source_path, fcm.virtual_path, f.filename, f.extension,
+                       f.size, f.mtime, f.created_at, f.updated_at,
+                       fcm.client, fcm.system, fcm.map_name
+                FROM files f
+                JOIN file_client_maps fcm ON f.file_id = fcm.file_id
+                WHERE fcm.virtual_path = %s
                 LIMIT 1
             """
             cursor.execute(query, [virtual_path])

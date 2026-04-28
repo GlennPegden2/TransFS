@@ -1,0 +1,51 @@
+# Emerson Arcadia 2001 Software Sources
+
+base_path: Emerson/Arcadia 2001/
+
+sources:
+  - name: bios
+    type: ddl
+    url: https://archive.org/download/mame-0.221-roms-merged/ar_bios.zip 
+    folder: BIOS
+    extract: false
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: BIOS
+        region: World
+
+  - name: tosec
+    type: ddl
+    url: https://archive.org/download/Emerson_Arcadia_2001_TOSEC_2012_04_23/Emerson_Arcadia_2001_TOSEC_2012_04_23.zip    
+    folder: Software/Collections/TOSEC
+    extract: true
+    metadata:
+      ruleset: TOSEC
+      defaults:
+        media_type: BIN
+        region: World
+        language: English
+      tags:
+        - TOSEC
+  
+
+packs:
+  - id: bisos-only
+    name: Arcadia BIOS Only
+    description: Essential BIOS files for the Emerson Arcadia 2001, without any software titles
+    estimated_size: 332k
+    sources: [bios]
+    supported_by: [RetroBat]
+    info_links:
+      - label: IA Page
+        url: "https://archive.org/download/Emerson_Arcadia_2001_TOSEC_2012_04_23"
+
+  - id: tosec
+    name: Full Collection
+    description: All known software for the Emerson Arcadia 2001, as of the TOSEC 2012-04-23 release. This collection includes a wide variety of games and applications, providing a comprehensive library for enthusiasts and collectors.
+    estimated_size: 332k
+    sources: [tosec,bios]
+    supported_by: [MiSTer,RetroBat]
+    info_links:
+      - label: IA Page
+        url: "https://archive.org/download/Emerson_Arcadia_2001_TOSEC_2012_04_23"

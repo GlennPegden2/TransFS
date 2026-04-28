@@ -56,6 +56,14 @@ def init_database(
     
     logger.info(f"Initializing database connection pool: {_db_config['user']}@{_db_config['host']}:{_db_config['port']}/{_db_config['dbname']}")
     
+    # If a pool is already open, reuse it rather than creating a new one.
+    # Creating a fresh ThreadedConnectionPool without closing the previous one leaks
+    # the old min-connections (minconn persistent connections remain open in PostgreSQL),
+    # which quickly exhausts the server's max_connections.
+    if _connection_pool is not None:
+        logger.debug("Database connection pool already initialized, skipping re-initialization")
+        return
+    
     # Create connection pool
     _connection_pool = pool.ThreadedConnectionPool(
         pool_size,
@@ -104,7 +112,26 @@ def _init_schema():
             )
             conn.commit()
         elif row[0] < current_version:
-            # Minimal migration tracking: record new schema version
+            old_version = row[0]
+
+            # v7: backfill file_client_maps from existing files records
+            if old_version < 7:
+                try:
+                    cursor.execute("""
+                        INSERT INTO file_client_maps
+                            (file_id, client, system, map_name, virtual_path, created_at, updated_at)
+                        SELECT file_id, client, system, map_name, virtual_path, created_at, updated_at
+                        FROM files
+                        WHERE client IS NOT NULL AND system IS NOT NULL AND map_name IS NOT NULL
+                        ON CONFLICT (file_id, client, system, map_name) DO NOTHING
+                    """)
+                    conn.commit()
+                    logger.info("Migration v7: backfilled file_client_maps from files table")
+                except Exception as mig_err:
+                    logger.warning(f"Migration v7 backfill failed: {mig_err}")
+                    conn.rollback()
+
+            # Record new schema version
             cursor.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (%s, %s)",
                 (current_version, int(time.time()))

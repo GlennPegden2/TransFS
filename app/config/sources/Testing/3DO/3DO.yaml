@@ -5,18 +5,9 @@ base_path: 3DO/3DO/
 sources:
   - name: bios
     type: ddl
-    urls: 
-     - https://github.com/trapexit/3do-bios/blob/master/3do_arcade_saot.bin
-     - https://github.com/trapexit/3do-bios/blob/master/goldstar.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz1-kanji.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz1.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10-patched.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil-patched.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10e-anvil.bin
-     - https://github.com/trapexit/3do-bios/blob/master/panafz10ja-anvil-kanji.bin
-     - https://github.com/trapexit/3do-bios/blob/master/sanyotry.bin
+    url: https://archive.org/download/mame-0.221-roms-merged/3do.zip    
     folder: BIOS
+    extract: false
     metadata:
       ruleset: Generic
       defaults:
@@ -24,11 +15,11 @@ sources:
         region: World
         language: English
 
-  - name: 3do-top-10
-    type: ddl
+  - name: RetroRom-Collection
+    type: IA-COL
     urls:
-    - https://archive.org/download/rr-3do/usa/Crash%20%27n%20Burn%20%281993%29%20%28Crystal%20Dynamics%29%20%28US%29%20%5B%21%5D.7z
-    folder: Software/Collections/3DO_Top_10
+    - https://archive.org/details/rr-3do
+    folder: Software/Collections/RetroRom
     extract: true
     metadata:
       ruleset: Generic
@@ -56,8 +47,8 @@ packs:
   - id: just-bio
     name: Bioses Only
     description: Essential BIOS files no software
-    estimated_size: 710MB
-    sources: [bios,3do-interactive-samplers]
+    estimated_size: 2.2MB
+    sources: [bios]
     supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
     info_links:
       - label: IA Page
@@ -69,4 +60,14 @@ packs:
     estimated_size: 710MB
     sources: [bios,3do-interactive-samplers]
     supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
+  
+  - id: retrorom
+    name: A full set of 3DO games from the RetroRom collection
+    description: Includes all the games from the RetroRom collection, which is a large set of 3DO games ripped from original discs. This pack is for users who want a more complete library of 3DO games to explore.
+    estimated_size: 31GB
+    sources: [RetroRom-Collection]
+    supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
+    info_links:
+      - label: IA Page
+        url: https://archive.org/details/rr-3do
   

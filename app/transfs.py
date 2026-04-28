@@ -27,7 +27,7 @@ get_cached_getattr = get_cached_stat
 cache_getattr = cache_stat
 from pathutils import full_path, is_virtual_path, map_virtual_to_real
 from sourcepath import get_source_path, get_source_path_for_write
-from zippath import open_file as zippath_open_file
+from zippath import is_supported_archive_name, open_file as zippath_open_file, listdir as zippath_listdir
 from logging_setup import setup_logging
 from data_provider_init import initialize_data_provider, get_data_provider_manager
 from fuse_adapter import FUSEOperationAdapter
@@ -42,7 +42,7 @@ _fuse_instance: Optional['TransFS'] = None
 
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
     layout = system_info.get("download_layout") if system_info else None
-    if layout != "source_based":
+    if layout != "legacy_source_based":
         return source_dir
     normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
     if "sources" in normalized:
@@ -105,6 +105,10 @@ class TransFS(Passthrough):
         self._fd_file_size = {}  # fd -> file size for mmap boundary checking
         self._db_readdir_cache = {}  # path -> (timestamp, db_files)
         self._db_readdir_cache_ttl = 120.0  # seconds
+        # Disc cache: (client_name, system_name) -> {'zip_path': str, 'files': {inner_file: temp_path}}
+        # Mimics a single "disc in the drive" per (client, system) pair.  A different
+        # game evicts (and unlinks) the previous cached files before caching the new ones.
+        self._disc_cache: dict = {}
         self._config_readdir_cache = {}  # path -> (timestamp, config_entries)
         self._config_readdir_cache_ttl = 15.0  # seconds
         self._lookup_parent_entries_cache = {}  # parent_path -> (timestamp, set(entries))
@@ -166,6 +170,8 @@ class TransFS(Passthrough):
             # Clear cache entries that may be stale with new config
             self._config_readdir_cache.clear()
             self._source_path_cache.clear()
+            self._db_readdir_cache.clear()
+            self._disc_cache.clear()
             
             # Reinitialize data adapter if database settings changed
             try:
@@ -396,6 +402,23 @@ class TransFS(Passthrough):
 
                     file_spec = map_config.get('file', {})
                     if not file_spec:
+                        # Also check '.' query maps that serve files directly at a category path
+                        # e.g., a '.' map with query: {zip_mode: file} at shared_bios
+                        if map_name == '.':
+                            query_cfg = map_config.get('query', {})
+                            if isinstance(query_cfg, dict) and 'zip_mode' in query_cfg:
+                                try:
+                                    base_path_template = resolve_virtual_base_path(client, candidate_system, map_config)
+                                    virtual_base = format_virtual_base_path(
+                                        base_path_template,
+                                        client.get('name', ''),
+                                        candidate_system.get('name', ''),
+                                    )
+                                except Exception:
+                                    continue
+                                candidate_virtual_path = f"{virtual_base}/{rel_parts[-1]}".replace('\\', '/').rstrip('/')
+                                if candidate_virtual_path == virtual_rel:
+                                    return query_cfg.get('zip_mode', 'hierarchical')
                         continue
 
                     try:
@@ -448,8 +471,21 @@ class TransFS(Passthrough):
         
         return sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
 
-    def _get_transform_output_size(self, pipeline, source_size: int) -> int:
-        """Get transform output size with optional caching."""
+    def _get_transform_output_size(self, pipeline, source_size: int, source_path: Optional[str] = None) -> int:
+        """Get transform output size with optional caching.
+        
+        If source_path is provided and the last transform stage supports
+        get_output_size_for_path(), that is called first (e.g. ChdTransform
+        can check the on-disk CHD cache without building it).
+        """
+        # Path-aware size lookup (e.g. ChdTransform checking its disk cache)
+        if source_path and pipeline.stages:
+            last_stage = pipeline.stages[-1]
+            if hasattr(last_stage, 'get_output_size_for_path'):
+                size = last_stage.get_output_size_for_path(source_path)
+                if size >= 0:
+                    return size
+
         cache_config = self.config.get("cache", {})
         if cache_config.get("transform_output_size_cache_enabled", True):
             cache = getattr(pipeline, "_output_size_cache", None)
@@ -609,7 +645,7 @@ class TransFS(Passthrough):
                         except OSError:
                             pass
 
-                    if not sample_file and system_info.get("download_layout") == "source_based":
+                    if not sample_file:
                         sample_file = _find_sample_file_recursive(source_dir, ext, extension_filters)
                 
                 # Use sample file if found, otherwise fallback to dummy
@@ -657,8 +693,16 @@ class TransFS(Passthrough):
         return entry
 
     def _make_synthetic_inode(self, path: str) -> int:
-        """Generate a consistent synthetic inode from a path."""
-        synthetic_inode = abs(hash(path)) & 0x7FFFFFFF
+        """Generate a stable synthetic inode from a path.
+        
+        Uses SHA-256 so the same path always produces the same inode number
+        across process restarts. This is required for Samba durable handles:
+        if the inode changed after a FUSE restart Samba can't reclaim its
+        stored handles and logs "Could not close dir! fd=-1, err=ENOENT".
+        """
+        import hashlib
+        digest = hashlib.sha256(path.encode('utf-8')).digest()
+        synthetic_inode = int.from_bytes(digest[:4], 'little') & 0x7FFFFFFF
         if synthetic_inode == 0:
             synthetic_inode = 1
         if synthetic_inode == pyfuse3.ROOT_INODE:
@@ -670,19 +714,141 @@ class TransFS(Passthrough):
         self._lookup_cnt[inode] += 1
         logger.info(f"INC_LOOKUP_CNT: inode={inode} count={self._lookup_cnt[inode]}")
 
+    def _get_hidden_root_alias_names(self) -> set[str]:
+        """Return lower-cased names that some clients may probe under the share root."""
+        alias_names: set[str] = set()
+        normalized_mount = os.path.normpath(self.mount_path or "")
+        mount_name = os.path.basename(normalized_mount.rstrip(os.sep))
+        if mount_name:
+            alias_names.add(mount_name.lower())
+
+        advertised_share = (os.getenv("SMB_ADVERTISE_SHARE") or "").strip().strip("/\\")
+        if advertised_share:
+            alias_names.add(advertised_share.lower())
+
+        return alias_names
+
+    def _is_hidden_root_alias_lookup(self, parent_inode: InodeT, parent_path: str, name: str) -> bool:
+        """Return True when a client probes the share name as a hidden child of root.
+
+        Some SMB/FUSE clients issue lookups like /mnt/transfs/transfs even though the
+        share root is already /mnt/transfs. Treat that hidden alias as the real root
+        instead of returning ENOENT.
+        """
+        if parent_inode != pyfuse3.ROOT_INODE:
+            return False
+
+        normalized_parent = os.path.normpath(parent_path or "")
+        normalized_mount = os.path.normpath(self.mount_path or "")
+        if normalized_parent != normalized_mount:
+            return False
+
+        return (name or "").strip().strip("/\\").lower() in self._get_hidden_root_alias_names()
+
+    def _collapse_hidden_root_alias_path(self, path: str) -> str:
+        """Collapse /mount/<share-name>/... compatibility paths back to /mount/..."""
+        normalized_path = os.path.normpath(path or "")
+        normalized_mount = os.path.normpath(self.mount_path or "")
+        if not normalized_mount or normalized_path == normalized_mount:
+            return normalized_mount or normalized_path
+        if not normalized_path.startswith(normalized_mount):
+            return path
+
+        rel_path = os.path.relpath(normalized_path, normalized_mount)
+        if rel_path in (".", ""):
+            return normalized_mount
+
+        rel_parts = [part for part in rel_path.split(os.sep) if part and part != "."]
+        if rel_parts and rel_parts[0].lower() in self._get_hidden_root_alias_names():
+            rel_parts = rel_parts[1:]
+            collapsed = os.path.join(normalized_mount, *rel_parts) if rel_parts else normalized_mount
+            logger.info("PATH NORMALIZE: collapsed hidden root alias %s -> %s", normalized_path, collapsed)
+            return collapsed
+
+        return path
+
     def _normalize_to_virtual_path(self, path: str) -> str:
         """Convert real filesystem path to virtual mount path for consistency."""
-        # If it's already a virtual path, keep it
+        # If it's already a virtual path, keep it (after collapsing any hidden root alias)
         if path.startswith(self.mount_path):
-            return path
+            return self._collapse_hidden_root_alias_path(path)
         # If it's a real path, convert it back to virtual
         if path.startswith("/mnt/filestorefs"):
             rel_path = os.path.relpath(path, "/mnt/filestorefs")
             if rel_path == '.':
                 # If it's the root directory, return mount_path without the '.'
                 return self.mount_path
-            return os.path.join(self.mount_path, rel_path)
-        return path
+            return self._collapse_hidden_root_alias_path(os.path.join(self.mount_path, rel_path))
+        return self._collapse_hidden_root_alias_path(path)
+
+    def _normalize_cue_reference_name(self, name: str) -> str:
+        """Normalize cue target names for loose matching against sibling disc files."""
+        import re
+
+        base = os.path.basename(name or "")
+        stem, _ = os.path.splitext(base)
+        stem = re.sub(r"\[[^\]]*\]", "", stem)
+        return re.sub(r"[^a-z0-9]+", "", stem.lower())
+
+    def _rewrite_cue_content(self, cue_bytes: bytes, sibling_names: list[str], context: str) -> bytes:
+        """Rewrite broken FILE references in cue sheets to match available sibling files."""
+        if not cue_bytes or not sibling_names:
+            return cue_bytes
+
+        import re
+
+        sibling_set = {os.path.basename(name) for name in sibling_names}
+        encodings = ("utf-8", "cp1252", "latin-1")
+        text = None
+        encoding_used = "utf-8"
+        for encoding in encodings:
+            try:
+                text = cue_bytes.decode(encoding)
+                encoding_used = encoding
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            return cue_bytes
+
+        def pick_candidate(reference_name: str) -> Optional[str]:
+            ref_base = os.path.basename(reference_name)
+            if ref_base in sibling_set:
+                return ref_base
+
+            _, ref_ext = os.path.splitext(ref_base)
+            same_ext = [name for name in sibling_set if os.path.splitext(name)[1].lower() == ref_ext.lower()]
+            if not same_ext:
+                return None
+            if len(same_ext) == 1:
+                return same_ext[0]
+
+            normalized_ref = self._normalize_cue_reference_name(ref_base)
+            for candidate in same_ext:
+                normalized_candidate = self._normalize_cue_reference_name(candidate)
+                if normalized_candidate == normalized_ref:
+                    return candidate
+                if normalized_ref and (normalized_ref in normalized_candidate or normalized_candidate in normalized_ref):
+                    return candidate
+            return None
+
+        changed = False
+        pattern = re.compile(r'(?im)^(FILE\s+")([^"]+)(".*)$')
+
+        def replace_match(match: re.Match) -> str:
+            nonlocal changed
+            original_name = match.group(2)
+            replacement = pick_candidate(original_name)
+            if replacement and replacement != original_name:
+                changed = True
+                logger.info("CUE_REWRITE: %s -> %s for %s", original_name, replacement, context)
+                return f'{match.group(1)}{replacement}{match.group(3)}'
+            return match.group(0)
+
+        rewritten_text = pattern.sub(replace_match, text)
+        if not changed:
+            return cue_bytes
+        return rewritten_text.encode(encoding_used, errors='replace')
 
     def _extract_map_info(self, path: str) -> Optional[tuple]:
         """
@@ -804,7 +970,11 @@ class TransFS(Passthrough):
             # Extract allowed extensions from map config (inside query key)
             from pathutils import get_query_config
             query_config = get_query_config(map_config)
-            allowed_extensions = query_config.get('extensions', [])
+            allowed_extensions = [str(ext).upper() for ext in query_config.get('extensions', []) if ext]
+            if query_config.get('transform_zip', False):
+                for archive_ext in ('ZIP', '7Z'):
+                    if archive_ext not in allowed_extensions:
+                        allowed_extensions.append(archive_ext)
             logger.info(f"READDIR_DB_ONLY: allowed_extensions for {map_name}: {allowed_extensions}")
             if not allowed_extensions:
                 logger.info(f"READDIR_DB_ONLY: no extensions configured for {map_name}")
@@ -846,10 +1016,64 @@ class TransFS(Passthrough):
                 )
                 self._db_readdir_cache[path] = (time.time(), db_files)
             
-            logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in database")
+            logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in map-index database")
+
+            # QUERY FALLBACK: Older or partial sync runs may miss file_client_maps rows for query maps.
+            # Fall back to system/query resolution (same semantics as dirlisting) when map-index lookup is empty.
+            if not db_files and query_config:
+                try:
+                    from db.queries import query_files_by_system_and_query
+                    from pathutils import get_system_identifier
+
+                    query_db = dict(query_config)
+                    query_db["source_dir"] = _adjust_source_dir_for_layout(
+                        query_config.get("source_dir", "Software"),
+                        system_info,
+                    )
+
+                    system_candidates = []
+
+                    def _add_system_candidate(value):
+                        candidate = str(value or "").strip()
+                        if candidate and candidate not in system_candidates:
+                            system_candidates.append(candidate)
+
+                    _add_system_candidate(get_system_identifier(system_info))
+                    _add_system_candidate(system_info.get("name"))
+                    _add_system_candidate(system_info.get("system_mapping_name"))
+                    _add_system_candidate(system_info.get("cananonical_system_name"))
+                    _add_system_candidate(str(system_info.get("name") or "").lower())
+                    _add_system_candidate(str(system_info.get("system_mapping_name") or "").lower())
+                    _add_system_candidate(str(system_info.get("cananonical_system_name") or "").lower())
+
+                    query_entries_by_filename = {}
+                    for system_key in system_candidates:
+                        candidate_entries = query_files_by_system_and_query(
+                            system=system_key,
+                            query=query_db,
+                            system_config=system_info,
+                            limit=10000,
+                        )
+                        for entry in candidate_entries:
+                            fname = entry.get('filename', '') if isinstance(entry, dict) else str(entry)
+                            if fname and fname not in query_entries_by_filename:
+                                query_entries_by_filename[fname] = entry
+
+                    if query_entries_by_filename:
+                        db_files = list(query_entries_by_filename.values())
+                        logger.info(
+                            "READDIR_DB_ONLY: query fallback recovered %d files for %s/%s/%s",
+                            len(db_files),
+                            client_name,
+                            system_name,
+                            map_name,
+                        )
+                except Exception as fallback_error:  # pylint: disable=broad-except
+                    logger.warning("READDIR_DB_ONLY: query fallback failed: %s", fallback_error)
             
-            # FILESYSTEM FALLBACK: Check for files that exist on disk but not in database
-            # This handles files created via FUSE writes that haven't been synced yet
+            # FILESYSTEM MERGE/FALLBACK: include files that exist on disk but are not in the
+            # map index yet (for example newly mounted NAS content) so they appear immediately
+            # without requiring a DB sync.
             if query_config:
                 source_dir = query_config.get('source_dir', '')
                 if source_dir:
@@ -872,11 +1096,12 @@ class TransFS(Passthrough):
                     if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
                         # Get existing database filenames for comparison
                         db_filenames = {f.get('filename', '') for f in db_files}
+                        show_hidden = self.config.get('show_hidden_files', True)
+                        allowed_exts = {str(ext).upper() for ext in (allowed_extensions or []) if ext and str(ext) != '*'}
                         
                         # Scan filesystem for files not in database
                         fs_only_files = []
                         try:
-                            show_hidden = self.config.get('show_hidden_files', True)
                             for entry in os.scandir(scan_dir):
                                 if not show_hidden and entry.name.startswith('.'):
                                     continue
@@ -888,6 +1113,8 @@ class TransFS(Passthrough):
                                             stat_info = entry.stat()
                                             _, ext = os.path.splitext(entry.name)
                                             ext_upper = ext[1:].upper() if ext else ''
+                                            if allowed_exts and ext_upper not in allowed_exts:
+                                                continue
                                             
                                             # Create a minimal file record for this filesystem file
                                             fs_file_record = {
@@ -903,12 +1130,45 @@ class TransFS(Passthrough):
                                             pass
                         except Exception as e:
                             logger.warning(f"READDIR_DB_ONLY: filesystem fallback error: {e}")
+
+                        # If no direct files found, recursively scan nested source folders.
+                        if not fs_only_files:
+                            try:
+                                for root_dir, _, filenames in os.walk(scan_dir):
+                                    for filename in filenames:
+                                        if not show_hidden and filename.startswith('.'):
+                                            continue
+                                        if filename in db_filenames:
+                                            continue
+
+                                        _, ext = os.path.splitext(filename)
+                                        ext_upper = ext[1:].upper() if ext else ''
+                                        if allowed_exts and ext_upper not in allowed_exts:
+                                            continue
+
+                                        file_path = os.path.join(root_dir, filename)
+                                        try:
+                                            stat_info = os.stat(file_path)
+                                            fs_only_files.append({
+                                                'filename': filename,
+                                                'source_path': file_path,
+                                                'extension': ext_upper,
+                                                'size': stat_info.st_size,
+                                                'mtime': stat_info.st_mtime,
+                                            })
+                                        except Exception:
+                                            continue
+                            except Exception as nested_error:
+                                logger.warning(f"READDIR_DB_ONLY: nested filesystem fallback error: {nested_error}")
                         
                         if fs_only_files:
                             logger.info(f"READDIR_DB_ONLY: filesystem fallback added {len(fs_only_files)} files not in database")
                             db_files = list(db_files) + fs_only_files
 
-            
+            # Refresh cache with the final recovered result set so subsequent paged readdir
+            # calls do not repeat expensive query/fallback scans.
+            self._db_readdir_cache[path] = (time.time(), db_files)
+
             if not db_files:
                 # Empty directory
                 logger.info(f"READDIR_DB_ONLY: no files found, returning empty directory")
@@ -1088,6 +1348,19 @@ class TransFS(Passthrough):
         
         logger.info(f"GETATTR_DB_ONLY: {path} client={client_name} system={system_name} map={map_name} file={filename}")
         
+        # If the basename IS the map name, we're at the map directory root itself — return
+        # a virtual directory stat immediately rather than querying for a file named after the map.
+        if filename == map_name:
+            now = int(time.time())
+            logger.info(f"GETATTR_DB_ONLY: {path} is the map directory root, returning virtual dir stat")
+            return {
+                'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                'st_gid': 0, 'st_uid': 0,
+                'st_mode': 0o040555,
+                'st_nlink': 2,
+                'st_size': 4096,
+            }
+        
         try:
             # Handle virtual directories for preserve_structure query maps
             from pathutils import find_map_entry, get_map_config, get_query_config
@@ -1143,7 +1416,11 @@ class TransFS(Passthrough):
 
                             if db_files is None:
                                 from db.queries import query_files_by_client_system_and_map
-                                allowed_extensions = query_config.get('extensions', [])
+                                allowed_extensions = [str(ext).upper() for ext in query_config.get('extensions', []) if ext]
+                                if query_config.get('transform_zip', False):
+                                    for archive_ext in ('ZIP', '7Z'):
+                                        if archive_ext not in allowed_extensions:
+                                            allowed_extensions.append(archive_ext)
                                 extension_filters = query_config.get('extension_filters', {}) or {}
                                 db_files = query_files_by_client_system_and_map(
                                     client_name, system_name, map_name, allowed_extensions, extension_filters
@@ -1183,7 +1460,9 @@ class TransFS(Passthrough):
             
             # For transformed files, check if we need to adjust size
             transformed_size = size
-            if source_path and os.path.exists(source_path):
+            # For zip-internal paths, resolve to the zip file for existence check
+            _stat_check_path = source_path.split('#ZIP#', 1)[0] if source_path and '#ZIP#' in source_path else source_path
+            if _stat_check_path and os.path.exists(_stat_check_path):
                 try:
                     # Get transform pipeline for this file
                     from pathutils import find_map_entry, get_map_config
@@ -1259,6 +1538,15 @@ class TransFS(Passthrough):
             if not source_path:
                 logger.warning(f"OPEN_DB_ONLY: no source_path in database for {filename}")
                 return None
+            
+            # Handle zip-internal paths (stored as "/path/to/file.zip#ZIP#inner.bin")
+            if '#ZIP#' in source_path:
+                zip_path, inner_file = source_path.split('#ZIP#', 1)
+                if not os.path.exists(zip_path):
+                    logger.warning(f"OPEN_DB_ONLY: source zip does not exist: {zip_path}")
+                    return None
+                logger.info(f"OPEN_DB_ONLY: returning zip tuple ({zip_path}, {inner_file})")
+                return (zip_path, inner_file)
             
             if not os.path.exists(source_path):
                 logger.warning(f"OPEN_DB_ONLY: source file does not exist: {source_path}")
@@ -1375,24 +1663,55 @@ class TransFS(Passthrough):
                     
                     logger.info(f"READDIR DATABASE: config_entries look_like_files={looks_like_files}, look_like_dirs={looks_like_dirs}")
                     
-                    if looks_like_dirs:
-                        # Create synthetic directory entries from config_entries
-                        logger.info(f"READDIR DATABASE: creating synthetic directory entries from config_entries")
+                    if dir_like_count > 0:
+                        # Handle configs with dir-like entries (pure-dir or mixed dir+file).
+                        # Dir-like entries become synthetic directories; file-like entries are
+                        # looked up by name in db_entries (they may be absent at this path level).
+                        db_entries_by_name = {ename: estat for ename, estat in db_entries} if db_entries else {}
                         sent_count = 0
+                        logger.info(f"READDIR DATABASE: creating entries for {len(config_entries)} config entries (dir={dir_like_count}, file={file_like_count})")
                         for entry_id, entry_name in enumerate(config_entries, start=1):
                             if entry_id <= start_id:
                                 continue
                             
                             entry_path = os.path.join(path, entry_name)
-                            # Create synthetic directory stat
-                            now = int(time.time())
-                            stat_dict = {
-                                'st_atime': now, 'st_ctime': now, 'st_mtime': now,
-                                'st_gid': 0, 'st_uid': 0,
-                                'st_mode': 0o040555,  # Directory, read-only
-                                'st_nlink': 2,  # Directory
-                                'st_size': 0,
-                            }
+                            is_dir_entry = not os.path.splitext(entry_name)[1]
+                            
+                            if is_dir_entry:
+                                # Synthetic directory stat
+                                now = int(time.time())
+                                stat_dict = {
+                                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                                    'st_gid': 0, 'st_uid': 0,
+                                    'st_mode': 0o040555,  # Directory, read-only
+                                    'st_nlink': 2,
+                                    'st_size': 0,
+                                }
+                            else:
+                                # File entry — look up by name in DB entries at this path level
+                                stat_dict = db_entries_by_name.get(entry_name)
+                                if stat_dict is None:
+                                    # DB can legitimately miss explicit file maps under shared
+                                    # category paths (e.g., /RetroBat/bios/panafz1.bin). Resolve
+                                    # from source mapping and synthesize file attrs.
+                                    resolved = get_source_path(logger, self.config, self.mount_path, entry_path)
+                                    if isinstance(resolved, dict):
+                                        resolved = resolved.get('path')
+                                    if isinstance(resolved, str) and os.path.isfile(resolved):
+                                        st = os.lstat(resolved)
+                                        stat_dict = {
+                                            'st_atime': int(st.st_atime),
+                                            'st_ctime': int(st.st_ctime),
+                                            'st_mtime': int(st.st_mtime),
+                                            'st_gid': st.st_gid,
+                                            'st_uid': st.st_uid,
+                                            'st_mode': st.st_mode,
+                                            'st_nlink': 1,
+                                            'st_size': st.st_size,
+                                        }
+                                    else:
+                                        continue  # Not present at this level, skip
+                            
                             entry_inode = self._make_synthetic_inode(entry_path)
                             self._add_path(entry_inode, entry_path)
                             entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
@@ -1401,7 +1720,7 @@ class TransFS(Passthrough):
                                 break
                             sent_count += 1
                         
-                        logger.info(f"READDIR DATABASE: sent {sent_count} synthetic directory entries")
+                        logger.info(f"READDIR DATABASE: sent {sent_count} entries")
                         return
                 
                 # Otherwise, filter database entries against config (if config specifies entries)
@@ -1478,8 +1797,8 @@ class TransFS(Passthrough):
                     logger.info(f"READDIR DATABASE: sent {sent_count} entries, filtered {filtered_count}, total time {t_total:.4f}s")
                     return
             except Exception as e:
-                logger.warning(f"READDIR: database mode failed, falling back to cache: {e}")
-        
+                logger.error(f"READDIR DATABASE mode error for {path}: {e}", exc_info=True)
+
         xfull_path = path
         # Get the real source path for this directory (handles virtual mappings)
         t_source_path_start = time.time()
@@ -1487,16 +1806,16 @@ class TransFS(Passthrough):
         t_source_path = time.time() - t_source_path_start
         if t_source_path > 0.1:
             logger.warning(f"READDIR SLOW: get_source_path took {t_source_path:.3f}s for {xfull_path}")
-        
+
         if isinstance(parent_source, dict) and 'path' in parent_source:
             parent_dir = parent_source['path']
         elif isinstance(parent_source, str):
             parent_dir = parent_source
         else:
             parent_dir = xfull_path.replace("/mnt/transfs", "/mnt/filestorefs")
-        
+
         logger.info(f"READDIR: xfull_path={xfull_path}, parent_dir={parent_dir}")
-        
+
         # Parse virtual entries
         t_parse_start = time.time()
         virtual_entries = list(parse_trans_path(self.config, self.root, xfull_path))
@@ -1584,24 +1903,24 @@ class TransFS(Passthrough):
                     logger.info(f"READDIR: client buffer full after {sent_count} entries (fast query map)")
                     break
                 sent_count += 1
-
+            
             t_total = time.time() - t_start
             logger.info(
                 f"READDIR COMPLETE: {path} entries={len(virtual_entries)} sent={sent_count} "
                 f"cache_hits=0 hit_rate=0.0% parse={t_parse:.4f}s batch=0.0000s total={t_total:.4f}s"
             )
             return
-        
+
         # Determine hierarchy level to decide if implicit mappings are allowed
         # Level 0 (root): /mnt/transfs - only show clients from config
-        # Level 1: /mnt/transfs/MiSTer - only show systems from config  
+        # Level 1: /mnt/transfs/MiSTer - only show systems from config
         # Level 2: /mnt/transfs/MiSTer/Amstrad - only show maps from config
         # Level 3+: Allow implicit real files/dirs to appear
         root_parts = Path(self.root).parts
         path_parts = Path(xfull_path).parts
         hierarchy_level = len(path_parts) - len(root_parts)
         allow_implicit_entries = hierarchy_level >= 3
-        
+
         cache_config = self.config.get("cache", {})
         direntry_cache_enabled = cache_config.get("readdir_direntry_cache_enabled", True)
         skip_cache_lookup_enabled = cache_config.get("readdir_skip_cache_lookup_with_direntry", True)
@@ -1616,7 +1935,7 @@ class TransFS(Passthrough):
         # scandir() returns DirEntry objects with cached stat info, avoiding extra stat() calls
         dir_entry_cache = {}
         parent_dir_mtime = None
-        
+
         # Determine if we need to scan multiple extension subdirectories
         # This happens when filetypes like "A52,BIN,ROM" map to subdirs A52/, BIN/, ROM/
         # CRITICAL: Only process KNOWN extension subdirectories to avoid scanning non-extension dirs
@@ -1960,8 +2279,8 @@ class TransFS(Passthrough):
                             entry = self._dict_to_entry_attributes(stat_dict, entry_inode)
                         else:
                             continue
-                    elif isinstance(fspath, str) and fspath.lower().endswith('.zip'):
-                        # Zip file itself
+                    elif isinstance(fspath, str) and is_supported_archive_name(fspath):
+                        # Archive file itself
                         st = os.lstat(fspath)
                         is_dir = zip_mode == "hierarchical"
                         stat_dict = {
@@ -2021,7 +2340,7 @@ class TransFS(Passthrough):
                             # If there's a transform pipeline, override mode and size
                             if pipeline:
                                 st_mode = 0o100444  # Regular file, read-only
-                                st_size = self._get_transform_output_size(pipeline, st.st_size)
+                                st_size = self._get_transform_output_size(pipeline, st.st_size, fspath)
                             else:
                                 st_mode = st.st_mode
                                 st_size = st.st_size
@@ -2246,6 +2565,7 @@ class TransFS(Passthrough):
             logger.info(f"GETATTR FAILED AT inode_to_path: inode={inode} error={e}")
             raise
         
+        path = self._normalize_to_virtual_path(path)
         logger.info(f"GETATTR: inode={inode} path={path}")
         logger.debug("DEBUG: getattr(inode=%s) path=%s", inode, path)
         
@@ -2297,7 +2617,7 @@ class TransFS(Passthrough):
                                 st = os.lstat(source_path)
                                 source_size = st.st_size
                                 pipeline = fspath['transform_pipeline']
-                                transformed_size = self._get_transform_output_size(pipeline, source_size)
+                                transformed_size = self._get_transform_output_size(pipeline, source_size, source_path)
                                 if transformed_size >= 0 and cached_stat.get('st_size') != transformed_size:
                                     cached_stat = {
                                         'st_atime': int(st.st_atime),
@@ -2530,7 +2850,7 @@ class TransFS(Passthrough):
             # Get source file stats and adjust size for transformation
             st = os.lstat(source_path)
             source_size = st.st_size
-            transformed_size = self._get_transform_output_size(pipeline, source_size)
+            transformed_size = self._get_transform_output_size(pipeline, source_size, source_path)
             
             result = {
                 'st_atime': int(st.st_atime),
@@ -2717,11 +3037,27 @@ class TransFS(Passthrough):
                     }
                     cache_getattr(xfull_path, parent_dir, result)
                     return self._dict_to_entry_attributes(result, inode)
-            
+
+                # Final fallback: name is listed by the parent directory but no physical path
+                # was found. This covers system directories under category paths
+                # (e.g. /RetroBat/ROMS/3DO where ROMS is a category and 3DO is a system),
+                # plus any other virtual entry that isn't explicitly matched above.
+                now = int(time.time())
+                result = {
+                    'st_atime': now, 'st_ctime': now, 'st_mtime': now,
+                    'st_gid': 0, 'st_uid': 0,
+                    'st_mode': 0o040755,
+                    'st_nlink': 2,
+                    'st_size': 4096,
+                }
+                cache_getattr(xfull_path, parent_dir, result)
+                logger.info(f"GETATTR: returning virtual directory (listed-in-parent fallback) for {xfull_path}")
+                return self._dict_to_entry_attributes(result, inode)
+
             raise FUSEError(errno.ENOENT)
 
-        # Handle zip files based on zip_mode
-        if isinstance(fspath, str) and fspath.lower().endswith('.zip'):
+        # Handle archive files based on zip_mode
+        if isinstance(fspath, str) and is_supported_archive_name(fspath):
             st = os.lstat(fspath)
             if zip_mode == "hierarchical":
                 out = {
@@ -2835,6 +3171,7 @@ class TransFS(Passthrough):
         
         # Try database-only mode for query map files first
         trans_path = None
+        map_info = None
         if not (flags & os.O_CREAT):
             # Check if this is a file within a query map directory
             map_info = self._extract_map_info(path)
@@ -2872,15 +3209,78 @@ class TransFS(Passthrough):
         if isinstance(trans_path, tuple):
             zip_path, internal_file = trans_path
             logger.debug("DEBUG: open extracting %s from %s", internal_file, zip_path)
+
+            # --- Disc cache: reuse extracted temp file if the same game is still "inserted" ---
+            disc_cache_key = None
+            if map_info:
+                client_name, system_name, _ = map_info
+                disc_cache_key = (client_name, system_name)
+
+            if disc_cache_key is not None:
+                cached = self._disc_cache.get(disc_cache_key)
+                if cached and cached['zip_path'] != zip_path:
+                    # Different game loaded — evict old cached files
+                    logger.info(
+                        "DISC_CACHE: evicting %s for %s (new game %s)",
+                        cached['zip_path'], disc_cache_key, zip_path,
+                    )
+                    for _inner, _tmp in cached['files'].items():
+                        try:
+                            os.unlink(_tmp)
+                            logger.debug("DISC_CACHE: unlinked %s", _tmp)
+                        except OSError:
+                            pass
+                    del self._disc_cache[disc_cache_key]
+                    cached = None
+
+                if cached and cached['zip_path'] == zip_path:
+                    cached_path = cached['files'].get(internal_file)
+                    if cached_path and os.path.exists(cached_path):
+                        logger.info(
+                            "DISC_CACHE HIT: reusing %s for %s/%s",
+                            cached_path, disc_cache_key, internal_file,
+                        )
+                        try:
+                            fd = os.open(cached_path, os.O_RDONLY)
+                            self._register_open_handle(fd, inode, cached_path, flags, "zip-temp-cached")
+                            logger.info("OPEN COMPLETE: inode=%s fh=%s kind=zip-temp-cached elapsed=%.4fs", inode, fd, time.time() - t_start)
+                            return pyfuse3.FileInfo(fh=fd)
+                        except OSError as e:
+                            logger.warning("DISC_CACHE: failed to reopen cached file %s: %s — re-extracting", cached_path, e)
+                            cached['files'].pop(internal_file, None)
+            # --- End disc cache check ---
+
             try:
                 with zippath_open_file(f"{zip_path}/{internal_file}", "rb") as f:
                     temp = tempfile.NamedTemporaryFile(mode='wb', delete=False)
                     content = f.read()
                     if isinstance(content, str):
                         content = content.encode('utf-8')
+
+                    if str(internal_file).lower().endswith('.cue'):
+                        inner_dir = os.path.dirname(str(internal_file)).replace('\\', '/').strip('/')
+                        sibling_target = zip_path if not inner_dir else f"{zip_path}/{inner_dir}"
+                        try:
+                            sibling_names = zippath_listdir(sibling_target)
+                        except Exception:
+                            sibling_names = []
+                        content = self._rewrite_cue_content(
+                            content,
+                            sibling_names,
+                            f"{zip_path}/{internal_file}",
+                        )
+
                     temp.write(content)
                     temp.close()
                     logger.debug("DEBUG: open temp file created at %s", temp.name)
+
+                    # Store in disc cache
+                    if disc_cache_key is not None:
+                        slot = self._disc_cache.setdefault(disc_cache_key, {'zip_path': zip_path, 'files': {}})
+                        slot['zip_path'] = zip_path
+                        slot['files'][internal_file] = temp.name
+                        logger.info("DISC_CACHE: cached %s for %s/%s", temp.name, disc_cache_key, internal_file)
+
                     fd = os.open(temp.name, flags)
                     self._register_open_handle(fd, inode, temp.name, flags, "zip-temp")
                     logger.info("OPEN COMPLETE: inode=%s fh=%s kind=zip-temp elapsed=%.4fs", inode, fd, time.time() - t_start)
@@ -2901,7 +3301,28 @@ class TransFS(Passthrough):
             if not os.path.exists(source_path):
                 logger.error("open: source file %s does not exist for transformation", source_path)
                 raise FUSEError(errno.ENOENT)
-            
+
+            # Fast-path: transforms that produce a prebuilt file (e.g. ChdTransform)
+            # serve the output file directly — no need to load hundreds of MB into memory.
+            if pipeline.stages and hasattr(pipeline.stages[-1], 'get_prebuilt_path'):
+                try:
+                    prebuilt = pipeline.stages[-1].get_prebuilt_path(source_path)
+                    if prebuilt and os.path.exists(prebuilt):
+                        fd = os.open(prebuilt, os.O_RDONLY)
+                        self._register_open_handle(fd, inode, prebuilt, flags, "prebuilt-transform")
+                        logger.info(
+                            "OPEN COMPLETE: inode=%s fh=%s kind=prebuilt-transform elapsed=%.4fs path=%s",
+                            inode, fd, time.time() - t_start, prebuilt,
+                        )
+                        return pyfuse3.FileInfo(fh=fd)
+                    logger.error("open: prebuilt transform returned no path for %s", source_path)
+                    raise FUSEError(errno.EIO)
+                except FUSEError:
+                    raise
+                except Exception as exc:
+                    logger.error("open: prebuilt transform error for %s: %s", source_path, exc)
+                    raise FUSEError(errno.EIO)
+
             try:
                 # Read source file and apply transformations
                 with open(source_path, 'rb') as source_file:
@@ -3082,7 +3503,7 @@ class TransFS(Passthrough):
             except Exception:
                 pass
 
-            if elapsed_ms > 250:
+            if elapsed_ms > 100:
                 path = self._fd_path_map.get(fh)
                 logger.warning(
                     "READ SLOW: fh=%s off=%s size=%s elapsed=%.2fms path=%s",
@@ -3283,6 +3704,32 @@ class TransFS(Passthrough):
             has_times = fields.update_atime or fields.update_mtime
             has_other = fields.update_size or fields.update_mode or fields.update_uid or fields.update_gid
 
+            async def _apply_non_time_updates_to_real_path(real_path: str):
+                """Apply size/mode/ownership updates to a real backing path.
+
+                This avoids recursive setattr calls when virtual paths are passed to
+                Passthrough.setattr() with fh=None.
+                """
+                if fields.update_size:
+                    await trio.to_thread.run_sync(lambda: os.truncate(real_path, attr.st_size))
+
+                if fields.update_mode:
+                    mode = attr.st_mode & 0o7777
+                    await trio.to_thread.run_sync(lambda: os.chmod(real_path, mode))
+
+                if fields.update_uid and fields.update_gid:
+                    await trio.to_thread.run_sync(
+                        lambda: os.chown(real_path, attr.st_uid, attr.st_gid, follow_symlinks=False)
+                    )
+                elif fields.update_uid:
+                    await trio.to_thread.run_sync(
+                        lambda: os.chown(real_path, attr.st_uid, -1, follow_symlinks=False)
+                    )
+                elif fields.update_gid:
+                    await trio.to_thread.run_sync(
+                        lambda: os.chown(real_path, -1, attr.st_gid, follow_symlinks=False)
+                    )
+
             if has_times:
                 atime_ns = attr.st_atime_ns
                 mtime_ns = attr.st_mtime_ns
@@ -3309,10 +3756,23 @@ class TransFS(Passthrough):
                     return result
 
             if has_other:
-                # Note: fields is a read-only SetattrFields object, we can't modify it
-                # If time updates are also requested, they're handled by deferred mechanism above
-                # and the parent class will also process them (slight redundancy but no harm)
-                result = await super().setattr(inode, attr, fields, fh, ctx)
+                # Avoid passing virtual paths into Passthrough.setattr(fh=None), which can
+                # recurse into FUSE and stall SMB create requests.
+                if fh is None:
+                    virtual_path = self._inode_to_path(inode)
+                    real_path = get_source_path_for_write(logger, self.config, self.mount_path, virtual_path)
+                    if not real_path:
+                        real_path = get_source_path(logger, self.config, self.mount_path, virtual_path)
+
+                    if isinstance(real_path, str):
+                        await _apply_non_time_updates_to_real_path(real_path)
+                        result = await self.getattr(inode, ctx)
+                    else:
+                        # Fallback for non-regular mappings where a direct path is unavailable.
+                        result = await super().setattr(inode, attr, fields, fh, ctx)
+                else:
+                    # fh-based updates are safe in Passthrough (ftruncate/fchmod/fchown).
+                    result = await super().setattr(inode, attr, fields, fh, ctx)
             else:
                 result = await self.getattr(inode, ctx)
             logger.info("SETATTR DONE: inode=%s", inode)
@@ -3351,6 +3811,13 @@ class TransFS(Passthrough):
             self._increment_lookup_count(pyfuse3.ROOT_INODE)
             return await self.getattr(pyfuse3.ROOT_INODE, ctx)
 
+        if self._is_hidden_root_alias_lookup(parent_inode, parent_path, name_str):
+            alias_inode = self._make_synthetic_inode(path)
+            self._add_path(alias_inode, path)
+            logger.info("LOOKUP: treating hidden root alias '%s' as synthetic root inode=%s", name_str, alias_inode)
+            self._increment_lookup_count(alias_inode)
+            return await self.getattr(alias_inode, ctx)
+
         # Try to get source path (handles virtual translation)
         source_path = get_source_path(logger, self.config, self.mount_path, path)
         logger.info(f"LOOKUP: source_path={source_path}")
@@ -3359,14 +3826,7 @@ class TransFS(Passthrough):
         # Use consistent hash-based inode for deterministic lookups
         synthetic_inode = self._make_synthetic_inode(path)
 
-        # Determine hierarchy level - system directories (level 2) should use synthetic inodes
-        # to avoid collisions when multiple clients map to the same physical directory
-        root_parts = Path(self.root).parts
-        path_parts = Path(path).parts
-        hierarchy_level = len(path_parts) - len(root_parts)
-        is_system_dir = (hierarchy_level == 2)  # e.g., /mnt/transfs/MiSTer/AcornAtom
-
-        # Check if it's a real file that exists
+        # Check if it's a real file/dir that exists
         if source_path and isinstance(source_path, str) and os.path.exists(source_path):
             filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
             # Avoid inode collisions for virtual client roots that map to filestore root
@@ -3376,11 +3836,15 @@ class TransFS(Passthrough):
                 self._increment_lookup_count(synthetic_inode)
                 return await self.getattr(synthetic_inode, ctx)
 
-            # CRITICAL: Use synthetic inodes for system directories to avoid collisions
-            # when multiple clients map to the same physical directory
-            if is_system_dir:
+            # CRITICAL: Use synthetic inodes for ALL directories.
+            # Multiple virtual paths (e.g., MiSTer/3do and MAME/ROMS/3do) can resolve
+            # to the same physical directory (same inode). Using the physical inode causes
+            # the second lookup to reuse the first path's inode and readdir returns wrong
+            # entries. Synthetic inodes are keyed on virtual path, so each virtual path
+            # gets its own inode regardless of what's on disk.
+            if os.path.isdir(source_path):
                 self._add_path(synthetic_inode, path)
-                logger.info(f"LOOKUP: SUCCESS - system dir (using synthetic), synthetic_inode={synthetic_inode}")
+                logger.info(f"LOOKUP: SUCCESS - real dir (using synthetic inode), synthetic_inode={synthetic_inode}")
                 self._increment_lookup_count(synthetic_inode)
                 return await self.getattr(synthetic_inode, ctx)
 
@@ -3406,6 +3870,18 @@ class TransFS(Passthrough):
             if isinstance(real_path, str) and os.path.exists(real_path):
                 self._add_path(synthetic_inode, path)
                 logger.info(f"LOOKUP: SUCCESS - transformed file, synthetic_inode={synthetic_inode}")
+                self._increment_lookup_count(synthetic_inode)
+                return await self.getattr(synthetic_inode, ctx)
+
+        # Database-backed fallback for query-map entries.
+        # Some virtual files only exist in the metadata index and are resolved later
+        # at open time (for example archive members flattened into a query map).
+        map_info = self._extract_map_info(path)
+        if map_info:
+            stat_dict = await self._getattr_database_only(path, map_info)
+            if stat_dict:
+                self._add_path(synthetic_inode, path)
+                logger.info(f"LOOKUP: SUCCESS - database-only query map entry, synthetic_inode={synthetic_inode}")
                 self._increment_lookup_count(synthetic_inode)
                 return await self.getattr(synthetic_inode, ctx)
 

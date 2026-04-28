@@ -12,34 +12,34 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def web_index(request: Request):
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 @app.get("/browse/native/{path:path}", response_class=HTMLResponse)
 async def browse_native(request: Request, path: str):
     """Serve the main page for native filesystem browsing with URL routing."""
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 @app.get("/browse/virtual/{path:path}", response_class=HTMLResponse)
 async def browse_virtual(request: Request, path: str):
     """Serve the main page for virtual filesystem browsing with URL routing."""
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
     """Serve the Setup Clients configuration page."""
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 
 @app.get("/metadata/{path:path}", response_class=HTMLResponse)
 async def metadata_page(request: Request, path: str):
     """Serve the Metadata tab page with folder deep-link routing."""
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 
 @app.get("/metadata", response_class=HTMLResponse)
 async def metadata_root_page(request: Request):
     """Serve Metadata tab root route."""
-    return templates.TemplateResponse("index_complete.html", {"request": request})
+    return templates.TemplateResponse(request, "index_complete.html")
 
 # For running directly with: python -m uvicorn main:app
 if __name__ == "__main__":

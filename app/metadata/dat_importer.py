@@ -38,7 +38,7 @@ class GeneratedMap:
     source_dir: str
     extensions: list[str]
     preserve_structure: bool = True
-    supports_zip: bool = True
+    transform_zip: bool = True
 
 
 def _config_set_path(config_dir: str, category: str, filename: str) -> str:
@@ -512,7 +512,7 @@ class DatImportService:
                                 "source_dir": generated_map.source_dir,
                                 "extensions": generated_map.extensions,
                                 "preserve_structure": generated_map.preserve_structure,
-                                "supports_zip": generated_map.supports_zip,
+                                "transform_zip": generated_map.transform_zip,
                             }
                         }
                     }

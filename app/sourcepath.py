@@ -689,7 +689,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         extensions = query_cfg.get("extensions", [])
         extension_map = get_map_extension_map(map_config)
         extension_map = {str(k).upper(): str(v).upper() for k, v in extension_map.items()}
-        supports_zip = query_cfg.get("supports_zip", True)
+        transform_zip = query_cfg.get("transform_zip", True)
         zip_mode = query_cfg.get("zip_mode", "hierarchical")
 
         raw_source_subdir = query_cfg.get("source_dir", "Software")
@@ -714,7 +714,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
 
         # ZIP navigation support
         zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
-        if zip_idx is not None and supports_zip and zip_mode != "file":
+        if zip_idx is not None and transform_zip and zip_mode != "file":
             zip_name = subpath[zip_idx]
             inner_parts = subpath[zip_idx + 1:]
             for source_dir in source_dirs:
@@ -833,7 +833,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
     filetype_map, reverse_map = get_filetype_maps(sa_entry)
     real_exts = filetype_map.get(map_name.upper(), [])
 
-    supports_zip = sa_entry["...SoftwareArchives..."].get("supports_zip", True)
+    transform_zip = sa_entry["...SoftwareArchives..."].get("transform_zip", True)
     zip_mode = sa_entry["...SoftwareArchives..."].get("zip_mode", "hierarchical")
     source_dir = os.path.join(
         config["filestore"],
@@ -905,8 +905,8 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
                             if pipeline:
                                 return {'path': recursive_match, 'transform_pipeline': pipeline}
         
-        # If we found a .zip in the path and supports_zip is enabled
-        if found_zip and supports_zip:
+        # If we found a .zip in the path and transform_zip is enabled
+        if found_zip and transform_zip:
             # Build real ZIP file path
             for real_ext in real_exts:
                 zip_file_path = os.path.join(source_dir, real_ext, *zip_path_parts)
@@ -933,7 +933,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         
         # Not inside a ZIP: handle regular filesystem paths
         # If the last component is a .zip file (not yet entered)
-        if last.lower().endswith('.zip') and supports_zip:
+        if last.lower().endswith('.zip') and transform_zip:
             for real_ext in real_exts:
                 candidate = os.path.join(source_dir, real_ext, *subpath)
                 if os.path.isfile(candidate):
@@ -1003,7 +1003,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
                     return real_path
                 
                 # In flatten mode, also check inside ZIP files in the real_ext directory
-                if supports_zip:
+                if transform_zip:
                     real_ext_dir = os.path.join(source_dir, real_ext)
                     if os.path.isdir(real_ext_dir):
                         for entry in os.listdir(real_ext_dir):
