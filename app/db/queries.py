@@ -88,7 +88,12 @@ def query_files_by_system_and_query(
     """
     try:
         with get_cursor(commit=False) as cursor:
-            extensions = query.get("extensions") or []
+            extensions = list(query.get("extensions") or [])
+            if bool(query.get("transform_zip", False)):
+                existing_exts = {str(ext).upper() for ext in extensions}
+                for archive_ext in ("ZIP", "7Z"):
+                    if archive_ext not in existing_exts:
+                        extensions.append(archive_ext)
             source_dir = query.get("source_dir")
             extension_filters = query.get("extension_filters") or {}
             filters = query.get("filters") or []
@@ -633,4 +638,31 @@ def query_file_by_virtual_path(virtual_path: str) -> Optional[Dict[str, Any]]:
             return None
     except Exception as e:
         logger.error(f"Error querying file by virtual_path {virtual_path}: {e}", exc_info=True)
+        return None
+
+
+def query_file_by_source_path(source_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Query a single file by its exact source path on disk.
+
+    Used by config-driven getattr/open resolution where the source path is
+    reconstructed from the virtual path components and config (no file_client_maps join).
+    """
+    try:
+        with get_cursor(commit=False) as cursor:
+            query = """
+                SELECT file_id, source_path, virtual_path, filename, extension,
+                       size, mtime, created_at, updated_at
+                FROM files
+                WHERE source_path = %s
+                  AND is_directory = false
+                LIMIT 1
+            """
+            cursor.execute(query, [source_path])
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+    except Exception as e:
+        logger.error(f"Error querying file by source_path {source_path}: {e}", exc_info=True)
         return None

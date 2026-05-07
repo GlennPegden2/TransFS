@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 import zipfile
+import shutil
+import tempfile
 from typing import Optional, Tuple, List, Iterable, Dict, Set
 from functools import lru_cache
 import io
@@ -9,8 +11,24 @@ import pickle
 import threading
 import time
 import logging  # [added]
+import py7zr
 
 logger = logging.getLogger(__name__)  # [added]
+
+SUPPORTED_ARCHIVE_EXTENSIONS = (".zip", ".7z")
+
+
+def is_supported_archive_name(name: str) -> bool:
+    lower_name = str(name or "").lower()
+    return any(lower_name.endswith(ext) for ext in SUPPORTED_ARCHIVE_EXTENSIONS)
+
+
+def _is_zip_path(path: str) -> bool:
+    return str(path or "").lower().endswith(".zip")
+
+
+def _is_7z_path(path: str) -> bool:
+    return str(path or "").lower().endswith(".7z")
 
 # [added] Simple timing decorator (logs calls taking >= 100ms)
 def _timed(func):
@@ -190,14 +208,32 @@ def _load_persisted_index(zip_path: str, mtime: float) -> Optional[ZipIndex]:
 @_timed
 def _build_index(zip_path: str, mtime: float) -> ZipIndex:
     idx = ZipIndex(zip_path, mtime)
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        t0 = time.perf_counter()
-        infos = zf.infolist()
-        logger.debug("ZipFile.infolist() took %.3fs for %s entries=%d", time.perf_counter() - t0, zip_path, len(infos))
-        for info in infos:
-            is_dir = info.filename.endswith('/')
-            logical_name = info.filename[:-1] if is_dir else info.filename
-            idx.add_raw(logical_name, info.file_size, is_dir)
+    if _is_zip_path(zip_path):
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            t0 = time.perf_counter()
+            infos = zf.infolist()
+            logger.debug("ZipFile.infolist() took %.3fs for %s entries=%d", time.perf_counter() - t0, zip_path, len(infos))
+            for info in infos:
+                is_dir = info.filename.endswith('/')
+                logical_name = info.filename[:-1] if is_dir else info.filename
+                idx.add_raw(logical_name, info.file_size, is_dir)
+    elif _is_7z_path(zip_path):
+        with py7zr.SevenZipFile(zip_path, 'r') as archive:
+            t0 = time.perf_counter()
+            infos = archive.list()
+            logger.debug("SevenZipFile.list() took %.3fs for %s entries=%d", time.perf_counter() - t0, zip_path, len(infos))
+            for info in infos:
+                is_dir = bool(getattr(info, 'is_directory', False))
+                logical_name = str(getattr(info, 'filename', '') or '')
+                if logical_name.endswith('/'):
+                    is_dir = True
+                    logical_name = logical_name[:-1]
+                if not logical_name:
+                    continue
+                size = int(getattr(info, 'uncompressed', 0) or 0)
+                idx.add_raw(logical_name, size, is_dir)
+    else:
+        raise ValueError(f"Unsupported archive type: {zip_path}")
     _persist_index(idx)
     return idx
 
@@ -279,8 +315,9 @@ def _normalize_zip_inner(inner: str) -> str:
 
 def _find_zip_component(path: str) -> Optional[Tuple[str, str]]:
     """
-    Return (zip_path, inner_path) for the first path component that is a zip file on disk,
-    walking from left->right. Prefer a real directory named *.zip over an archive file.
+    Return (archive_path, inner_path) for the first path component that is a supported
+    archive file on disk, walking from left->right. Prefer a real directory named like
+    an archive over the archive file.
     """
     parts = _path_parts(path)
     if not parts:
@@ -289,17 +326,22 @@ def _find_zip_component(path: str) -> Optional[Tuple[str, str]]:
         candidate = _join_parts(parts[:i])
         if os.path.isdir(candidate):
             continue
-        if candidate.lower().endswith(".zip") and os.path.isfile(candidate):
+        if is_supported_archive_name(candidate) and os.path.isfile(candidate):
             inner_parts = parts[i:]
             inner = _normalize_zip_inner(_join_parts(inner_parts)) if inner_parts else ""
             return (os.path.abspath(candidate), inner)
     return None
 
 @lru_cache(maxsize=128)
-def _zip_namelist(zip_path: str) -> List[str]:
+def _archive_namelist(zip_path: str) -> List[str]:
     zip_path = os.path.abspath(zip_path)
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        return [n for n in zf.namelist()]
+    if _is_zip_path(zip_path):
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            return [n for n in zf.namelist()]
+    if _is_7z_path(zip_path):
+        with py7zr.SevenZipFile(zip_path, "r") as archive:
+            return [str(name) for name in archive.getnames()]
+    return []
 
 # ==========================
 # Public API (augmented, fallback preserved)
@@ -318,7 +360,7 @@ def exists(path: str) -> bool:
         try:
             if inner == "":
                 return os.path.isfile(zip_path)
-            names = _zip_namelist(zip_path)
+            names = _archive_namelist(zip_path)
             if inner in names:
                 return True
             pref = inner.rstrip("/") + "/"
@@ -338,7 +380,7 @@ def isdir(path: str) -> bool:
         try:
             if inner == "":
                 return True
-            names = _zip_namelist(zip_path)
+            names = _archive_namelist(zip_path)
             pref = inner.rstrip("/") + "/"
             if inner in names and inner.endswith("/"):
                 return True
@@ -358,7 +400,7 @@ def isfile(path: str) -> bool:
         return _get_index(zip_path).isfile(inner)
     except Exception:  # pylint: disable=broad-except
         try:
-            names = _zip_namelist(zip_path)
+            names = _archive_namelist(zip_path)
             return inner in names and not inner.endswith("/")
         except Exception:  # pylint: disable=broad-except
             return False
@@ -380,7 +422,7 @@ def listdir(path: str) -> List[str]:
     except Exception:  # pylint: disable=broad-except
         # Fallback to previous behavior
         try:
-            names = _zip_namelist(zip_path)
+            names = _archive_namelist(zip_path)
             prefix = inner.rstrip("/") + "/" if inner else ""
             seen = set()
             for entry in names:
@@ -567,6 +609,81 @@ class _ZipEntryFile:
     def __exit__(self, *a):
         self.close()
 
+
+class _SevenZipEntryFile:
+    """
+    Wrapper that extracts one 7z entry to a temporary directory and cleans it up on close.
+    """
+    def __init__(self, archive_path: str, inner: str, mode: str = "r"):
+        if "w" in mode or "a" in mode or "+" in mode:
+            raise ValueError("7z entries are read-only via this API")
+        self._archive_path = os.path.abspath(archive_path)
+        self._inner = inner
+        self._temp_dir = tempfile.mkdtemp(prefix="transfs-7z-")
+        with py7zr.SevenZipFile(self._archive_path, "r") as archive:
+            archive.extract(path=self._temp_dir, targets=[inner])
+        extracted_path = os.path.join(self._temp_dir, *inner.split("/"))
+        if not os.path.exists(extracted_path):
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            raise FileNotFoundError(inner)
+        self._file = open(extracted_path, "rb")
+        self._buffer = io.BufferedReader(self._file)
+
+    @property
+    def name(self) -> str:
+        return self._inner
+
+    @property
+    def closed(self) -> bool:
+        return self._buffer.closed
+
+    def read(self, *args, **kwargs):
+        return self._buffer.read(*args, **kwargs)
+
+    def readline(self, *args, **kwargs):
+        return self._buffer.readline(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        raise io.UnsupportedOperation("not writable")
+
+    def flush(self):
+        pass
+
+    def seekable(self) -> bool:
+        return self._buffer.seekable()
+
+    def readable(self) -> bool:
+        return self._buffer.readable()
+
+    def writable(self) -> bool:
+        return False
+
+    def truncate(self, size=None):
+        raise io.UnsupportedOperation("not writable")
+
+    def fileno(self):
+        return self._buffer.fileno()
+
+    def isatty(self) -> bool:
+        return False
+
+    def close(self):
+        try:
+            self._buffer.close()
+        except Exception:
+            pass  # pylint: disable=broad-except
+        try:
+            self._file.close()
+        except Exception:
+            pass  # pylint: disable=broad-except
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+
 def open_file(path: str, mode: str = "rb"):
     z = _find_zip_component(path)
     if z is None:
@@ -574,7 +691,10 @@ def open_file(path: str, mode: str = "rb"):
     zip_path, inner = z
     if inner == "":
         raise FileNotFoundError(path)
-    handle = _ZipEntryFile(zip_path, inner, mode)
+    if _is_7z_path(zip_path):
+        handle = _SevenZipEntryFile(zip_path, inner, mode)
+    else:
+        handle = _ZipEntryFile(zip_path, inner, mode)
     if "b" in mode:
         return handle
     return io.TextIOWrapper(handle, encoding="utf-8")

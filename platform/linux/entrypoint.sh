@@ -18,6 +18,8 @@ trap cleanup TERM INT
 mkdir -p /mnt/filestorefs
 mkdir -p /mnt/filestorefs/.transfs_logs
 
+python3 -c "import sys; sys.path.insert(0, '/app'); from native_mounts import reconcile_mounts; import yaml; cfg = yaml.safe_load(open('/app/config/app.yaml')) or {}; entries = cfg.get('native_external_mounts', []) or []; reconcile_mounts(cfg, entries)"
+
 python3 -c "import sys; sys.path.insert(0, '/app'); from smb_config import setup_samba_from_config; import yaml; config = yaml.safe_load(open('/app/config/app.yaml')); setup_samba_from_config(config)"
 
 echo 'Starting FUSE filesystem...'

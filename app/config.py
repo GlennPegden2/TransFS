@@ -52,7 +52,7 @@ class SystemConfig:
     canonical_name: str
     local_base_path: str
     packs: list[Pack]
-    download_layout: str = "folder_based"  # folder_based (default) | flat | source_based
+    download_layout: str = "folder_based"  # folder_based (default) | flat | legacy_source_based
 
 def read_app_config(config_dir="config"):
     """Read application configuration (mountpoint, filestore, web_api, ssl_ignore_hosts)."""

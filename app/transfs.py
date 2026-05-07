@@ -980,15 +980,15 @@ class TransFS(Passthrough):
                 logger.info(f"READDIR_DB_ONLY: no extensions configured for {map_name}")
                 return True
             
-            # Extract size filters from query config if present
+            # Extract size filters and flatten mode from query config if present
             extension_filters = {}
             preserve_structure = False
+            zip_mode = 'hierarchical'
             if query_config:
-                # Parse preserve_structure option
                 preserve_structure = query_config.get('preserve_structure', False)
                 logger.info(f"READDIR_DB_ONLY: preserve_structure={preserve_structure}")
-                
-                # Build size filter dict from extension-specific configs
+                zip_mode = query_config.get('zip_mode', 'hierarchical')
+                logger.info(f"READDIR_DB_ONLY: zip_mode={zip_mode}")
                 ext_config = query_config.get('extension_filters', {})
                 if ext_config:
                     for ext, filters in ext_config.items():
@@ -996,13 +996,16 @@ class TransFS(Passthrough):
                         logger.info(f"READDIR_DB_ONLY: size filter for {ext}: {filters}")
                 if not extension_filters:
                     logger.debug(f"READDIR_DB_ONLY: no extension_filters in query config")
-            
-            # Query database for files in this map (with cache)
+
+            # Query database for files using config-driven approach (no file_client_maps dependency).
+            # The map's source_dir + system's local_base_path fully determine which files to return.
             cache_entry = self._db_readdir_cache.get(path)
+            cache_hit = False
             if cache_entry:
                 cached_at, cached_files = cache_entry
                 if (time.time() - cached_at) <= self._db_readdir_cache_ttl:
                     db_files = cached_files
+                    cache_hit = True
                 else:
                     self._db_readdir_cache.pop(path, None)
                     db_files = None
@@ -1010,164 +1013,184 @@ class TransFS(Passthrough):
                 db_files = None
 
             if db_files is None:
-                from db.queries import query_files_by_client_system_and_map
-                db_files = query_files_by_client_system_and_map(
-                    client_name, system_name, map_name, allowed_extensions, extension_filters
+                from db.queries import query_files_by_system_and_query
+                from pathutils import get_system_identifier
+
+                query_db = dict(query_config)
+                query_db["source_dir"] = _adjust_source_dir_for_layout(
+                    query_config.get("source_dir", "Software"),
+                    system_info,
                 )
-                self._db_readdir_cache[path] = (time.time(), db_files)
-            
-            logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files in map-index database")
 
-            # QUERY FALLBACK: Older or partial sync runs may miss file_client_maps rows for query maps.
-            # Fall back to system/query resolution (same semantics as dirlisting) when map-index lookup is empty.
-            if not db_files and query_config:
-                try:
-                    from db.queries import query_files_by_system_and_query
-                    from pathutils import get_system_identifier
+                system_candidates = []
 
-                    query_db = dict(query_config)
-                    query_db["source_dir"] = _adjust_source_dir_for_layout(
-                        query_config.get("source_dir", "Software"),
-                        system_info,
+                def _add_system_candidate(value):
+                    candidate = str(value or "").strip()
+                    if candidate and candidate not in system_candidates:
+                        system_candidates.append(candidate)
+
+                _add_system_candidate(get_system_identifier(system_info))
+                _add_system_candidate(system_info.get("name"))
+                _add_system_candidate(system_info.get("system_mapping_name"))
+                _add_system_candidate(system_info.get("cananonical_system_name"))
+                _add_system_candidate(str(system_info.get("name") or "").lower())
+                _add_system_candidate(str(system_info.get("system_mapping_name") or "").lower())
+                _add_system_candidate(str(system_info.get("cananonical_system_name") or "").lower())
+
+                query_entries_by_filename = {}
+                for system_key in system_candidates:
+                    candidate_entries = query_files_by_system_and_query(
+                        system=system_key,
+                        query=query_db,
+                        system_config=system_info,
+                        limit=10000,
                     )
+                    for entry in candidate_entries:
+                        fname = entry.get('filename', '') if isinstance(entry, dict) else str(entry)
+                        if fname and fname not in query_entries_by_filename:
+                            query_entries_by_filename[fname] = entry
 
-                    system_candidates = []
+                db_files = list(query_entries_by_filename.values())
+                self._db_readdir_cache[path] = (time.time(), db_files)
 
-                    def _add_system_candidate(value):
-                        candidate = str(value or "").strip()
-                        if candidate and candidate not in system_candidates:
-                            system_candidates.append(candidate)
+            logger.info(f"READDIR_DB_ONLY: found {len(db_files)} files via config-driven query")
 
-                    _add_system_candidate(get_system_identifier(system_info))
-                    _add_system_candidate(system_info.get("name"))
-                    _add_system_candidate(system_info.get("system_mapping_name"))
-                    _add_system_candidate(system_info.get("cananonical_system_name"))
-                    _add_system_candidate(str(system_info.get("name") or "").lower())
-                    _add_system_candidate(str(system_info.get("system_mapping_name") or "").lower())
-                    _add_system_candidate(str(system_info.get("cananonical_system_name") or "").lower())
-
-                    query_entries_by_filename = {}
-                    for system_key in system_candidates:
-                        candidate_entries = query_files_by_system_and_query(
-                            system=system_key,
-                            query=query_db,
-                            system_config=system_info,
-                            limit=10000,
-                        )
-                        for entry in candidate_entries:
-                            fname = entry.get('filename', '') if isinstance(entry, dict) else str(entry)
-                            if fname and fname not in query_entries_by_filename:
-                                query_entries_by_filename[fname] = entry
-
-                    if query_entries_by_filename:
-                        db_files = list(query_entries_by_filename.values())
-                        logger.info(
-                            "READDIR_DB_ONLY: query fallback recovered %d files for %s/%s/%s",
-                            len(db_files),
-                            client_name,
-                            system_name,
-                            map_name,
-                        )
-                except Exception as fallback_error:  # pylint: disable=broad-except
-                    logger.warning("READDIR_DB_ONLY: query fallback failed: %s", fallback_error)
-            
-            # FILESYSTEM MERGE/FALLBACK: include files that exist on disk but are not in the
-            # map index yet (for example newly mounted NAS content) so they appear immediately
-            # without requiring a DB sync.
-            if query_config:
-                source_dir = query_config.get('source_dir', '')
-                if source_dir:
-                    filestore = self.config.get('filestore', '/mnt/filestorefs')
-                    local_base = system_info.get('local_base_path', '')
-                    full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
-                    
-                    # Determine current subpath for preserve_structure mode
-                    rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
-                    try:
-                        map_idx = rel_parts.index(map_name)
-                        subpath_parts = rel_parts[map_idx + 1:] if len(rel_parts) > map_idx + 1 else []
-                    except ValueError:
-                        subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
-                    current_subpath = '/'.join(subpath_parts)
-                    
-                    # Build full directory path to scan
-                    scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
-                    
-                    if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
-                        # Get existing database filenames for comparison
-                        db_filenames = {f.get('filename', '') for f in db_files}
-                        show_hidden = self.config.get('show_hidden_files', True)
-                        allowed_exts = {str(ext).upper() for ext in (allowed_extensions or []) if ext and str(ext) != '*'}
+            # Only run expensive archive expansion/filesystem merge when cache is (re)built.
+            # Paged readdir calls should reuse the already-expanded cached list.
+            if not cache_hit:
+                # FLATTEN EXPANSION: when zip_mode == 'flatten', expand archive entries into
+                # their inner files so clients see CUE/BIN/CHD rather than the raw .7z/.zip container.
+                if zip_mode == 'flatten' and query_config and query_config.get('transform_zip', False):
+                    from zippath import listdir_with_info as zippath_listdir_with_info, is_supported_archive_name
+                    filestore_fl = self.config.get('filestore', '/mnt/filestorefs')
+                    local_base_fl = system_info.get('local_base_path', '')
+                    src_dir_fl = _adjust_source_dir_for_layout(query_config.get('source_dir', 'Software'), system_info)
+                    expanded_files = []
+                    for file_record in db_files:
+                        fname = file_record.get('filename', '')
+                        src_path = file_record.get('source_path', '')
+                        ext = file_record.get('extension', '').upper()
+                        if ext in ('ZIP', '7Z') and src_path and is_supported_archive_name(fname):
+                            try:
+                                inner_entries = zippath_listdir_with_info(src_path)
+                                mtime = file_record.get('mtime', 0)
+                                for inner in inner_entries:
+                                    inner_name = inner.get('name', '')
+                                    inner_size = inner.get('size', 0)
+                                    if not inner_name or inner.get('is_dir', False):
+                                        continue
+                                    expanded_files.append({
+                                        'filename': inner_name,
+                                        'source_path': f"{src_path}#ZIP#{inner_name}",
+                                        'extension': os.path.splitext(inner_name)[1][1:].upper(),
+                                        'size': inner_size,
+                                        'mtime': mtime,
+                                    })
+                            except Exception as _expand_err:
+                                logger.warning(f"READDIR_DB_ONLY: flatten expand failed for {src_path}: {_expand_err}")
+                                expanded_files.append(file_record)
+                        else:
+                            expanded_files.append(file_record)
+                    db_files = expanded_files
+                    logger.info(f"READDIR_DB_ONLY: flatten expanded to {len(db_files)} inner files")
+                
+                # FILESYSTEM MERGE/FALLBACK: include files that exist on disk but are not in the
+                # map index yet (for example newly mounted NAS content) so they appear immediately
+                # without requiring a DB sync.
+                if query_config:
+                    source_dir = query_config.get('source_dir', '')
+                    if source_dir:
+                        filestore = self.config.get('filestore', '/mnt/filestorefs')
+                        local_base = system_info.get('local_base_path', '')
+                        full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
                         
-                        # Scan filesystem for files not in database
-                        fs_only_files = []
+                        # Determine current subpath for preserve_structure mode
+                        rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
                         try:
-                            for entry in os.scandir(scan_dir):
-                                if not show_hidden and entry.name.startswith('.'):
-                                    continue
-                                
-                                if entry.is_file():
-                                    if entry.name not in db_filenames:
-                                        # File exists on disk but not in database
-                                        try:
-                                            stat_info = entry.stat()
-                                            _, ext = os.path.splitext(entry.name)
+                            map_idx = rel_parts.index(map_name)
+                            subpath_parts = rel_parts[map_idx + 1:] if len(rel_parts) > map_idx + 1 else []
+                        except ValueError:
+                            subpath_parts = rel_parts[3:] if len(rel_parts) > 3 else []
+                        current_subpath = '/'.join(subpath_parts)
+                        
+                        # Build full directory path to scan
+                        scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
+                        
+                        if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
+                            # Get existing database filenames for comparison
+                            db_filenames = {f.get('filename', '') for f in db_files}
+                            show_hidden = self.config.get('show_hidden_files', True)
+                            allowed_exts = {str(ext).upper() for ext in (allowed_extensions or []) if ext and str(ext) != '*'}
+                            
+                            # Scan filesystem for files not in database
+                            fs_only_files = []
+                            try:
+                                for entry in os.scandir(scan_dir):
+                                    if not show_hidden and entry.name.startswith('.'):
+                                        continue
+                                    
+                                    if entry.is_file():
+                                        if entry.name not in db_filenames:
+                                            # File exists on disk but not in database
+                                            try:
+                                                stat_info = entry.stat()
+                                                _, ext = os.path.splitext(entry.name)
+                                                ext_upper = ext[1:].upper() if ext else ''
+                                                if allowed_exts and ext_upper not in allowed_exts:
+                                                    continue
+                                                
+                                                # Create a minimal file record for this filesystem file
+                                                fs_file_record = {
+                                                    'filename': entry.name,
+                                                    'source_path': entry.path,
+                                                    'extension': ext_upper,
+                                                    'size': stat_info.st_size,
+                                                    'mtime': stat_info.st_mtime,
+                                                }
+                                                fs_only_files.append(fs_file_record)
+                                                logger.debug(f"READDIR_DB_ONLY: filesystem fallback found {entry.name} (not in database)")
+                                            except:
+                                                pass
+                            except Exception as e:
+                                logger.warning(f"READDIR_DB_ONLY: filesystem fallback error: {e}")
+
+                            # If no direct files found, recursively scan nested source folders.
+                            if not fs_only_files:
+                                try:
+                                    for root_dir, _, filenames in os.walk(scan_dir):
+                                        for filename in filenames:
+                                            if not show_hidden and filename.startswith('.'):
+                                                continue
+                                            if filename in db_filenames:
+                                                continue
+
+                                            _, ext = os.path.splitext(filename)
                                             ext_upper = ext[1:].upper() if ext else ''
                                             if allowed_exts and ext_upper not in allowed_exts:
                                                 continue
-                                            
-                                            # Create a minimal file record for this filesystem file
-                                            fs_file_record = {
-                                                'filename': entry.name,
-                                                'source_path': entry.path,
-                                                'extension': ext_upper,
-                                                'size': stat_info.st_size,
-                                                'mtime': stat_info.st_mtime,
-                                            }
-                                            fs_only_files.append(fs_file_record)
-                                            logger.debug(f"READDIR_DB_ONLY: filesystem fallback found {entry.name} (not in database)")
-                                        except:
-                                            pass
-                        except Exception as e:
-                            logger.warning(f"READDIR_DB_ONLY: filesystem fallback error: {e}")
 
-                        # If no direct files found, recursively scan nested source folders.
-                        if not fs_only_files:
-                            try:
-                                for root_dir, _, filenames in os.walk(scan_dir):
-                                    for filename in filenames:
-                                        if not show_hidden and filename.startswith('.'):
-                                            continue
-                                        if filename in db_filenames:
-                                            continue
+                                            file_path = os.path.join(root_dir, filename)
+                                            try:
+                                                stat_info = os.stat(file_path)
+                                                fs_only_files.append({
+                                                    'filename': filename,
+                                                    'source_path': file_path,
+                                                    'extension': ext_upper,
+                                                    'size': stat_info.st_size,
+                                                    'mtime': stat_info.st_mtime,
+                                                })
+                                            except Exception:
+                                                continue
+                                except Exception as nested_error:
+                                    logger.warning(f"READDIR_DB_ONLY: nested filesystem fallback error: {nested_error}")
+                            
+                            if fs_only_files:
+                                logger.info(f"READDIR_DB_ONLY: filesystem fallback added {len(fs_only_files)} files not in database")
+                                db_files = list(db_files) + fs_only_files
 
-                                        _, ext = os.path.splitext(filename)
-                                        ext_upper = ext[1:].upper() if ext else ''
-                                        if allowed_exts and ext_upper not in allowed_exts:
-                                            continue
-
-                                        file_path = os.path.join(root_dir, filename)
-                                        try:
-                                            stat_info = os.stat(file_path)
-                                            fs_only_files.append({
-                                                'filename': filename,
-                                                'source_path': file_path,
-                                                'extension': ext_upper,
-                                                'size': stat_info.st_size,
-                                                'mtime': stat_info.st_mtime,
-                                            })
-                                        except Exception:
-                                            continue
-                            except Exception as nested_error:
-                                logger.warning(f"READDIR_DB_ONLY: nested filesystem fallback error: {nested_error}")
-                        
-                        if fs_only_files:
-                            logger.info(f"READDIR_DB_ONLY: filesystem fallback added {len(fs_only_files)} files not in database")
-                            db_files = list(db_files) + fs_only_files
-
-            # Refresh cache with the final recovered result set so subsequent paged readdir
-            # calls do not repeat expensive query/fallback scans.
-            self._db_readdir_cache[path] = (time.time(), db_files)
+                # Refresh cache with the final recovered result set so subsequent paged readdir
+                # calls do not repeat expensive query/fallback scans.
+                self._db_readdir_cache[path] = (time.time(), db_files)
 
             if not db_files:
                 # Empty directory
@@ -1415,16 +1438,32 @@ class TransFS(Passthrough):
                                 db_files = None
 
                             if db_files is None:
-                                from db.queries import query_files_by_client_system_and_map
-                                allowed_extensions = [str(ext).upper() for ext in query_config.get('extensions', []) if ext]
-                                if query_config.get('transform_zip', False):
-                                    for archive_ext in ('ZIP', '7Z'):
-                                        if archive_ext not in allowed_extensions:
-                                            allowed_extensions.append(archive_ext)
-                                extension_filters = query_config.get('extension_filters', {}) or {}
-                                db_files = query_files_by_client_system_and_map(
-                                    client_name, system_name, map_name, allowed_extensions, extension_filters
+                                from db.queries import query_files_by_system_and_query
+                                from pathutils import get_system_identifier
+                                query_db = dict(query_config)
+                                query_db["source_dir"] = _adjust_source_dir_for_layout(
+                                    query_config.get("source_dir", "Software"),
+                                    system_info,
                                 )
+                                system_candidates = []
+                                def _add_sc(value):
+                                    c = str(value or "").strip()
+                                    if c and c not in system_candidates:
+                                        system_candidates.append(c)
+                                _add_sc(get_system_identifier(system_info))
+                                _add_sc(system_info.get("name"))
+                                _add_sc(system_info.get("system_mapping_name"))
+                                _add_sc(system_info.get("cananonical_system_name"))
+                                _add_sc(str(system_info.get("name") or "").lower())
+                                _add_sc(str(system_info.get("system_mapping_name") or "").lower())
+                                _add_sc(str(system_info.get("cananonical_system_name") or "").lower())
+                                entries_map = {}
+                                for sk in system_candidates:
+                                    for e in query_files_by_system_and_query(system=sk, query=query_db, system_config=system_info, limit=10000):
+                                        fn = e.get('filename', '') if isinstance(e, dict) else str(e)
+                                        if fn and fn not in entries_map:
+                                            entries_map[fn] = e
+                                db_files = list(entries_map.values())
                                 self._db_readdir_cache[map_root_path] = (time.time(), db_files)
 
                             for file_record in db_files or []:
@@ -1441,16 +1480,57 @@ class TransFS(Passthrough):
                                 if rel_dir == subpath or rel_dir.startswith(subpath + '/'):
                                     return build_dir_stat()
 
-            # Query database for this specific file
-            # First try exact virtual_path (supports preserve_structure subpaths),
-            # then fall back to legacy client/system/map/filename lookup.
-            from db.queries import query_file_by_client_system_map_and_name, query_file_by_virtual_path
-            file_record = query_file_by_virtual_path(path)
-            if not file_record:
-                file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
-            
+            # Query database for this specific file using config-driven source path reconstruction.
+            # Build the expected source path from virtual path components + config, then do an
+            # exact point lookup on the indexed source_path column (no file_client_maps join).
+            file_record = None
+            client_cfg = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            sys_info_fa = next((s for s in client_cfg.get('systems', []) if s['name'] == system_name), None) if client_cfg else None
+            if sys_info_fa:
+                from pathutils import find_map_entry, get_map_config, get_query_config
+                me_fa = find_map_entry(sys_info_fa, map_name)
+                mc_fa = get_map_config(me_fa)
+                qc_fa = get_query_config(mc_fa)
+                if qc_fa:
+                    src_dir_fa = _adjust_source_dir_for_layout(qc_fa.get('source_dir', 'Software'), sys_info_fa)
+                    rel_parts_fa = Path(path).parts[len(Path(self.mount_path).parts):]
+                    try:
+                        map_idx_fa = list(rel_parts_fa).index(map_name)
+                        subpath_fa = '/'.join(rel_parts_fa[map_idx_fa + 1:])
+                    except ValueError:
+                        subpath_fa = filename
+                    if subpath_fa:
+                        filestore_fa = self.config.get('filestore', '/mnt/filestorefs')
+                        local_base_fa = sys_info_fa.get('local_base_path', '')
+                        source_path_fa = os.path.join(filestore_fa, 'Native', local_base_fa, src_dir_fa, subpath_fa)
+                        from db.queries import query_file_by_source_path
+                        file_record = query_file_by_source_path(source_path_fa)
+
             if not file_record:
                 logger.debug(f"GETATTR_DB_ONLY: file {filename} not found in database")
+
+            # FLATTEN FALLBACK: inner files of flattened archives won't have a direct DB entry.
+            # Search the readdir cache (populated by _readdir_database_only flatten expansion).
+            if not file_record and sys_info_fa:
+                from pathutils import find_map_entry, get_map_config, get_query_config
+                me_fl2 = find_map_entry(sys_info_fa, map_name) if sys_info_fa else None
+                mc_fl2 = get_map_config(me_fl2) if me_fl2 else None
+                qc_fl2 = get_query_config(mc_fl2) if mc_fl2 else None
+                if qc_fl2 and qc_fl2.get('zip_mode') == 'flatten':
+                    try:
+                        map_idx_fl2 = list(Path(path).parts[len(Path(self.mount_path).parts):]).index(map_name)
+                        map_root_fl2 = os.path.join(self.mount_path, *Path(path).parts[len(Path(self.mount_path).parts):map_idx_fl2 + len(Path(self.mount_path).parts) + 1])
+                    except (ValueError, Exception):
+                        map_root_fl2 = os.path.join(self.mount_path, client_name, system_name, map_name)
+                    cache_entry_fl2 = self._db_readdir_cache.get(map_root_fl2)
+                    if cache_entry_fl2:
+                        _, cached_fl2 = cache_entry_fl2
+                        for rec in (cached_fl2 or []):
+                            if isinstance(rec, dict) and rec.get('filename') == filename:
+                                file_record = rec
+                                logger.info(f"GETATTR_DB_ONLY: found {filename} in flatten cache from {map_root_fl2}")
+                                break
+            if not file_record:
                 return None  # Fall back to filesystem
             
             # Build stat structure from database record
@@ -1522,18 +1602,55 @@ class TransFS(Passthrough):
         logger.info(f"OPEN_DB_ONLY: {path} client={client_name} system={system_name} map={map_name} file={filename}")
         
         try:
-            # Query database for this specific file
-            # First try exact virtual_path (supports preserve_structure subpaths),
-            # then fall back to legacy client/system/map/filename lookup.
-            from db.queries import query_file_by_client_system_map_and_name, query_file_by_virtual_path
-            file_record = query_file_by_virtual_path(path)
+            # Query database for this specific file using config-driven source path reconstruction.
+            file_record = None
+            client_cfg_op = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
+            sys_info_op = next((s for s in client_cfg_op.get('systems', []) if s['name'] == system_name), None) if client_cfg_op else None
+            if sys_info_op:
+                from pathutils import find_map_entry, get_map_config, get_query_config
+                me_op = find_map_entry(sys_info_op, map_name)
+                mc_op = get_map_config(me_op)
+                qc_op = get_query_config(mc_op)
+                if qc_op:
+                    src_dir_op = _adjust_source_dir_for_layout(qc_op.get('source_dir', 'Software'), sys_info_op)
+                    rel_parts_op = Path(path).parts[len(Path(self.mount_path).parts):]
+                    try:
+                        map_idx_op = list(rel_parts_op).index(map_name)
+                        subpath_op = '/'.join(rel_parts_op[map_idx_op + 1:])
+                    except ValueError:
+                        subpath_op = filename
+                    if subpath_op:
+                        filestore_op = self.config.get('filestore', '/mnt/filestorefs')
+                        local_base_op = sys_info_op.get('local_base_path', '')
+                        source_path_op = os.path.join(filestore_op, 'Native', local_base_op, src_dir_op, subpath_op)
+                        from db.queries import query_file_by_source_path
+                        file_record = query_file_by_source_path(source_path_op)
+
+            # FLATTEN FALLBACK: inner files of flattened archives won't have a direct DB entry.
+            # Search the readdir cache (populated by _readdir_database_only flatten expansion).
+            if not file_record and sys_info_op:
+                from pathutils import find_map_entry, get_map_config, get_query_config
+                me_fl3 = find_map_entry(sys_info_op, map_name) if sys_info_op else None
+                mc_fl3 = get_map_config(me_fl3) if me_fl3 else None
+                qc_fl3 = get_query_config(mc_fl3) if mc_fl3 else None
+                if qc_fl3 and qc_fl3.get('zip_mode') == 'flatten':
+                    try:
+                        map_idx_fl3 = list(Path(path).parts[len(Path(self.mount_path).parts):]).index(map_name)
+                        map_root_fl3 = os.path.join(self.mount_path, *Path(path).parts[len(Path(self.mount_path).parts):map_idx_fl3 + len(Path(self.mount_path).parts) + 1])
+                    except (ValueError, Exception):
+                        map_root_fl3 = os.path.join(self.mount_path, client_name, system_name, map_name)
+                    cache_entry_fl3 = self._db_readdir_cache.get(map_root_fl3)
+                    if cache_entry_fl3:
+                        _, cached_fl3 = cache_entry_fl3
+                        for rec in (cached_fl3 or []):
+                            if isinstance(rec, dict) and rec.get('filename') == filename:
+                                file_record = rec
+                                logger.info(f"OPEN_DB_ONLY: found {filename} in flatten cache from {map_root_fl3}")
+                                break
             if not file_record:
-                file_record = query_file_by_client_system_map_and_name(client_name, system_name, map_name, filename)
-            
-            if not file_record:
-                logger.debug(f"OPEN_DB_ONLY: file {filename} not found in database")
+                logger.debug(f"OPEN_DB_ONLY: file {filename} not found in database or flatten cache")
                 return None
-            
+
             source_path = file_record.get('source_path')
             if not source_path:
                 logger.warning(f"OPEN_DB_ONLY: no source_path in database for {filename}")

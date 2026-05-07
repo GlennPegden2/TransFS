@@ -2,7 +2,7 @@
 # Defines system mappings and file organization for MiSTer platform
 
 name: MiSTer
-download_layout: source_based
+download_layout: folder_based
 default_target_path: "{name}/{system_name}/{maps}"
 
 systems:
@@ -10,7 +10,7 @@ systems:
   - name: 3do
     manufacturer: 3DO
     system_mapping_name: 3DO
-    local_base_path: 3DO/3DO
+    local_base_path: Systems/3DO/3DO
     maps:
       - boot.rom:
           file:
@@ -32,13 +32,14 @@ systems:
             supports_zaparoo: false
       - CDs:
           query:
-            source_dir: Software
+            source_dir: Software/Collections/
             extensions:
               - CUE
               - BIN
               - CHD
               - ISO
-            transform_zip: false
+            transform_zip: true
+            zip_mode: flatten
             supports_zaparoo: true
       - BIOS:
           query:
@@ -46,6 +47,7 @@ systems:
             extensions:
               - ROM
               - BIN
+              - ZIP
 
   # --- Acorn ---
   - name: AcornAtom

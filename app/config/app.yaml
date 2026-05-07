@@ -49,6 +49,25 @@ smb:
   username: root
   password: '1'
   allow_guest: false
+native_external_mounts:
+- id: 3do-nas
+  display_name: 3DO on nas
+  enabled: true
+  target_subpath: Systems/3DO/3DO/Software/Collections/RetroRom-Collection
+  smb_host: 192.168.95.19
+  smb_share: software
+  smb_subpath: 3do/RetroRom-Collection
+  smb_port: null
+  guest: false
+  read_only: false
+  vers: '3.0'
+  auto_reconnect: true
+  extra_options: []
+  username: .\glenn
+  last_error: ''
+  last_ok: 1776209424
+  last_checked: 1776209424
+  credentials_file: /mnt/filestorefs/.secrets/transfs/native-mounts/3do-nas.cred
 filestore: /mnt/filestorefs
 show_hidden_files: true
 mame:

@@ -495,7 +495,7 @@ class DatImportService:
         if not isinstance(client_config, dict):
             client_config = {}
         client_config.setdefault("name", client_name)
-        client_config.setdefault("download_layout", "source_based")
+        client_config.setdefault("download_layout", "folder_based")
         client_config.setdefault("default_target_path", "{name}/{system_name}/{maps}")
         systems = client_config.get("systems") or []
         systems = [system for system in systems if system.get("name") != system_name]

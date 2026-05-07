@@ -11,7 +11,7 @@ COPY --from=chdman-builder /usr/bin/chdman /usr/bin/chdman
 
 RUN apt-get update && \
     echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
-    apt-get install -y --no-install-recommends build-essential fuse3 libfuse3-dev pkg-config samba wget unzip libguestfs-tools p7zip unrar-free
+    apt-get install -y --no-install-recommends build-essential fuse3 libfuse3-dev pkg-config samba smbclient cifs-utils wget unzip libguestfs-tools p7zip unrar-free
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt

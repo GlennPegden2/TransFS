@@ -59,7 +59,7 @@ class TestClientMappings:
             "MiSTer",      # MiSTer FPGA emulator
             "RetroBat",    # RetroBat emulator suite
             "RetroPie",    # RetroPie emulator suite
-            "Mame",        # MAME arcade emulator
+            "MAME",        # MAME arcade emulator
             "Generic",     # Generic emulators
         }
         

@@ -10,6 +10,7 @@ import asyncio
 import base64
 import fnmatch
 import io
+import json
 import logging
 import math
 import os
@@ -25,7 +26,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlparse
 
 import internetarchive
@@ -46,6 +47,16 @@ from config import (
     read_config,
     read_app_config,
     read_clients_config,
+)
+from native_mounts import (
+    build_unc_path,
+    get_mount_status,
+    mount_entry,
+    probe_entry,
+    reconcile_mounts,
+    unmount_entry,
+    write_credentials_file,
+    normalize_target_subpath,
 )
 from post_process import PostProcessor
 from sync_database import DatabaseSync
@@ -115,6 +126,143 @@ def _safe_filename(name: str) -> str:
     if ".." in Path(candidate).parts:
         raise ValueError(f"Unsafe filename: {name}")
     return candidate
+
+
+def _normalize_mount_id(mount_id: str | None) -> str:
+    candidate = (mount_id or "").strip()
+    if not candidate:
+        candidate = f"mount-{uuid.uuid4().hex[:8]}"
+    candidate = re.sub(r"[^a-zA-Z0-9_-]", "-", candidate)
+    return candidate[:64]
+
+
+def _read_app_yaml() -> dict:
+    app_config_path = "config/app.yaml"
+    with open(app_config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _write_app_yaml(app_config: dict) -> None:
+    app_config_path = "config/app.yaml"
+    with open(app_config_path, "w", encoding="utf-8") as f:
+        yaml.dump(app_config, f, default_flow_style=False, sort_keys=False)
+
+
+def _native_mount_entries_from_app_config(app_config: dict) -> list[dict]:
+    entries = app_config.get("native_external_mounts", [])
+    if not isinstance(entries, list):
+        return []
+    out = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            out.append(dict(entry))
+    return out
+
+
+def _public_native_mount_entry(config: dict, entry: dict) -> dict:
+    status = get_mount_status(config, entry)
+    status["id"] = entry.get("id")
+    status["display_name"] = entry.get("display_name") or entry.get("id")
+    status["extra_options"] = entry.get("extra_options") or []
+    status["unc_path"] = build_unc_path(entry)
+    return status
+
+
+def _prepare_native_mount_entry(
+    config: dict,
+    payload: dict,
+    existing_entry: dict | None = None,
+) -> dict:
+    existing_entry = existing_entry or {}
+
+    mount_id = _normalize_mount_id(payload.get("id") or existing_entry.get("id"))
+    enabled = bool(payload.get("enabled", existing_entry.get("enabled", True)))
+    guest = bool(payload.get("guest", existing_entry.get("guest", False)))
+    read_only = bool(payload.get("read_only", existing_entry.get("read_only", False)))
+    auto_reconnect = bool(payload.get("auto_reconnect", existing_entry.get("auto_reconnect", True)))
+    target_subpath = normalize_target_subpath(
+        payload.get("target_subpath", existing_entry.get("target_subpath", ""))
+    )
+    smb_host = (payload.get("smb_host", existing_entry.get("smb_host", "")) or "").strip()
+    smb_share = (payload.get("smb_share", existing_entry.get("smb_share", "")) or "").strip().strip("/")
+    smb_subpath = _ensure_safe_relpath(
+        payload.get("smb_subpath", existing_entry.get("smb_subpath", "")) or ""
+    )
+    vers = str(payload.get("vers", existing_entry.get("vers", "3.0")) or "3.0").strip()
+    display_name = (payload.get("display_name", existing_entry.get("display_name", "")) or "").strip()
+    username = (payload.get("username", existing_entry.get("username", "")) or "").strip()
+
+    smb_port = payload.get("smb_port", existing_entry.get("smb_port"))
+    if smb_port in (None, ""):
+        smb_port = None
+    else:
+        smb_port = int(smb_port)
+        if smb_port < 1 or smb_port > 65535:
+            raise ValueError("smb_port must be between 1 and 65535")
+
+    extra_options = payload.get("extra_options", existing_entry.get("extra_options", [])) or []
+    if not isinstance(extra_options, list):
+        raise ValueError("extra_options must be a list")
+    extra_options = [str(opt).strip() for opt in extra_options if str(opt).strip()]
+
+    if not smb_host:
+        raise ValueError("smb_host is required")
+    if not smb_share:
+        raise ValueError("smb_share is required")
+
+    entry = {
+        "id": mount_id,
+        "display_name": display_name or mount_id,
+        "enabled": enabled,
+        "target_subpath": target_subpath,
+        "smb_host": smb_host,
+        "smb_share": smb_share,
+        "smb_subpath": smb_subpath,
+        "smb_port": smb_port,
+        "guest": guest,
+        "read_only": read_only,
+        "vers": vers,
+        "auto_reconnect": auto_reconnect,
+        "extra_options": extra_options,
+        "username": username,
+        "last_error": existing_entry.get("last_error", ""),
+        "last_ok": existing_entry.get("last_ok", 0),
+        "last_checked": existing_entry.get("last_checked", 0),
+    }
+
+    password = payload.get("password")
+    if guest:
+        entry["credentials_file"] = existing_entry.get("credentials_file", "")
+    else:
+        if not username:
+            raise ValueError("username is required when guest is false")
+        if password is not None:
+            filestore = config.get("filestore", "/mnt/filestorefs")
+            entry["credentials_file"] = write_credentials_file(filestore, mount_id, username, str(password))
+        else:
+            entry["credentials_file"] = existing_entry.get("credentials_file", "")
+            if not entry["credentials_file"]:
+                raise ValueError("password is required for new non-guest mounts")
+
+    return entry
+
+
+def _native_mount_runtime_fields(entry: dict | None) -> dict:
+    entry = entry or {}
+    return {
+        "enabled": bool(entry.get("enabled", True)),
+        "target_subpath": entry.get("target_subpath", ""),
+        "smb_host": entry.get("smb_host", ""),
+        "smb_share": entry.get("smb_share", ""),
+        "smb_subpath": entry.get("smb_subpath", ""),
+        "smb_port": entry.get("smb_port"),
+        "guest": bool(entry.get("guest", False)),
+        "read_only": bool(entry.get("read_only", False)),
+        "vers": entry.get("vers", "3.0"),
+        "extra_options": list(entry.get("extra_options") or []),
+        "credentials_file": entry.get("credentials_file", ""),
+        "username": entry.get("username", ""),
+    }
 
 
 def _safe_member_name(name: str) -> bool:
@@ -343,7 +491,7 @@ def _resolve_source_folder(
     base_path_rel: str | None = None,
 ) -> str:
     folder = folder or ""
-    if download_layout != "source_based":
+    if download_layout != "legacy_source_based":
         return folder
     if _is_bios_folder(folder):
         return folder
@@ -467,6 +615,20 @@ class MetadataEntryDeleteRequest(BaseModel):
 class MetadataClearAllRequest(BaseModel):
     """Request model for deleting all metadata records."""
     confirm_text: str
+
+
+class SnapshotCaptureRequest(BaseModel):
+    """Request model for capturing a locked snapshot baseline."""
+    snapshot_name: str
+    transfs_path: str
+    max_depth: int = 3
+
+
+class SnapshotCompareRequest(BaseModel):
+    """Request model for comparing current state to a locked baseline."""
+    snapshot_name: str
+    transfs_path: Optional[str] = None
+    max_depth: Optional[int] = None
 
 
 def _ensure_db_for_metadata() -> None:
@@ -606,7 +768,12 @@ def api_source_paths(path: str):
 
 @app.get("/browse", tags=["File Browsing"])
 def api_browse_directory(path: str):
-    """Browse a directory and return its contents with metadata and cache status."""
+    """Browse a directory and return its contents with metadata and cache status.
+    
+    Supports both regular directories and archive exploration:
+    - Regular: /path/to/dir
+    - Archive: /path/to/file.7z#inner/path (after # is the path inside the archive)
+    """
     import time
     start_time = time.time()
     
@@ -619,13 +786,11 @@ def api_browse_directory(path: str):
     path = os.path.normpath(path)
     print(f"[BROWSE] validation done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
-    if not os.path.exists(path):
-        return {"error": "Path does not exist"}
-    print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
-    
-    if not os.path.isdir(path):
-        return {"error": "Path is not a directory"}
-    print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    # Check if this is an archive browse path (format: /path/to/file.7z#inner/path)
+    archive_inner_path = None
+    if "#" in path:
+        real_path, archive_inner_path = path.split("#", 1)
+        path = real_path
     
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
@@ -664,6 +829,37 @@ def api_browse_directory(path: str):
         
         print(f"[BROWSE] zaparoo config done, elapsed={time.time()-start_time:.4f}s", flush=True)
     
+    # If browsing inside an archive, list archive contents instead of filesystem
+    if archive_inner_path is not None:
+        print(f"[BROWSE] browsing archive contents: {path}#{archive_inner_path}", flush=True)
+        if not os.path.isfile(path):
+            return {"error": "Archive file does not exist"}
+        
+        try:
+            from zippath import listdir_with_info
+            items = listdir_with_info(f"{path}#{archive_inner_path}")
+            entries = []
+            for item in items:
+                entry_type = "directory" if item["is_dir"] else "file"
+                entries.append({
+                    "name": item["name"],
+                    "type": entry_type,
+                    "size": item.get("size"),
+                    "supports_zaparoo": False
+                })
+            return {"path": path + "#" + archive_inner_path, "entries": entries}
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"[BROWSE] error listing archive: {e}", flush=True)
+            return {"error": f"Failed to list archive contents: {str(e)}"}
+    
+    if not os.path.exists(path):
+        return {"error": "Path does not exist"}
+    print(f"[BROWSE] exists check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    
+    if not os.path.isdir(path):
+        return {"error": "Path is not a directory"}
+    print(f"[BROWSE] isdir check done, elapsed={time.time()-start_time:.4f}s", flush=True)
+    
     # NOTE: For virtual paths under /mnt/transfs, we rely on reading from the FUSE mount point
     # directly. This ensures consistency with preserve_structure and other FUSE-level features.
     # The FUSE filesystem handles all directory composition and file listing logic.
@@ -696,6 +892,12 @@ def api_browse_directory(path: str):
                     # Use DirEntry methods which may use cached data from readdir
                     is_dir = entry.is_dir(follow_symlinks=False)
                     
+                    # Check if this is a 7z/zip archive file
+                    is_archive = False
+                    if not is_dir:
+                        from zippath import is_supported_archive_name
+                        is_archive = is_supported_archive_name(entry.name)
+                    
                     size = None
                     if not is_dir:
                         try:
@@ -703,9 +905,10 @@ def api_browse_directory(path: str):
                         except (PermissionError, OSError):
                             pass
                     
+                    entry_type = "archive" if is_archive else ("directory" if is_dir else "file")
                     entries.append({
                         "name": entry.name,
-                        "type": "directory" if is_dir else "file",
+                        "type": entry_type,
                         "size": size,
                         "supports_zaparoo": supports_zaparoo
                     })
@@ -1841,7 +2044,7 @@ def config_get(fields: str = None):
             from config import read_app_config
             
             # For ui and web_api, we only need app.yaml
-            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore', 'database'] for f in field_list):
+            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore', 'database', 'native_external_mounts'] for f in field_list):
                 app_config = read_app_config()
                 result = {}
                 for field in field_list:
@@ -1861,6 +2064,8 @@ def config_get(fields: str = None):
                             'auto_sync': False,
                             'sync_on_startup': False
                         })
+                    elif field == 'native_external_mounts':
+                        result['native_external_mounts'] = app_config.get('native_external_mounts', [])
                 return result
         
         # Otherwise, load full config (expensive)
@@ -1876,7 +2081,8 @@ def config_get(fields: str = None):
                 "path": "/mnt/filestorefs/.transfs_metadata.db",
                 "auto_sync": False,
                 "sync_on_startup": False
-            })
+            }),
+            "native_external_mounts": config.get("native_external_mounts", []),
         }
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1889,6 +2095,42 @@ class ConfigUpdate(BaseModel):
     web_api: dict | None = None
     ui: dict | None = None
     database: dict | None = None
+    native_external_mounts: list[dict] | None = None
+
+
+class NativeMountRequest(BaseModel):
+    id: str | None = None
+    display_name: str | None = None
+    enabled: bool = True
+    target_subpath: str
+    smb_host: str
+    smb_share: str
+    smb_subpath: str | None = None
+    smb_port: int | None = None
+    guest: bool = False
+    username: str | None = None
+    password: str | None = None
+    read_only: bool = False
+    vers: str = "3.0"
+    auto_reconnect: bool = True
+    extra_options: list[str] | None = None
+
+
+class NativeMountUpdateRequest(BaseModel):
+    display_name: str | None = None
+    enabled: bool | None = None
+    target_subpath: str | None = None
+    smb_host: str | None = None
+    smb_share: str | None = None
+    smb_subpath: str | None = None
+    smb_port: int | None = None
+    guest: bool | None = None
+    username: str | None = None
+    password: str | None = None
+    read_only: bool | None = None
+    vers: str | None = None
+    auto_reconnect: bool | None = None
+    extra_options: list[str] | None = None
 
 
 class QueryMappingRequest(BaseModel):
@@ -1915,6 +2157,8 @@ def config_set(config_update: ConfigUpdate):
             config.setdefault("ui", {}).update(config_update.ui)
         if config_update.database is not None:
             config.setdefault("database", {}).update(config_update.database)
+        if config_update.native_external_mounts is not None:
+            config["native_external_mounts"] = config_update.native_external_mounts
         
         # Write updated app.yaml (only the top-level config keys that belong there)
         app_config_path = "config/app.yaml"
@@ -1932,9 +2176,13 @@ def config_set(config_update: ConfigUpdate):
             app_config.setdefault("ui", {}).update(config_update.ui)
         if config_update.database is not None:
             app_config.setdefault("database", {}).update(config_update.database)
+        if config_update.native_external_mounts is not None:
+            app_config["native_external_mounts"] = config_update.native_external_mounts
         
         with open(app_config_path, "w", encoding="utf-8") as f:
             yaml.dump(app_config, f, default_flow_style=False)
+
+        read_config.cache_clear()
         
         return {
             "updated": True,
@@ -1949,8 +2197,266 @@ def config_set(config_update: ConfigUpdate):
                     "path": "/mnt/filestorefs/.transfs_metadata.db",
                     "auto_sync": False,
                     "sync_on_startup": False
-                })
+                }),
+                "native_external_mounts": app_config.get("native_external_mounts", []),
             }
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/native-mounts", tags=["Config"])
+def get_native_mounts():
+    """List managed Native external SMB mounts with runtime status."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+        mounts = [_public_native_mount_entry(config, entry) for entry in entries]
+        mounts.sort(key=lambda item: item.get("id", ""))
+        return {"mounts": mounts}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/native-mounts", tags=["Config"])
+def create_native_mount(request: NativeMountRequest):
+    """Create a managed Native external SMB mount entry and persist it."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+
+        payload = request.dict()
+        new_entry = _prepare_native_mount_entry(config, payload)
+        if any((entry.get("id") == new_entry.get("id")) for entry in entries):
+            raise ValueError(f"native mount id already exists: {new_entry['id']}")
+
+        entries.append(new_entry)
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+
+        if bool(new_entry.get("enabled", True)):
+            mount_result = mount_entry(config, new_entry)
+            new_entry["last_checked"] = int(time.time())
+            if mount_result.get("success"):
+                new_entry["last_ok"] = int(time.time())
+                new_entry["last_error"] = ""
+            else:
+                new_entry["last_error"] = mount_result.get("error", "mount failed")
+            app_config["native_external_mounts"] = entries
+            _write_app_yaml(app_config)
+
+        read_config.cache_clear()
+        return {"created": True, "mount": _public_native_mount_entry(read_config(), new_entry)}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.patch("/native-mounts/{mount_id}", tags=["Config"])
+def update_native_mount(mount_id: str, request: NativeMountUpdateRequest):
+    """Update a managed Native external SMB mount entry and persist it."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+
+        idx = next((i for i, entry in enumerate(entries) if entry.get("id") == mount_id), None)
+        if idx is None:
+            return {"error": f"mount not found: {mount_id}"}
+
+        existing = entries[idx]
+        payload = request.dict(exclude_unset=True)
+        payload["id"] = mount_id
+        updated = _prepare_native_mount_entry(config, payload, existing)
+
+        runtime_changed = _native_mount_runtime_fields(existing) != _native_mount_runtime_fields(updated)
+        if runtime_changed:
+            unmount_result = unmount_entry(config, existing)
+            if not unmount_result.get("success"):
+                return {
+                    "error": unmount_result.get("error", "failed to unmount existing mount before update"),
+                    "unmount": unmount_result,
+                }
+
+        entries[idx] = updated
+        now = int(time.time())
+
+        if runtime_changed and bool(updated.get("enabled", True)):
+            mount_result = mount_entry(config, updated)
+            updated["last_checked"] = now
+            if mount_result.get("success"):
+                updated["last_ok"] = now
+                updated["last_error"] = ""
+            else:
+                updated["last_error"] = mount_result.get("error", "mount failed")
+        elif runtime_changed:
+            updated["last_checked"] = now
+            updated["last_error"] = ""
+
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+
+        read_config.cache_clear()
+        return {"updated": True, "mount": _public_native_mount_entry(read_config(), updated)}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.delete("/native-mounts/{mount_id}", tags=["Config"])
+def delete_native_mount(mount_id: str):
+    """Delete a managed Native external SMB mount entry (best-effort unmount first)."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+
+        idx = next((i for i, entry in enumerate(entries) if entry.get("id") == mount_id), None)
+        if idx is None:
+            return {"error": f"mount not found: {mount_id}"}
+
+        entry = entries[idx]
+        unmount_result = unmount_entry(config, entry)
+
+        credentials_file = (entry.get("credentials_file") or "").strip()
+        if credentials_file and os.path.exists(credentials_file):
+            try:
+                os.remove(credentials_file)
+            except OSError:
+                pass
+
+        del entries[idx]
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+
+        read_config.cache_clear()
+        return {"deleted": True, "unmount": unmount_result}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/native-mounts/{mount_id}/mount", tags=["Config"])
+def mount_native_mount(mount_id: str):
+    """Manually mount a managed Native external SMB mount."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+        entry = next((item for item in entries if item.get("id") == mount_id), None)
+        if not entry:
+            return {"error": f"mount not found: {mount_id}"}
+
+        result = mount_entry(config, entry)
+        entry["last_checked"] = int(time.time())
+        if result.get("success"):
+            entry["last_ok"] = int(time.time())
+            entry["last_error"] = ""
+        else:
+            entry["last_error"] = result.get("error", "mount failed")
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+
+        return {
+            "result": result,
+            "mount": _public_native_mount_entry(config, entry),
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/native-mounts/{mount_id}/unmount", tags=["Config"])
+def unmount_native_mount(mount_id: str):
+    """Manually unmount a managed Native external SMB mount."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+        entry = next((item for item in entries if item.get("id") == mount_id), None)
+        if not entry:
+            return {"error": f"mount not found: {mount_id}"}
+
+        result = unmount_entry(config, entry)
+        entry["last_checked"] = int(time.time())
+        if not result.get("success"):
+            entry["last_error"] = result.get("error", "unmount failed")
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+
+        return {
+            "result": result,
+            "mount": _public_native_mount_entry(config, entry),
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/native-mounts/reconcile", tags=["Config"])
+def reconcile_native_mounts():
+    """Attempt to mount all enabled auto-reconnect managed Native external mounts."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+        result = reconcile_mounts(config, entries)
+
+        now = int(time.time())
+        detail_by_id = {item.get("id"): item for item in result.get("details", [])}
+        for entry in entries:
+            entry["last_checked"] = now
+            detail = detail_by_id.get(entry.get("id"), {})
+            if detail.get("success"):
+                if detail.get("changed"):
+                    entry["last_ok"] = now
+                entry["last_error"] = ""
+            elif detail:
+                entry["last_error"] = detail.get("error", "mount failed")
+
+        app_config["native_external_mounts"] = entries
+        _write_app_yaml(app_config)
+        result["mounts"] = [_public_native_mount_entry(config, entry) for entry in entries]
+        return result
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.post("/native-mounts/validate", tags=["Config"])
+def validate_native_mount(request: NativeMountRequest):
+    """Validate Native mount configuration without persisting or mounting."""
+    try:
+        config = read_config()
+        payload = request.dict()
+        entry = _prepare_native_mount_entry(config, payload)
+        target = normalize_target_subpath(entry.get("target_subpath", ""))
+        target_path = os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", target)
+        unc_path = build_unc_path(entry)
+        probe = probe_entry(config, entry)
+        return {
+            "valid": True,
+            "target_subpath": target,
+            "target_path": target_path,
+            "unc_path": unc_path,
+            "guest": bool(entry.get("guest", False)),
+            "probe": probe,
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"valid": False, "error": str(e)}
+
+
+@app.post("/native-mounts/{mount_id}/probe", tags=["Config"])
+def probe_native_mount(mount_id: str):
+    """Probe a saved Native external SMB mount without attempting a kernel mount."""
+    try:
+        config = read_config()
+        app_config = _read_app_yaml()
+        entries = _native_mount_entries_from_app_config(app_config)
+        entry = next((item for item in entries if item.get("id") == mount_id), None)
+        if not entry:
+            return {"error": f"mount not found: {mount_id}"}
+
+        result = probe_entry(config, entry)
+        return {
+            "probe": result,
+            "mount": _public_native_mount_entry(config, entry),
         }
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2178,6 +2684,332 @@ def reload_fuse_config_endpoint():
 
 # Global storage for test runs (in production, use a database)
 _test_runs = {}
+_snapshot_baseline_dir = Path("/tests/snapshots/locked")
+
+
+def _safe_snapshot_name(name: str) -> str:
+    """Normalize and validate snapshot name for filesystem-safe storage."""
+    normalized = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (name or "").strip()).strip("._-")
+    if not normalized:
+        raise ValueError("snapshot_name must contain at least one alphanumeric character")
+    if len(normalized) > 128:
+        raise ValueError("snapshot_name is too long (max 128 chars)")
+    return normalized
+
+
+def _ensure_valid_transfs_path(path_value: str) -> Path:
+    """Ensure capture/compare paths stay under /mnt/transfs."""
+    if not path_value:
+        raise ValueError("transfs_path is required")
+
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        raise ValueError("transfs_path must be absolute (e.g., /mnt/transfs/RetroBat/ROMS/3DO)")
+
+    resolved = candidate.resolve()
+    transfs_root = Path("/mnt/transfs").resolve()
+    if transfs_root not in resolved.parents and resolved != transfs_root:
+        raise ValueError(f"transfs_path must be under {transfs_root}")
+
+    if not resolved.exists() or not resolved.is_dir():
+        raise ValueError(f"transfs_path does not exist or is not a directory: {resolved}")
+
+    return resolved
+
+
+def _capture_directory_tree(path: Path, max_depth: int = 3, current_depth: int = 0) -> Dict[str, Any]:
+    """Recursively capture a deterministic directory tree for baseline comparison."""
+    if current_depth >= max_depth:
+        return {"_type": "truncated"}
+
+    tree: Dict[str, Any] = {"_type": "directory", "_items": {}}
+    try:
+        items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower(), p.name))
+        for item in items:
+            if item.name.startswith("."):
+                continue
+            try:
+                if item.is_dir():
+                    tree["_items"][item.name] = _capture_directory_tree(
+                        item,
+                        max_depth=max_depth,
+                        current_depth=current_depth + 1,
+                    )
+                else:
+                    file_info: Dict[str, Any] = {
+                        "_type": "file",
+                        "size": item.stat().st_size,
+                    }
+                    if item.is_symlink():
+                        file_info["target"] = os.path.realpath(item)
+                    tree["_items"][item.name] = file_info
+            except (OSError, PermissionError) as exc:
+                tree["_items"][item.name] = {"_type": "error", "reason": str(exc)}
+    except (OSError, PermissionError) as exc:
+        return {"_type": "error", "reason": str(exc)}
+
+    return tree
+
+
+def _flatten_tree(tree: Dict[str, Any], prefix: str = "") -> Dict[str, Dict[str, Any]]:
+    """Flatten tree into path->node map for readable diffs."""
+    result: Dict[str, Dict[str, Any]] = {}
+    node_type = tree.get("_type")
+    if node_type != "directory":
+        result[prefix or "/"] = tree
+        return result
+
+    for name, node in tree.get("_items", {}).items():
+        node_path = f"{prefix}/{name}" if prefix else name
+        result[node_path] = node
+        if isinstance(node, dict) and node.get("_type") == "directory":
+            result.update(_flatten_tree(node, node_path))
+    return result
+
+
+@app.get("/snapshots")
+def list_locked_snapshots():
+    """List available locked snapshot baselines."""
+    _snapshot_baseline_dir.mkdir(parents=True, exist_ok=True)
+    baselines = []
+    for baseline_file in sorted(_snapshot_baseline_dir.glob("*.json")):
+        try:
+            with baseline_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            baselines.append(
+                {
+                    "snapshot_name": baseline_file.stem,
+                    "transfs_path": data.get("transfs_path", ""),
+                    "max_depth": data.get("max_depth", 0),
+                    "captured_at": data.get("captured_at", 0),
+                }
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            baselines.append({"snapshot_name": baseline_file.stem, "error": str(exc)})
+
+    return {"success": True, "baselines": baselines}
+
+
+@app.get("/snapshots/options")
+def snapshot_capture_options():
+    """Return configured clients/systems with per-category paths so UI can build snapshot dropdowns."""
+    try:
+        clients_cfg = read_clients_config()
+        mount_root = "/mnt/transfs"
+
+        # Pretty labels for well-known category keys
+        _CATEGORY_LABELS = {
+            "roms": "ROMs",
+            "bios": "BIOS",
+            "shared_bios": "Shared BIOS",
+            "mame_roms": "MAME ROMs",
+            "mame_bios": "MAME BIOS",
+            "retroarch": "RetroArch",
+        }
+        # When a system has maps in multiple categories pick the most "content-rich" one as default
+        _CATEGORY_PRIORITY = ["roms", "mame_roms", "bios", "mame_bios", "shared_bios", "retroarch"]
+
+        def _render_template(template: str, client_name: str, system_name: str) -> str:
+            return (
+                template
+                .replace("{name}", client_name)
+                .replace("{system_name}", system_name)
+            )
+
+        def _get_system_paths(client_cfg: dict, system_cfg: dict) -> list:
+            """Return all unique virtual paths this system is reachable under, with labels."""
+            client_name = client_cfg.get("name", "")
+            system_name = system_cfg.get("name", "")
+            category_paths: dict = client_cfg.get("category_paths") or {}
+
+            if not category_paths:
+                # No category routing — system lives directly under client
+                return [
+                    {
+                        "category": None,
+                        "label": "System",
+                        "path": f"{mount_root}/{client_name}/{system_name}",
+                    }
+                ]
+
+            # Collect every category referenced by this system's maps
+            categories_used: set = set()
+            for map_entry in (system_cfg.get("maps") or []):
+                if not isinstance(map_entry, dict):
+                    continue
+                for _, map_cfg in map_entry.items():
+                    if isinstance(map_cfg, dict):
+                        cat = map_cfg.get("category")
+                        if cat and cat in category_paths:
+                            categories_used.add(cat)
+
+            if not categories_used:
+                # System has no categorised maps; fall back to direct path
+                return [
+                    {
+                        "category": None,
+                        "label": "System",
+                        "path": f"{mount_root}/{client_name}/{system_name}",
+                    }
+                ]
+
+            # Sort categories by priority then alpha for stable ordering
+            def _sort_key(cat: str) -> tuple:
+                try:
+                    return (0, _CATEGORY_PRIORITY.index(cat))
+                except ValueError:
+                    return (1, cat)
+
+            result = []
+            seen_paths: set = set()
+            for cat in sorted(categories_used, key=_sort_key):
+                template = category_paths[cat]
+                rendered = _render_template(template, client_name, system_name)
+                full_path = f"{mount_root}/{rendered}"
+                if full_path in seen_paths:
+                    continue
+                seen_paths.add(full_path)
+                result.append(
+                    {
+                        "category": cat,
+                        "label": _CATEGORY_LABELS.get(cat, cat),
+                        "path": full_path,
+                    }
+                )
+            return result
+
+        clients = []
+        for client in clients_cfg.get("clients", []):
+            client_name = client.get("name")
+            if not client_name:
+                continue
+
+            systems = []
+            for system in client.get("systems", []):
+                system_name = system.get("name")
+                if not system_name:
+                    continue
+                paths = _get_system_paths(client, system)
+                systems.append(
+                    {
+                        "name": system_name,
+                        "display_name": system.get("display_name", system_name),
+                        # paths[0] is the default (highest priority category)
+                        "paths": paths,
+                    }
+                )
+
+            clients.append(
+                {
+                    "name": client_name,
+                    "systems": sorted(
+                        systems,
+                        key=lambda s: (s.get("display_name", "").lower(), s.get("name", "").lower()),
+                    ),
+                }
+            )
+
+        clients = sorted(clients, key=lambda c: c.get("name", "").lower())
+        return {
+            "success": True,
+            "mount_root": mount_root,
+            "clients": clients,
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.getLogger("api").error("Failed to build snapshot capture options", exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.post("/snapshots/capture")
+def capture_locked_snapshot(req: SnapshotCaptureRequest):
+    """Capture a locked snapshot baseline for a verified TransFS directory."""
+    try:
+        snapshot_name = _safe_snapshot_name(req.snapshot_name)
+        max_depth = max(1, min(int(req.max_depth), 10))
+        transfs_path = _ensure_valid_transfs_path(req.transfs_path)
+
+        tree = _capture_directory_tree(transfs_path, max_depth=max_depth)
+        baseline = {
+            "snapshot_name": snapshot_name,
+            "transfs_path": str(transfs_path),
+            "max_depth": max_depth,
+            "captured_at": time.time(),
+            "tree": tree,
+        }
+
+        _snapshot_baseline_dir.mkdir(parents=True, exist_ok=True)
+        baseline_path = _snapshot_baseline_dir / f"{snapshot_name}.json"
+        with baseline_path.open("w", encoding="utf-8") as f:
+            json.dump(baseline, f, indent=2, sort_keys=True)
+
+        return {
+            "success": True,
+            "snapshot_name": snapshot_name,
+            "baseline_path": str(baseline_path),
+            "transfs_path": str(transfs_path),
+            "max_depth": max_depth,
+            "message": "Locked snapshot captured successfully",
+        }
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error(f"Failed to capture locked snapshot: {exc}", exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.post("/snapshots/compare")
+def compare_locked_snapshot(req: SnapshotCompareRequest):
+    """Compare current directory structure with a previously captured locked baseline."""
+    try:
+        snapshot_name = _safe_snapshot_name(req.snapshot_name)
+        baseline_path = _snapshot_baseline_dir / f"{snapshot_name}.json"
+        if not baseline_path.exists():
+            return {"success": False, "error": f"Baseline not found: {snapshot_name}"}
+
+        with baseline_path.open("r", encoding="utf-8") as f:
+            baseline = json.load(f)
+
+        baseline_path_value = baseline.get("transfs_path", "")
+        transfs_path = _ensure_valid_transfs_path(req.transfs_path or baseline_path_value)
+        max_depth = req.max_depth if req.max_depth is not None else baseline.get("max_depth", 3)
+        max_depth = max(1, min(int(max_depth), 10))
+
+        current_tree = _capture_directory_tree(transfs_path, max_depth=max_depth)
+        expected_tree = baseline.get("tree", {})
+        is_match = current_tree == expected_tree
+
+        expected_flat = _flatten_tree(expected_tree)
+        current_flat = _flatten_tree(current_tree)
+        expected_paths = set(expected_flat.keys())
+        current_paths = set(current_flat.keys())
+
+        added = sorted(current_paths - expected_paths)
+        removed = sorted(expected_paths - current_paths)
+        changed = sorted(
+            path for path in (expected_paths & current_paths)
+            if expected_flat[path] != current_flat[path]
+        )
+
+        return {
+            "success": True,
+            "snapshot_name": snapshot_name,
+            "transfs_path": str(transfs_path),
+            "max_depth": max_depth,
+            "match": is_match,
+            "diff": {
+                "added": added[:200],
+                "removed": removed[:200],
+                "changed": changed[:200],
+                "added_count": len(added),
+                "removed_count": len(removed),
+                "changed_count": len(changed),
+            },
+        }
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error(f"Failed to compare locked snapshot: {exc}", exc_info=True)
+        return {"success": False, "error": str(exc)}
 
 
 @app.post("/run-tests")
@@ -2266,11 +3098,34 @@ def get_test_results(task_id: str):
             tests_list = []
             
             # Pattern for test start line (may have PERF lines after on same line)
-            # Match: ../tests/file.py::ClassName::test_name[param] PERF|...
+            # Supports tests paths emitted as tests/..., ../tests/..., app/tests/..., ../app/tests/...
+            # Match: path/to/test_file.py::ClassName::test_name[param] PERF|...
             # Stop at PERF or status keywords
-            test_start_pattern = r'^(\.\./tests/[^\s]+)::(.+?)(?:\s+(?:PERF|PASSED|FAILED|SKIPPED|XPASS|XFAIL))'
+            test_start_pattern = r'^((?:(?:\.\./)?(?:app/)?tests|/(?:app/)?tests)/[^\s:]+\.py)::(.+?)(?:\s+(?:PERF|PASSED|FAILED|SKIPPED|XPASS|XFAIL))'
             status_pattern = r'^\s*(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$'
             perf_pattern = r'PERF\|test=(.+?)\|op=(.+?)\|path=(.+?)\|actual=([\d.]+)\|target=([\d.]+)'
+            ansi_escape_pattern = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+
+            def _normalize_test_file_path(path_value: str) -> str:
+                """Normalize pytest-emitted file paths so we can map summary lines reliably."""
+                if not path_value:
+                    return ""
+
+                normalized = path_value.replace('\\\\', '/').strip()
+                normalized = normalized.lstrip('./')
+                if normalized.startswith('/app/'):
+                    normalized = normalized[len('/app/'):]
+                if normalized.startswith('app/'):
+                    normalized = normalized[len('app/'):]
+
+                tests_idx = normalized.find('tests/')
+                if tests_idx >= 0:
+                    normalized = normalized[tests_idx:]
+
+                return normalized
+
+            def _strip_ansi(line_value: str) -> str:
+                return ansi_escape_pattern.sub('', line_value or '')
             
             # Parse test output line by line
             test_results = {}
@@ -2280,7 +3135,7 @@ def get_test_results(task_id: str):
             lines = run["output"].split('\n')
             i = 0
             while i < len(lines):
-                line = lines[i]
+                line = _strip_ansi(lines[i])
                 
                 # Check for test start
                 test_match = re.search(test_start_pattern, line)
@@ -2292,19 +3147,25 @@ def get_test_results(task_id: str):
                     current_test = test_key
                     current_perf_data = []
                     
-                    # Check if status is on same line
-                    inline_status_match = re.search(r'\s(PASSED|FAILED|SKIPPED|XPASS|XFAIL)', line)
+                    # Check if status is on same line, with optional inline reason
+                    inline_status_match = re.search(
+                        r'\s(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+\((.*?)\))?(?:\s+\[\s*\d+%\])?\s*$',
+                        line
+                    )
                     if inline_status_match:
                         status = inline_status_match.group(1)
+                        inline_reason = (inline_status_match.group(2) or "").strip()
                     else:
                         # Look ahead for status on next lines
                         status = None
+                        inline_reason = ""
                         j = i + 1
                         while j < len(lines) and j < i + 10:  # Look ahead max 10 lines
-                            next_line = lines[j]
+                            next_line = _strip_ansi(lines[j])
                             status_match = re.match(status_pattern, next_line)
                             if status_match:
                                 status = status_match.group(1)
+                                inline_reason = (status_match.group(2) or "").strip()
                                 break
                             # Check if we hit another test (stop looking)
                             if re.search(test_start_pattern, next_line):
@@ -2317,7 +3178,7 @@ def get_test_results(task_id: str):
                     # Set default output based on status
                     if status == "SKIPPED":
                         default_output = "(Skipped test)"
-                        reason = "Skipped (fixture or condition not met)"
+                        reason = inline_reason if inline_reason else "Skipped (fixture or condition not met)"
                     elif status == "PASSED":
                         default_output = "(Test passed - no output captured)"
                         reason = ""
@@ -2416,29 +3277,68 @@ def get_test_results(task_id: str):
                 
                 i += 1
             
-            # Third pass: extract skip reasons from our custom pytest hook output
-            # We added a pytest hook that prints "[SKIP_REASON] test_nodeid - reason" 
-            skip_reason_pattern = r'\[SKIP_REASON\]\s+([^\s]+)\s+-\s+(.+)$'
-            for line in run["output"].split('\n'):
+            # Third pass: extract skip reasons from custom test output
+            # Supports:
+            #   [SKIP_REASON] tests/test_file.py::Class::test_name - reason
+            #   [SKIP_REASON] Human-readable reason text
+            skip_reason_pattern = r'^\[SKIP_REASON\]\s+(.+)$'
+            for raw_line in run["output"].split('\n'):
+                line = _strip_ansi(raw_line)
                 match = re.match(skip_reason_pattern, line)
                 if match:
-                    test_nodeid = match.group(1).strip()
-                    skip_reason = match.group(2).strip()
-                    
-                    # Try to find a matching test in test_results
+                    payload = match.group(1).strip()
+
+                    nodeid_match = re.match(r'^([^\s]+::[^\s]+)\s+-\s+(.+)$', payload)
+                    if nodeid_match:
+                        test_nodeid = nodeid_match.group(1).strip()
+                        skip_reason = nodeid_match.group(2).strip()
+
+                        for result_key in test_results.keys():
+                            if test_nodeid in result_key or result_key.endswith(test_nodeid):
+                                test_results[result_key]["reason"] = skip_reason
+                                break
+                        continue
+
+                    # If only free text is provided, try to map by [SystemName] token,
+                    # otherwise apply to first skipped test still using the placeholder reason.
+                    skip_reason = payload
+                    system_name_match = re.match(r'^([^:]+):\s+(.+)$', skip_reason)
+                    if system_name_match:
+                        system_name = system_name_match.group(1).strip()
+                        for result_key in test_results.keys():
+                            if f"[{system_name}]" in result_key and test_results[result_key]["status"] == "SKIPPED":
+                                test_results[result_key]["reason"] = skip_reason
+                        continue
+
                     for result_key in test_results.keys():
-                        # The nodeid format is path::Class::method[param], we need to convert our keys
-                        if test_nodeid in result_key or result_key.endswith(test_nodeid):
+                        if (
+                            test_results[result_key]["status"] == "SKIPPED"
+                            and test_results[result_key]["reason"] == "Skipped (fixture or condition not met)"
+                        ):
                             test_results[result_key]["reason"] = skip_reason
                             break
             
             # Fourth pass: extract skip reasons from short summary output (pytest -rs)
             # Lines look like: "SKIPPED [1] ../tests/test_systems.py:221: Amstrad CPC: TransFS path not found at /mnt/transfs/..."
             in_skipped_section = False
-            skip_line_pattern = r'^SKIPPED\s+\[\d+\]\s+(.+?):\s+(.+)$'
+            skip_line_pattern = r'^SKIPPED\s+\[(\d+)\]\s+(.+?):\s+(.+)$'
+
+            # Build per-file ordered buckets of skipped tests still using placeholder reason.
+            skipped_by_file = {}
+            for result_key, result in test_results.items():
+                if result.get("status") != "SKIPPED":
+                    continue
+                if result.get("reason") and result.get("reason") != "Skipped (fixture or condition not met)":
+                    continue
+
+                file_part = result_key.split('::', 1)[0]
+                normalized_file = _normalize_test_file_path(file_part)
+                if normalized_file:
+                    skipped_by_file.setdefault(normalized_file, []).append(result_key)
             
             lines = run["output"].split('\n')
             for i, line in enumerate(lines):
+                line = _strip_ansi(line)
                 # Detect "short test summary info" section start (from -rs flag)
                 if 'short test summary info' in line.lower() or 'short test summary' in line.lower():
                     in_skipped_section = True
@@ -2451,7 +3351,12 @@ def get_test_results(task_id: str):
                 if in_skipped_section:
                     match = re.match(skip_line_pattern, line.strip())
                     if match:
-                        reason = match.group(2).strip()
+                        skip_count = int(match.group(1)) if match.group(1) else 1
+                        file_with_line = match.group(2).strip()
+                        reason = match.group(3).strip()
+
+                        file_part = file_with_line.rsplit(':', 1)[0]
+                        normalized_file = _normalize_test_file_path(file_part)
 
                         # Try to map by system name inside the reason
                         system_name_match = re.match(r'^([^:]+):\s+(.+)$', reason)
@@ -2460,6 +3365,26 @@ def get_test_results(task_id: str):
                             for result_key in test_results.keys():
                                 if f"[{system_name}]" in result_key and test_results[result_key]["status"] == "SKIPPED":
                                     test_results[result_key]["reason"] = reason
+                            continue
+
+                        # Otherwise, map by file order among unresolved skipped tests.
+                        if normalized_file and normalized_file in skipped_by_file and skipped_by_file[normalized_file]:
+                            assigned = 0
+                            while assigned < skip_count and skipped_by_file[normalized_file]:
+                                target_key = skipped_by_file[normalized_file].pop(0)
+                                test_results[target_key]["reason"] = reason
+                                assigned += 1
+                            continue
+
+                        # Last-resort fallback: assign by overall unresolved skipped order.
+                        unresolved = [
+                            key for key, result in test_results.items()
+                            if result.get("status") == "SKIPPED"
+                            and result.get("reason") == "Skipped (fixture or condition not met)"
+                        ]
+                        if unresolved:
+                            for target_key in unresolved[:max(skip_count, 1)]:
+                                test_results[target_key]["reason"] = reason
                             continue
 
                         # Fallback: map specific known skip reason to its test
@@ -3582,8 +4507,8 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
-                        if system_config.download_layout == "source_based" and organize_ext:
-                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                        if system_config.download_layout == "legacy_source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for legacy_source_based layout\n"
                             organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])
@@ -3769,8 +4694,8 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
-                        if system_config.download_layout == "source_based" and organize_ext:
-                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                        if system_config.download_layout == "legacy_source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for legacy_source_based layout\n"
                             organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])
@@ -3922,8 +4847,8 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                         
                         # Handle organize_by_extension at source level (after all URLs downloaded/extracted)
                         organize_ext = source.get("organize_by_extension")
-                        if system_config.download_layout == "source_based" and organize_ext:
-                            yield "   ⚠ Skipping organize_by_extension for source_based layout\n"
+                        if system_config.download_layout == "legacy_source_based" and organize_ext:
+                            yield "   ⚠ Skipping organize_by_extension for legacy_source_based layout\n"
                             organize_ext = None
                         if organize_ext:
                             dest_dir = os.path.join(base_path, url_entries[-1]["folder"])

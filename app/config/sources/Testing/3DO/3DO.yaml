@@ -19,7 +19,7 @@ sources:
     type: IA-COL
     urls:
     - https://archive.org/details/rr-3do
-    folder: Software/Collections/RetroRom
+    folder: Software/Collections/RetroRom-Collection
     extract: true
     metadata:
       ruleset: Generic

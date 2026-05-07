@@ -36,6 +36,7 @@ from pathutils import (
     is_query_map, is_flatten_map, get_query_config, resolve_virtual_base_path, 
     format_virtual_base_path
 )
+from zippath import SUPPORTED_ARCHIVE_EXTENSIONS, getinfo as archive_getinfo
 from transforms import build_transform_pipeline
 from metadata import enrich_file_metadata, PackContext
 from db.connection import get_connection, return_connection
@@ -156,7 +157,7 @@ class DatabaseSync:
 
     def _resolve_source_folder_for_layout(self, folder: Optional[str], source_name: str,
                                           download_layout: Optional[str]) -> Optional[str]:
-        if download_layout != "source_based":
+        if download_layout != "legacy_source_based":
             return folder
         if not source_name:
             return folder
@@ -421,7 +422,7 @@ class DatabaseSync:
                         'preserve_structure': query_cfg.get("preserve_structure", False),
                         'preserve_exact_filenames': query_cfg.get("preserve_exact_filenames", False),
                         'transform_zip': query_cfg.get("transform_zip", False),
-                        'zip_mode': query_cfg.get("zip_mode", "none"),
+                        'zip_mode': query_cfg.get("zip_mode", "hierarchical"),
                     })
                     logger.debug(f"    Found query map: {map_name}")
             else:
@@ -518,13 +519,20 @@ class DatabaseSync:
                 # Store as a simple entry in database with special handling
                 try:
                     stat = os.stat(full_path)  # Get stats of the ZIP file
-                    
+                    # Use the uncompressed inner-file size, not the zip container size
+                    try:
+                        import zipfile as _zipfile
+                        with _zipfile.ZipFile(full_path, 'r') as _zf:
+                            inner_size = _zf.getinfo(zip_internal_file).file_size
+                    except Exception:
+                        inner_size = stat.st_size  # fallback
+
                     self.file_batch.append({
                         'source_path': f"{full_path}#ZIP#{zip_internal_file}",  # Special format for zip
                         'virtual_path': virtual_path,
                         'filename': virtual_filename,
                         'extension': os.path.splitext(virtual_filename)[1][1:].lower(),
-                        'size': stat.st_size,  # Approximate with ZIP size
+                        'size': inner_size,
                         'mtime': int(stat.st_mtime),
                         'ctime': int(stat.st_ctime),
                         'atime': int(stat.st_atime),
@@ -664,7 +672,11 @@ class DatabaseSync:
         
         # Scan for files with matching extensions
         file_count = 0
-        if system_config.get("download_layout") == "source_based":
+        direct_extension_dirs = any(
+            os.path.isdir(os.path.join(source_path, str(ext).upper()))
+            for ext in extensions
+        )
+        if system_config.get("download_layout") == "legacy_source_based" or not direct_extension_dirs:
             file_count += self._scan_directory_recursive(
                 source_path, client_name, system_name, map_name,
                 extensions, extension_map, transforms, total_files, preserve_exact_filenames
@@ -757,14 +769,13 @@ class DatabaseSync:
                         # Wildcard also matches files with no extension (only when "*" is used)
                         extension_matches = ext in map_info['extensions'] or "*" in map_info['extensions']
 
-                        # Check for ZIP expansion: a .zip containing files of the target extension
-                        zip_expand = (
-                            ext == "ZIP"
+                        archive_exts = {archive_ext[1:].upper() for archive_ext in SUPPORTED_ARCHIVE_EXTENSIONS}
+                        archive_container = (
+                            ext in archive_exts
                             and map_info.get('transform_zip', False)
-                            and map_info.get('zip_mode', 'none') == 'flatten'
                         )
 
-                        if not extension_matches and not zip_expand:
+                        if not extension_matches and not archive_container:
                             continue
 
                         # Check if file is under the map's source_dir
@@ -777,13 +788,25 @@ class DatabaseSync:
                         if not rel_path_normalized.startswith(source_dir_normalized + '/'):
                             continue  # File not in this map's directory, try next map
 
-                        if zip_expand:
-                            # Expand ZIP contents and add each matching inner file individually
-                            added = self._add_zip_entries_to_database(
-                                file_path, client_name, system_name, map_info,
-                                client_config, system_config
-                            )
-                            file_count += added
+                        if archive_container:
+                            if map_info.get('zip_mode', 'none') == 'flatten':
+                                added = self._add_archive_entries_to_database(
+                                    file_path, client_name, system_name, map_info,
+                                    client_config, system_config
+                                )
+                                file_count += added
+                            else:
+                                preserve_exact = map_info.get('preserve_exact_filenames', False)
+                                preserve_structure = map_info.get('preserve_structure', False)
+                                self._add_file_to_database(
+                                    file_path, client_name, system_name, map_info['name'],
+                                    ext, map_info['extension_map'], map_info['transforms'],
+                                    preserve_exact, map_info['config'], client_config, system_config,
+                                    relative_path=relative_path,
+                                    map_source_dir=source_dir,
+                                    preserve_structure=preserve_structure
+                                )
+                                file_count += 1
                         else:
                             # Normal file match
                             preserve_exact = map_info.get('preserve_exact_filenames', False)
@@ -838,7 +861,11 @@ class DatabaseSync:
         show_hidden = self.config.get('show_hidden_files', True)
         
         try:
-            if layout == "source_based":
+            direct_extension_dirs = any(
+                os.path.isdir(os.path.join(dir_path, str(ext).upper()))
+                for ext in extensions
+            )
+            if layout == "legacy_source_based" or not direct_extension_dirs:
                 # Recursive count
                 logger.info(f"      Counting files in {dir_path} (recursive)...")
                 for root, dirnames, files in os.walk(dir_path):
@@ -1000,7 +1027,7 @@ class DatabaseSync:
 
     def _resolve_source_dir_for_layout(self, source_dir: str, system_config: dict) -> str:
         layout = system_config.get("download_layout")
-        if layout != "source_based":
+        if layout != "legacy_source_based":
             return source_dir
         normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
         if "sources" in normalized:
@@ -1009,37 +1036,61 @@ class DatabaseSync:
             return source_dir
         return os.path.join(source_dir, "Sources")
     
-    def _add_zip_entries_to_database(self, zip_path: str, client_name: str, system_name: str,
-                                     map_info: dict, client_config: dict,
-                                     system_config: dict) -> int:
+    def _add_archive_entries_to_database(self, archive_path: str, client_name: str, system_name: str,
+                                         map_info: dict, client_config: dict,
+                                         system_config: dict) -> int:
         """
-        Expand a ZIP file and add inner files matching the map's extensions to the database.
+        Expand a supported archive file and add inner files matching the map's extensions to the database.
         Used when transform_zip=True and zip_mode='flatten'.
         Returns the number of entries added.
         """
         import zipfile
+        import py7zr
         extensions = map_info['extensions']
         added = 0
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                for info in zf.infolist():
-                    if info.is_dir():
-                        continue
-                    inner_name = info.filename
-                    _, inner_ext = os.path.splitext(inner_name)
-                    inner_ext_upper = inner_ext[1:].upper() if inner_ext else ""
-                    if inner_ext_upper not in extensions and "*" not in extensions:
-                        continue
-                    inner_source_path = f"{zip_path}#ZIP#{inner_name}"
-                    self._add_file_to_database(
-                        inner_source_path, client_name, system_name, map_info['name'],
-                        inner_ext_upper, map_info['extension_map'], map_info['transforms'],
-                        map_info.get('preserve_exact_filenames', False),
-                        map_info['config'], client_config, system_config,
-                    )
-                    added += 1
+            if archive_path.lower().endswith('.zip'):
+                with zipfile.ZipFile(archive_path, 'r') as archive:
+                    for info in archive.infolist():
+                        if info.is_dir():
+                            continue
+                        inner_name = info.filename
+                        _, inner_ext = os.path.splitext(inner_name)
+                        inner_ext_upper = inner_ext[1:].upper() if inner_ext else ""
+                        if inner_ext_upper not in extensions and "*" not in extensions:
+                            continue
+                        inner_source_path = f"{archive_path}#ZIP#{inner_name}"
+                        self._add_file_to_database(
+                            inner_source_path, client_name, system_name, map_info['name'],
+                            inner_ext_upper, map_info['extension_map'], map_info['transforms'],
+                            map_info.get('preserve_exact_filenames', False),
+                            map_info['config'], client_config, system_config,
+                            file_size=info.file_size,
+                        )
+                        added += 1
+            elif archive_path.lower().endswith('.7z'):
+                with py7zr.SevenZipFile(archive_path, 'r') as archive:
+                    for info in archive.list():
+                        if bool(getattr(info, 'is_directory', False)):
+                            continue
+                        inner_name = str(getattr(info, 'filename', '') or '')
+                        if not inner_name:
+                            continue
+                        _, inner_ext = os.path.splitext(inner_name)
+                        inner_ext_upper = inner_ext[1:].upper() if inner_ext else ""
+                        if inner_ext_upper not in extensions and "*" not in extensions:
+                            continue
+                        inner_source_path = f"{archive_path}#ZIP#{inner_name}"
+                        self._add_file_to_database(
+                            inner_source_path, client_name, system_name, map_info['name'],
+                            inner_ext_upper, map_info['extension_map'], map_info['transforms'],
+                            map_info.get('preserve_exact_filenames', False),
+                            map_info['config'], client_config, system_config,
+                            file_size=int(getattr(info, 'uncompressed', 0) or 0),
+                        )
+                        added += 1
         except Exception as e:
-            logger.warning(f"Could not expand ZIP {zip_path}: {e}")
+            logger.warning(f"Could not expand archive {archive_path}: {e}")
             self.stats['errors'] += 1
         return added
 
@@ -1048,7 +1099,8 @@ class DatabaseSync:
                              transforms: dict, preserve_exact_filenames: bool = False,
                              map_config: dict = None, client_config: dict = None, system_config: dict = None,
                              relative_path: str = None, map_source_dir: str = None,
-                             preserve_structure: bool = False):
+                             preserve_structure: bool = False,
+                             file_size: Optional[int] = None):
         """
         Add file to batch for processing.
         
@@ -1087,16 +1139,27 @@ class DatabaseSync:
                     logger.debug(f"File {source_path} already in batch with map {existing_entry['map_name']}, skipping map {map_name}")
                     return
             
-            # Get file stats - for ZIP inner file entries (source_path="a.zip#ZIP#b.bin"),
-            # stat the container zip file rather than the virtual inner path.
+            # Get file stats - for archive inner file entries (source_path="a.zip#ZIP#b.bin"),
+            # stat the container archive file rather than the virtual inner path.
             # Use the inner path's basename as the display filename.
             if '#ZIP#' in source_path:
                 fs_path, inner_path = source_path.split('#ZIP#', 1)
                 filename = os.path.basename(inner_path)
+                stat = os.stat(fs_path)
+                # Prefer the caller-supplied uncompressed size; fall back to reading the archive metadata.
+                if file_size is None:
+                    try:
+                        archive_info = archive_getinfo(f"{fs_path}/{inner_path}")
+                        if archive_info and not archive_info.get('is_dir'):
+                            file_size = archive_info.get('size', stat.st_size)
+                        else:
+                            file_size = stat.st_size
+                    except Exception:
+                        file_size = stat.st_size  # fallback: archive container size
             else:
                 fs_path = source_path
                 filename = os.path.basename(source_path)
-            stat = os.stat(fs_path)
+                stat = os.stat(fs_path)
             relative_dir = ""
 
             # Preserve source subdirectory structure when requested
@@ -1261,7 +1324,7 @@ class DatabaseSync:
                 'virtual_path': virtual_path,
                 'filename': virtual_filename,
                 'extension': virtual_ext,
-                'size': stat.st_size,
+                'size': file_size if file_size is not None else stat.st_size,
                 'mtime': int(stat.st_mtime),
                 'ctime': int(stat.st_ctime),
                 'atime': int(stat.st_atime),
@@ -1340,7 +1403,6 @@ class DatabaseSync:
             
             # Execute batch upsert and collect returned file_ids for metadata enrichment
             file_ids_for_enrichment = []
-            client_map_rows = []
             for idx, batch_row in enumerate(batch_data):
                 cursor.execute(upsert_query, batch_row)
                 result = cursor.fetchone()
@@ -1350,29 +1412,6 @@ class DatabaseSync:
                         'file_id': file_id,
                         'file_info': self.file_batch[idx]
                     })
-                    fi = self.file_batch[idx]
-                    client_map_rows.append((
-                        file_id,
-                        fi['client'],
-                        fi['system'],
-                        fi['map_name'],
-                        fi['virtual_path'],
-                        fi['now'],
-                        fi['now'],
-                    ))
-
-            # UPSERT per-client mappings so the same physical file can be listed under multiple clients.
-            if client_map_rows:
-                client_maps_query = """
-                    INSERT INTO file_client_maps
-                        (file_id, client, system, map_name, virtual_path, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (file_id, client, system, map_name) DO UPDATE SET
-                        virtual_path = EXCLUDED.virtual_path,
-                        updated_at = EXCLUDED.updated_at
-                """
-                for row in client_map_rows:
-                    cursor.execute(client_maps_query, row)
 
             # Update stats (rough estimate - PostgreSQL doesn't easily tell us insert vs update count with executemany)
             self.stats['files_updated'] += len(self.file_batch)

@@ -10,7 +10,7 @@ sources:
 
   - name: 4corn-bios
     type: ddl
-    url: https://www.4corn.co.uk/archive//roms/riscos3_71.zip
+    url: https://www.4corn.co.uk/archive/roms/riscos3_71.zip
     folder: Software/Collections/4corn
     extract_from_archive:
       - risocs-3.71.rom # Yes! They spelt it wrong!
@@ -24,27 +24,20 @@ sources:
     folder: BIOS
     extract: true
 
-  - name: arcarcnl-app1
+  - name: arcarcnl-free-app-discs
     type: ddl
-    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%201%20%281992%29%28Acorn%20Computers%29.adf
+    urls: 
+     -  https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%201%20%281992%29%28Acorn%20Computers%29.adf
+      - https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%202%20%281992%29%28Acorn%20Computers%29.adf
+      - https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Support%20Disc%20%281992%29%28Acorn%20Computers%29.adf
     folder: Software/ADF
-  
-  - name: arcarcnl-app2
-    type: ddl
-    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%202%20%281992%29%28Acorn%20Computers%29.adf
-    folder: Software/ADF
-  
-  - name: arcarcnl-support
-    type: ddl
-    url: https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Support%20Disc%20%281992%29%28Acorn%20Computers%29.adf
-    folder: Software/ADF
-  
+    
 
 packs:
   - id: minimal
     name: Minimal Starter Set
-    description: Essential BIOS files and a few demo applications that shipped with RiscOS 3, to test the system
+    description: Essential BIOS files and a few freeware demo applications that shipped with RiscOS 3, to test the system
     estimated_size: 11MB
-    sources: [mister-bios, 4corn-bios, arcarcnl-app1, arcarcnl-app2, arcarcnl-support]
+    sources: [mister-bios, 4corn-bios, arcarcnl-free-app-discs]
   
   

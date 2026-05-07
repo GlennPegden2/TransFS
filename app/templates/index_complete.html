@@ -443,6 +443,113 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Native External Mounts -->
+            <div style="border: 1px solid #0d47a1; background: #e8f1ff; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #0d47a1;">Native External Mounts (SMB/CIFS)</h3>
+                <p style="margin: 0.5em 0 1em 0; color: #2f4f74; font-size: 0.9em;">
+                    Mount NAS folders into Native subfolders (for example Systems/Panasonic/3DO/Software/Sources/Nas-Collection).
+                </p>
+
+                <div id="native-mounts-status" style="display:none; border-left: 4px solid #2196F3; padding: 0.7em; margin-bottom: 1em; background: #e3f2fd; border-radius: 4px;"></div>
+
+                <div style="overflow-x: auto; margin-bottom: 1em;">
+                    <table style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #c5d9f4;">
+                        <thead>
+                            <tr style="background: #d7e8ff; text-align: left;">
+                                <th style="padding: 0.5em; border-bottom: 1px solid #c5d9f4;">ID</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #c5d9f4;">Target</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #c5d9f4;">Remote</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #c5d9f4;">Status</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #c5d9f4;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="native-mounts-table-body">
+                            <tr><td colspan="5" style="padding: 0.8em; color: #666;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="display: flex; gap: 0.5em; margin-bottom: 1em;">
+                    <button type="button" onclick="loadNativeMounts()" style="padding: 0.5em 1em; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer;">Refresh Mounts</button>
+                    <button type="button" onclick="reconcileNativeMounts()" style="padding: 0.5em 1em; background: #455a64; color: white; border: none; border-radius: 4px; cursor: pointer;">Reconcile Enabled</button>
+                    <button type="button" onclick="clearNativeMountForm()" style="padding: 0.5em 1em; background: #8e24aa; color: white; border: none; border-radius: 4px; cursor: pointer;">New Entry</button>
+                </div>
+
+                <div style="border: 1px solid #c5d9f4; background: white; border-radius: 6px; padding: 1em;">
+                    <h4 style="margin-top: 0; color: #0d47a1;">Add or Edit Mount</h4>
+                    <input id="native-mount-edit-id" type="hidden">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8em;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">ID</label>
+                            <input id="native-mount-id" type="text" placeholder="3do-nas" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Display Name</label>
+                            <input id="native-mount-display-name" type="text" placeholder="3DO NAS Collection" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div style="grid-column: 1 / span 2;">
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Target Subpath under Native</label>
+                            <input id="native-mount-target" type="text" placeholder="Systems/Panasonic/3DO/Software/Sources/Nas-Collection" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">SMB Host</label>
+                            <input id="native-mount-host" type="text" placeholder="nas" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">SMB Share</label>
+                            <input id="native-mount-share" type="text" placeholder="Software" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">SMB Subpath</label>
+                            <input id="native-mount-subpath" type="text" placeholder="3do/ROMS" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">SMB Port (optional)</label>
+                            <input id="native-mount-port" type="number" min="1" max="65535" placeholder="445" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Username</label>
+                            <input id="native-mount-username" type="text" placeholder="nasuser" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Password</label>
+                            <input id="native-mount-password" type="password" placeholder="Leave blank to keep existing" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">CIFS Version</label>
+                            <input id="native-mount-vers" type="text" value="3.0" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Extra options (comma separated)</label>
+                            <input id="native-mount-extra-options" type="text" placeholder="mfsymlinks,noperm" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1.2em; margin-top: 0.9em; flex-wrap: wrap;">
+                        <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                            <input id="native-mount-enabled" type="checkbox" checked>
+                            <span>Enabled</span>
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                            <input id="native-mount-auto-reconnect" type="checkbox" checked>
+                            <span>Auto reconnect</span>
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                            <input id="native-mount-read-only" type="checkbox">
+                            <span>Read only</span>
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                            <input id="native-mount-guest" type="checkbox" onchange="toggleNativeMountGuestMode()">
+                            <span>Guest access</span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 0.5em; margin-top: 1em;">
+                        <button type="button" onclick="validateNativeMountInput()" style="padding: 0.5em 1em; background: #00897b; color: white; border: none; border-radius: 4px; cursor: pointer;">Validate + Probe</button>
+                        <button type="button" onclick="saveNativeMountEntry()" style="padding: 0.5em 1em; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Mount Entry</button>
+                        <button type="button" onclick="clearNativeMountForm()" style="padding: 0.5em 1em; background: #6d4c41; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear Form</button>
+                    </div>
+                </div>
+            </div>
             
             <!-- Action Buttons -->
             <div style="display: flex; gap: 0.5em;">
@@ -587,6 +694,24 @@
                         <button onclick="clearTestResults()" style="padding: 0.6em 1.2em; background: #888; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Clear</button>
                     </div>
                 </div>
+                <div style="padding: 1em; margin-bottom: 1.2em; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;">
+                    <div style="font-weight: 600; margin-bottom: 0.6em; color: #1f2937;">Locked Snapshot Baseline</div>
+                    <div style="display: flex; gap: 0.6em; flex-wrap: wrap; align-items: center; margin-bottom: 0.5em;">
+                        <select id="snapshot-client-select" onchange="onSnapshotClientChange()" style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; min-width: 150px;"></select>
+                        <select id="snapshot-system-select" onchange="onSnapshotSystemChange()" style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; min-width: 190px;"></select>
+                        <select id="snapshot-context-select" onchange="onSnapshotContextChange()" style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; min-width: 130px;" title="Which part of this system to snapshot (e.g. ROMs, BIOS)"></select>
+                        <label for="snapshot-depth-input" style="font-size: 0.9em; color: #475569; white-space: nowrap;">Max depth:</label>
+                        <input id="snapshot-depth-input" type="number" min="1" max="10" value="3" style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; width: 80px;" title="How many folder levels deep to walk when building/comparing the snapshot tree. Depth 3 means the root directory plus two levels of subdirectories.">
+                    </div>
+                    <div style="display: flex; gap: 0.6em; flex-wrap: wrap; align-items: center;">
+                        <input id="snapshot-name-input" type="text" readonly style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; min-width: 220px; background: #f1f5f9; color: #334155; font-size: 0.9em;" title="Auto-generated snapshot name">
+                        <input id="snapshot-path-input" type="text" readonly style="padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; flex: 1; min-width: 300px; background: #f1f5f9; color: #334155; font-size: 0.9em;" title="Inferred TransFS path from client / system / context selection">
+                        <button onclick="captureLockedSnapshot()" style="padding: 0.6em 1em; background: #0f766e; color: white; border: none; border-radius: 4px; cursor: pointer;">Capture Now</button>
+                        <button onclick="compareLockedSnapshot()" style="padding: 0.6em 1em; background: #334155; color: white; border: none; border-radius: 4px; cursor: pointer;">Compare</button>
+                        <button onclick="loadLockedSnapshotList()" style="padding: 0.6em 1em; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;">List</button>
+                    </div>
+                    <div id="snapshot-baseline-status" style="margin-top: 0.7em; font-size: 0.92em; color: #334155;">Capture a baseline after you verify a system/client combo is correct.</div>
+                </div>
                 <div id="test-status" style="padding: 1em; background: #f5f5f5; border-radius: 4px; margin-bottom: 1.5em; display: none;">
                     <div><strong id="test-status-text">Status</strong></div>
                     <div id="test-run-indicator" style="margin-top: 0.5em; display: none; align-items: center; gap: 0.5em; font-size: 0.95em; color: #444;">
@@ -668,6 +793,7 @@
         let metadataDatSelectedPath = '';
         let metadataDatDefaultFolder = '';
         let metadataDatFilesCache = [];
+        let nativeMountsCache = [];
         
         // Initialize log state tracker for carriage return support (download progress)
         window.logState = { 
@@ -750,12 +876,22 @@
             
             if (!skipHistory) {
                 if (tabName === 'browse-native') {
-                    history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${currentNativePath.replace('/mnt/filestorefs/Native', '')}`);
+                    const nativeRelPath = currentNativePath.replace('/mnt/filestorefs/Native', '');
+                    const encodedNativePath = nativeRelPath
+                        .split('/')
+                        .map(segment => encodeURIComponent(segment))
+                        .join('/');
+                    history.pushState({ tab: 'browse-native', path: currentNativePath }, '', `/browse/native${encodedNativePath}`);
                 } else if (tabName === 'metadata') {
                     history.pushState({ tab: 'metadata' }, '', '/metadata');
                 } else if (tabName === 'browse-virtual') {
                     await checkZaparooStatus();
-                    history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${currentVirtualPath.replace('/mnt/transfs', '')}`);
+                    const virtualRelPath = currentVirtualPath.replace('/mnt/transfs', '');
+                    const encodedVirtualPath = virtualRelPath
+                        .split('/')
+                        .map(segment => encodeURIComponent(segment))
+                        .join('/');
+                    history.pushState({ tab: 'browse-virtual', path: currentVirtualPath }, '', `/browse/virtual${encodedVirtualPath}`);
                 } else if (tabName === 'setup-clients') {
                     history.pushState({ tab: 'setup-clients' }, '', '/setup');
                 } else {
@@ -2571,6 +2707,7 @@
                 
                 await loadCacheConfigForConfigTab();
                 await loadAvailableConfigSets();
+                await loadNativeMounts();
                 
                 showConfigStatus('Settings loaded successfully', 'success');
             } catch (error) {
@@ -2642,6 +2779,327 @@
             
             if (type !== 'info') {
                 setTimeout(() => { statusDiv.style.display = 'none'; }, 5000);
+            }
+        }
+
+        function showNativeMountStatus(message, type = 'info') {
+            const statusEl = document.getElementById('native-mounts-status');
+            if (!statusEl) return;
+            statusEl.textContent = message;
+            statusEl.style.display = 'block';
+            statusEl.style.borderLeftColor =
+                type === 'success' ? '#4CAF50' :
+                type === 'error' ? '#f44336' : '#2196F3';
+            statusEl.style.background = type === 'error' ? '#ffebee' : '#e3f2fd';
+            if (type !== 'info') {
+                setTimeout(() => {
+                    statusEl.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        function nativeMountOptionsFromInput() {
+            const raw = document.getElementById('native-mount-extra-options').value || '';
+            return raw.split(',').map(item => item.trim()).filter(Boolean);
+        }
+
+        function describeNativeMountProbe(probe) {
+            if (!probe) {
+                return 'No SMB probe details returned.';
+            }
+            const summary = probe.summary || (probe.success ? 'SMB probe succeeded.' : 'SMB probe failed.');
+            const detail = (probe.detail || '').trim();
+            return detail ? `${summary}: ${detail}` : summary;
+        }
+
+        function encodePathSegments(path) {
+            return (path || '')
+                .split('/')
+                .filter(segment => segment !== '')
+                .map(segment => encodeURIComponent(segment))
+                .join('/');
+        }
+
+        function buildNativeMountBrowserLink(targetSubpath) {
+            const relativePath = encodePathSegments(targetSubpath || '');
+            return `/browse/native/${relativePath}`;
+        }
+
+        function buildNativeMountRemoteLink(item) {
+            const host = (item.smb_host || '').trim();
+            const share = (item.smb_share || '').trim().replace(/^\/+|\/+$/g, '');
+            const subpath = (item.smb_subpath || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+            if (!host || !share) {
+                return '';
+            }
+            const remoteParts = [encodeURIComponent(share)];
+            if (subpath) {
+                remoteParts.push(...subpath.split('/').filter(Boolean).map(part => encodeURIComponent(part)));
+            }
+            return `file://${host}/${remoteParts.join('/')}`;
+        }
+
+        function buildNativeMountPayload(includeId = true) {
+            const payload = {
+                display_name: document.getElementById('native-mount-display-name').value.trim(),
+                enabled: document.getElementById('native-mount-enabled').checked,
+                target_subpath: document.getElementById('native-mount-target').value.trim(),
+                smb_host: document.getElementById('native-mount-host').value.trim(),
+                smb_share: document.getElementById('native-mount-share').value.trim(),
+                smb_subpath: document.getElementById('native-mount-subpath').value.trim(),
+                smb_port: document.getElementById('native-mount-port').value ? parseInt(document.getElementById('native-mount-port').value, 10) : null,
+                guest: document.getElementById('native-mount-guest').checked,
+                username: document.getElementById('native-mount-username').value.trim(),
+                password: document.getElementById('native-mount-password').value,
+                read_only: document.getElementById('native-mount-read-only').checked,
+                vers: document.getElementById('native-mount-vers').value.trim() || '3.0',
+                auto_reconnect: document.getElementById('native-mount-auto-reconnect').checked,
+                extra_options: nativeMountOptionsFromInput(),
+            };
+
+            if (!payload.smb_subpath) delete payload.smb_subpath;
+            if (!payload.username) delete payload.username;
+            if (!payload.password) delete payload.password;
+            if (!payload.display_name) delete payload.display_name;
+
+            if (includeId) {
+                const mountId = document.getElementById('native-mount-id').value.trim();
+                if (mountId) payload.id = mountId;
+            }
+
+            return payload;
+        }
+
+        function toggleNativeMountGuestMode() {
+            const isGuest = document.getElementById('native-mount-guest').checked;
+            const userInput = document.getElementById('native-mount-username');
+            const passInput = document.getElementById('native-mount-password');
+            userInput.disabled = isGuest;
+            passInput.disabled = isGuest;
+            if (isGuest) {
+                passInput.value = '';
+            }
+        }
+
+        function clearNativeMountForm() {
+            document.getElementById('native-mount-edit-id').value = '';
+            document.getElementById('native-mount-id').value = '';
+            document.getElementById('native-mount-id').disabled = false;
+            document.getElementById('native-mount-display-name').value = '';
+            document.getElementById('native-mount-target').value = '';
+            document.getElementById('native-mount-host').value = '';
+            document.getElementById('native-mount-share').value = '';
+            document.getElementById('native-mount-subpath').value = '';
+            document.getElementById('native-mount-port').value = '';
+            document.getElementById('native-mount-username').value = '';
+            document.getElementById('native-mount-password').value = '';
+            document.getElementById('native-mount-vers').value = '3.0';
+            document.getElementById('native-mount-extra-options').value = '';
+            document.getElementById('native-mount-enabled').checked = true;
+            document.getElementById('native-mount-auto-reconnect').checked = true;
+            document.getElementById('native-mount-read-only').checked = false;
+            document.getElementById('native-mount-guest').checked = false;
+            toggleNativeMountGuestMode();
+        }
+
+        function editNativeMount(mountId) {
+            const entry = nativeMountsCache.find(item => item.id === mountId);
+            if (!entry) return;
+
+            document.getElementById('native-mount-edit-id').value = entry.id || '';
+            document.getElementById('native-mount-id').value = entry.id || '';
+            document.getElementById('native-mount-id').disabled = true;
+            document.getElementById('native-mount-display-name').value = entry.display_name || '';
+            document.getElementById('native-mount-target').value = entry.target_subpath || '';
+            document.getElementById('native-mount-host').value = entry.smb_host || '';
+            document.getElementById('native-mount-share').value = entry.smb_share || '';
+            document.getElementById('native-mount-subpath').value = entry.smb_subpath || '';
+            document.getElementById('native-mount-port').value = entry.smb_port || '';
+            document.getElementById('native-mount-username').value = entry.username || '';
+            document.getElementById('native-mount-password').value = '';
+            document.getElementById('native-mount-vers').value = entry.vers || '3.0';
+            document.getElementById('native-mount-extra-options').value = (entry.extra_options || []).join(',');
+            document.getElementById('native-mount-enabled').checked = !!entry.enabled;
+            document.getElementById('native-mount-auto-reconnect').checked = !!entry.auto_reconnect;
+            document.getElementById('native-mount-read-only').checked = !!entry.read_only;
+            document.getElementById('native-mount-guest').checked = !!entry.guest;
+            toggleNativeMountGuestMode();
+        }
+
+        function renderNativeMountsTable(mounts) {
+            const tbody = document.getElementById('native-mounts-table-body');
+            if (!tbody) return;
+            if (!mounts.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="padding: 0.8em; color: #666;">No managed Native mounts configured yet.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = mounts.map(item => {
+                const stateColor = item.mounted ? '#2e7d32' : '#ef6c00';
+                const stateText = item.mounted ? 'Mounted' : (item.enabled ? 'Not mounted' : 'Disabled');
+                const remote = item.unc_path || `//${item.smb_host}/${item.smb_share}`;
+                const targetLink = item.mounted ? buildNativeMountBrowserLink(item.target_subpath || '') : '';
+                const remoteLink = buildNativeMountRemoteLink(item);
+                const targetHtml = targetLink
+                    ? `<a href="${escapeHtml(targetLink)}" style="color: #1976d2; text-decoration: none;" title="Open in Native Browser">${escapeHtml(item.target_subpath || '')}</a>`
+                    : `${escapeHtml(item.target_subpath || '')}`;
+                const remoteHtml = remoteLink
+                    ? `<a href="${escapeHtml(remoteLink)}" style="color: #1976d2; text-decoration: none;" title="Open remote SMB share">${escapeHtml(remote)}</a>`
+                    : `${escapeHtml(remote)}`;
+                const errText = item.last_error ? `<div style="font-size: 0.78em; color: #c62828;">${escapeHtml(item.last_error)}</div>` : '';
+                return `
+                    <tr>
+                        <td style="padding: 0.5em; border-bottom: 1px solid #eef2f8; font-family: monospace;">${escapeHtml(item.id || '')}</td>
+                        <td style="padding: 0.5em; border-bottom: 1px solid #eef2f8; font-family: monospace; word-break: break-all;">${targetHtml}</td>
+                        <td style="padding: 0.5em; border-bottom: 1px solid #eef2f8; font-family: monospace; word-break: break-all;">${remoteHtml}</td>
+                        <td style="padding: 0.5em; border-bottom: 1px solid #eef2f8; color: ${stateColor}; font-weight: 600;">
+                            ${escapeHtml(stateText)}
+                            ${errText}
+                        </td>
+                        <td style="padding: 0.5em; border-bottom: 1px solid #eef2f8;">
+                            <div style="display: flex; gap: 0.3em; flex-wrap: wrap;">
+                                <button type="button" onclick="editNativeMount('${escapeHtml(item.id || '')}')" style="padding: 0.25em 0.55em; background: #1565c0; color: white; border: none; border-radius: 3px; cursor: pointer;">Edit</button>
+                                <button type="button" onclick="probeNativeMountById('${escapeHtml(item.id || '')}')" style="padding: 0.25em 0.55em; background: #00695c; color: white; border: none; border-radius: 3px; cursor: pointer;">Probe</button>
+                                <button type="button" onclick="mountNativeMountById('${escapeHtml(item.id || '')}')" style="padding: 0.25em 0.55em; background: #2e7d32; color: white; border: none; border-radius: 3px; cursor: pointer;">Mount</button>
+                                <button type="button" onclick="unmountNativeMountById('${escapeHtml(item.id || '')}')" style="padding: 0.25em 0.55em; background: #ef6c00; color: white; border: none; border-radius: 3px; cursor: pointer;">Unmount</button>
+                                <button type="button" onclick="deleteNativeMountById('${escapeHtml(item.id || '')}')" style="padding: 0.25em 0.55em; background: #b71c1c; color: white; border: none; border-radius: 3px; cursor: pointer;">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function loadNativeMounts() {
+            try {
+                const response = await fetch('/api/native-mounts');
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                nativeMountsCache = data.mounts || [];
+                renderNativeMountsTable(nativeMountsCache);
+            } catch (error) {
+                showNativeMountStatus('Failed to load native mounts: ' + error.message, 'error');
+            }
+        }
+
+        async function validateNativeMountInput() {
+            try {
+                const payload = buildNativeMountPayload(true);
+                const response = await fetch('/api/native-mounts/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok || data.error || data.valid === false) {
+                    throw new Error(data.error || 'Validation failed');
+                }
+                const probeMessage = describeNativeMountProbe(data.probe);
+                const statusType = data.probe?.success === false ? 'error' : 'success';
+                showNativeMountStatus(`Validated: ${data.target_subpath} -> ${data.unc_path}. ${probeMessage}`, statusType);
+            } catch (error) {
+                showNativeMountStatus('Validation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function probeNativeMountById(mountId) {
+            try {
+                const response = await fetch(`/api/native-mounts/${encodeURIComponent(mountId)}/probe`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                const probeMessage = describeNativeMountProbe(data.probe);
+                showNativeMountStatus(`Probe ${mountId}: ${probeMessage}`, data.probe?.success ? 'success' : 'error');
+            } catch (error) {
+                showNativeMountStatus(`Failed to probe ${mountId}: ${error.message}`, 'error');
+            }
+        }
+
+        async function saveNativeMountEntry() {
+            try {
+                const editId = document.getElementById('native-mount-edit-id').value.trim();
+                const payload = buildNativeMountPayload(!editId);
+                const url = editId ? `/api/native-mounts/${encodeURIComponent(editId)}` : '/api/native-mounts';
+                const method = editId ? 'PATCH' : 'POST';
+
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+
+                showNativeMountStatus(editId ? 'Mount entry updated.' : 'Mount entry created.', 'success');
+                clearNativeMountForm();
+                await loadNativeMounts();
+            } catch (error) {
+                showNativeMountStatus('Failed to save mount entry: ' + error.message, 'error');
+            }
+        }
+
+        async function mountNativeMountById(mountId) {
+            try {
+                const response = await fetch(`/api/native-mounts/${encodeURIComponent(mountId)}/mount`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || data.error || data.result?.success === false) {
+                    const detail = data.result?.probe ? ` ${describeNativeMountProbe(data.result.probe)}` : '';
+                    throw new Error((data.error || data.result?.error || `HTTP ${response.status}`) + detail);
+                }
+                showNativeMountStatus(`Mounted ${mountId}`, 'success');
+                await loadNativeMounts();
+            } catch (error) {
+                showNativeMountStatus(`Failed to mount ${mountId}: ${error.message}`, 'error');
+            }
+        }
+
+        async function unmountNativeMountById(mountId) {
+            try {
+                const response = await fetch(`/api/native-mounts/${encodeURIComponent(mountId)}/unmount`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || data.error || data.result?.success === false) {
+                    throw new Error(data.error || data.result?.error || `HTTP ${response.status}`);
+                }
+                showNativeMountStatus(`Unmounted ${mountId}`, 'success');
+                await loadNativeMounts();
+            } catch (error) {
+                showNativeMountStatus(`Failed to unmount ${mountId}: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteNativeMountById(mountId) {
+            if (!confirm(`Delete native mount ${mountId}?`)) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/native-mounts/${encodeURIComponent(mountId)}`, { method: 'DELETE' });
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                showNativeMountStatus(`Deleted ${mountId}`, 'success');
+                await loadNativeMounts();
+            } catch (error) {
+                showNativeMountStatus(`Failed to delete ${mountId}: ${error.message}`, 'error');
+            }
+        }
+
+        async function reconcileNativeMounts() {
+            try {
+                const response = await fetch('/api/native-mounts/reconcile', { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                showNativeMountStatus(`Reconcile complete: mounted=${data.mounted}, failed=${data.failed}`, data.failed ? 'error' : 'success');
+                await loadNativeMounts();
+            } catch (error) {
+                showNativeMountStatus('Failed to reconcile mounts: ' + error.message, 'error');
             }
         }
 
@@ -2906,9 +3364,15 @@
             }
             
             if (!skipHistory) {
-                const urlPath = type === 'native' 
-                    ? `/browse/native${path.replace('/mnt/filestorefs/Native', '')}`
-                    : `/browse/virtual${path.replace('/mnt/transfs', '')}`;
+                const basePath = type === 'native' 
+                    ? path.replace('/mnt/filestorefs/Native', '')
+                    : path.replace('/mnt/transfs', '');
+                // URL-encode path segments, but preserve slashes and properly encode # for archive paths
+                const encodedPath = basePath
+                    .split('/')
+                    .map(segment => encodeURIComponent(segment))
+                    .join('/');
+                const urlPath = `/browse/${type}${encodedPath}`;
                 history.pushState({ tab: 'browse-' + type, path: path }, '', urlPath || '/browse/' + type);
             }
             
@@ -3313,13 +3777,25 @@
                 
                 const addEntry = (name, entryType, fullPath, size, supportsZaparoo) => {
                     const div = document.createElement('div');
-                    div.className = `file-item ${entryType === 'directory' ? 'folder' : 'file'}`;
-                    if (entryType === 'directory') {
-                        div.addEventListener('click', () => loadDirectory(fullPath, type));
+                    const isClickable = entryType === 'directory' || entryType === 'archive';
+                    div.className = `file-item ${isClickable ? 'folder' : 'file'}`;
+                    
+                    if (isClickable) {
+                        // For archives, append # to path to signal archive traversal
+                        const visitPath = entryType === 'archive' ? fullPath + '#' : fullPath;
+                        div.addEventListener('click', () => loadDirectory(visitPath, type));
                     }
+                    
                     const iconSpan = document.createElement('span');
                     iconSpan.className = 'icon';
-                    iconSpan.textContent = entryType === 'directory' ? '📁' : '📄';
+                    if (entryType === 'directory') {
+                        iconSpan.textContent = '📁';
+                    } else if (entryType === 'archive') {
+                        iconSpan.textContent = '📦';  // Package icon for archives
+                    } else {
+                        iconSpan.textContent = '📄';
+                    }
+                    
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'name';
                     nameSpan.textContent = name;
@@ -3334,7 +3810,7 @@
                     div.append(iconSpan, nameSpan, rightMeta);
                     
                     // For virtual tab files: create empty button container that appears on hover
-                    if (type === 'virtual' && entryType !== 'directory') {
+                    if (type === 'virtual' && entryType !== 'directory' && entryType !== 'archive') {
                         const emptyButtonContainer = document.createElement('div');
                         emptyButtonContainer.style.display = 'none';
                         emptyButtonContainer.style.gap = '0.3em';
@@ -3383,7 +3859,7 @@
                                 div.style.backgroundColor = '';
                             }
                         });
-                    } else if (type === 'native' && entryType !== 'directory') {
+                    } else if (type === 'native' && entryType !== 'directory' && entryType !== 'archive') {
                         // For native tab files: create buttons immediately with lazy wiring
                         createButtonsForItem(rightMeta, div, fullPath, type, false, null);
                     }
@@ -3392,17 +3868,46 @@
                 };
 
                 if (!roots.includes(path)) {
-                    const parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    let parentPath;
+                    if (path.includes('#')) {
+                        // Archive path like /path/file.7z#inner/path
+                        const [archivePath, inner] = path.split('#');
+                        if (inner.includes('/')) {
+                            // Go up one level in archive
+                            const lastSlash = inner.lastIndexOf('/');
+                            parentPath = archivePath + '#' + inner.substring(0, lastSlash);
+                        } else {
+                            // Go out of archive to parent directory
+                            parentPath = archivePath;
+                        }
+                    } else {
+                        // Regular path
+                        parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                    }
                     addEntry('..', 'directory', parentPath, '', false);
                 }
 
                 data.entries.sort((a, b) => {
-                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                    // Sort by type: directories and archives first, then files
+                    const typeOrder = { 'directory': 0, 'archive': 1, 'file': 2 };
+                    const aType = typeOrder[a.type] !== undefined ? typeOrder[a.type] : 2;
+                    const bType = typeOrder[b.type] !== undefined ? typeOrder[b.type] : 2;
+                    if (aType !== bType) return aType - bType;
                     return a.name.localeCompare(b.name);
                 });
 
                 for (const entry of data.entries) {
-                    const fullPath = (path.replace(/\/+$/, '') + '/' + entry.name).replace(/\/+/, '/');
+                    // Handle archive paths: /path/file.7z#inner/path
+                    let fullPath;
+                    if (path.includes('#')) {
+                        const [archivePath, inner] = path.split('#');
+                        const innerPath = inner ? inner.replace(/\/$/, '') : '';
+                        const newInner = innerPath ? `${innerPath}/${entry.name}` : entry.name;
+                        fullPath = `${archivePath}#${newInner}`;
+                    } else {
+                        // Regular path
+                        fullPath = (path.replace(/\/+$/, '') + '/' + entry.name).replace(/\/+/, '/');
+                    }
                     const sizeStr = entry.size !== undefined ? formatSize(entry.size) : '';
                     const supportsZaparoo = entry.supports_zaparoo !== undefined ? entry.supports_zaparoo : false;
                     addEntry(entry.name, entry.type, fullPath, sizeStr, supportsZaparoo);
@@ -3974,6 +4479,264 @@
                 }
             } catch (error) {
                 showTestStatus('Failed to start tests: ' + error.message, false);
+            }
+        }
+
+        function setSnapshotBaselineStatus(message, isError = false) {
+            const el = document.getElementById('snapshot-baseline-status');
+            if (!el) return;
+            el.style.color = isError ? '#b91c1c' : '#334155';
+            el.textContent = message;
+        }
+
+        let snapshotClientSystemOptions = [];
+
+        function sanitizeSnapshotName(value) {
+            if (!value) return '';
+            return value
+                .toLowerCase()
+                .replace(/[^a-z0-9_.-]+/g, '_')
+                .replace(/^[_\.-]+|[_\.-]+$/g, '')
+                .slice(0, 128);
+        }
+
+        function getSelectedSnapshotClient() {
+            return document.getElementById('snapshot-client-select')?.value || '';
+        }
+
+        function getSelectedSnapshotClientObject() {
+            return snapshotClientSystemOptions.find(c => c.name === getSelectedSnapshotClient()) || null;
+        }
+
+        function getSelectedSnapshotSystemObject() {
+            const client = getSelectedSnapshotClientObject();
+            const systemName = document.getElementById('snapshot-system-select')?.value || '';
+            return (client?.systems || []).find(s => (s.name || '') === systemName) || null;
+        }
+
+        function getSelectedSnapshotContextObject() {
+            const system = getSelectedSnapshotSystemObject();
+            const contextSelect = document.getElementById('snapshot-context-select');
+            const idx = parseInt(contextSelect?.value ?? '0', 10);
+            const paths = Array.isArray(system?.paths) ? system.paths : [];
+            return paths[isNaN(idx) ? 0 : idx] || paths[0] || null;
+        }
+
+        function _refreshSnapshotNameAndPath() {
+            const clientName = getSelectedSnapshotClient();
+            const system = getSelectedSnapshotSystemObject();
+            const context = getSelectedSnapshotContextObject();
+
+            const systemName = system?.name || '';
+            const categoryKey = context?.category || null;
+            const parts = [clientName, systemName, categoryKey].filter(Boolean);
+            const inferredName = sanitizeSnapshotName(parts.join('_'));
+            const inferredPath = context?.path || (clientName && systemName
+                ? `/mnt/transfs/${clientName}/${systemName}`
+                : '/mnt/transfs');
+
+            const nameInput = document.getElementById('snapshot-name-input');
+            const pathInput = document.getElementById('snapshot-path-input');
+            if (nameInput) nameInput.value = inferredName;
+            if (pathInput) pathInput.value = inferredPath;
+        }
+
+        function onSnapshotContextChange() {
+            _refreshSnapshotNameAndPath();
+        }
+
+        function onSnapshotSystemChange() {
+            const system = getSelectedSnapshotSystemObject();
+            const contextSelect = document.getElementById('snapshot-context-select');
+            if (!contextSelect) { _refreshSnapshotNameAndPath(); return; }
+
+            contextSelect.innerHTML = '';
+            const paths = Array.isArray(system?.paths) ? system.paths : [];
+            if (paths.length <= 1) {
+                const option = document.createElement('option');
+                option.value = '0';
+                option.textContent = paths[0]?.label || system?.name || '—';
+                contextSelect.appendChild(option);
+                contextSelect.style.display = 'none';
+            } else {
+                contextSelect.style.display = '';
+                paths.forEach((p, idx) => {
+                    const option = document.createElement('option');
+                    option.value = String(idx);
+                    option.textContent = p.label || p.category || `Path ${idx + 1}`;
+                    contextSelect.appendChild(option);
+                });
+            }
+
+            _refreshSnapshotNameAndPath();
+        }
+
+        function onSnapshotClientChange() {
+            const client = getSelectedSnapshotClientObject();
+            const systemSelect = document.getElementById('snapshot-system-select');
+            if (!systemSelect) return;
+
+            const systems = Array.isArray(client?.systems) ? client.systems : [];
+            systemSelect.innerHTML = '';
+            if (systems.length === 0) {
+                systemSelect.innerHTML = '<option value="">No systems</option>';
+                onSnapshotSystemChange();
+                return;
+            }
+
+            systems.forEach(system => {
+                const option = document.createElement('option');
+                option.value = system.name || '';
+                option.textContent = system.display_name || system.name || 'Unnamed';
+                systemSelect.appendChild(option);
+            });
+
+            onSnapshotSystemChange();
+        }
+
+        async function loadSnapshotClientSystemOptions() {
+            const clientSelect = document.getElementById('snapshot-client-select');
+            const systemSelect = document.getElementById('snapshot-system-select');
+            const contextSelect = document.getElementById('snapshot-context-select');
+            if (!clientSelect || !systemSelect) return;
+
+            clientSelect.innerHTML = '<option value="">Loading...</option>';
+            systemSelect.innerHTML = '<option value="">Loading...</option>';
+            if (contextSelect) contextSelect.innerHTML = '<option value="0">—</option>';
+
+            try {
+                const response = await fetch('/api/snapshots/options');
+                const data = await response.json();
+                if (!data.success) {
+                    setSnapshotBaselineStatus(`Failed to load options: ${data.error || 'Unknown error'}`, true);
+                    clientSelect.innerHTML = '<option value="">No clients</option>';
+                    systemSelect.innerHTML = '<option value="">No systems</option>';
+                    return;
+                }
+
+                snapshotClientSystemOptions = Array.isArray(data.clients) ? data.clients : [];
+                if (snapshotClientSystemOptions.length === 0) {
+                    clientSelect.innerHTML = '<option value="">No clients</option>';
+                    systemSelect.innerHTML = '<option value="">No systems</option>';
+                    setSnapshotBaselineStatus('No clients/systems configured.', true);
+                    return;
+                }
+
+                clientSelect.innerHTML = '';
+                snapshotClientSystemOptions.forEach(client => {
+                    const option = document.createElement('option');
+                    option.value = client.name || '';
+                    option.textContent = client.name || 'Unnamed';
+                    clientSelect.appendChild(option);
+                });
+
+                onSnapshotClientChange();
+            } catch (error) {
+                setSnapshotBaselineStatus(`Failed to load options: ${error.message}`, true);
+                clientSelect.innerHTML = '<option value="">No clients</option>';
+                systemSelect.innerHTML = '<option value="">No systems</option>';
+            }
+        }
+
+        async function captureLockedSnapshot() {
+            const name = (document.getElementById('snapshot-name-input')?.value || '').trim();
+            const transfsPath = (document.getElementById('snapshot-path-input')?.value || '').trim();
+            const maxDepth = parseInt(document.getElementById('snapshot-depth-input')?.value || '3', 10);
+
+            if (!name) {
+                setSnapshotBaselineStatus('Snapshot name is required.', true);
+                return;
+            }
+            if (!transfsPath) {
+                setSnapshotBaselineStatus('TransFS path is required.', true);
+                return;
+            }
+
+            setSnapshotBaselineStatus('Capturing baseline...');
+            try {
+                const response = await fetch('/api/snapshots/capture', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        snapshot_name: name,
+                        transfs_path: transfsPath,
+                        max_depth: Number.isNaN(maxDepth) ? 3 : maxDepth
+                    })
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    setSnapshotBaselineStatus(`Capture failed: ${data.error || 'Unknown error'}`, true);
+                    return;
+                }
+                setSnapshotBaselineStatus(`Captured '${data.snapshot_name}' from ${data.transfs_path} (depth=${data.max_depth}).`);
+            } catch (error) {
+                setSnapshotBaselineStatus(`Capture failed: ${error.message}`, true);
+            }
+        }
+
+        async function compareLockedSnapshot() {
+            const name = (document.getElementById('snapshot-name-input')?.value || '').trim();
+            const transfsPath = (document.getElementById('snapshot-path-input')?.value || '').trim();
+            const maxDepth = parseInt(document.getElementById('snapshot-depth-input')?.value || '3', 10);
+
+            if (!name) {
+                setSnapshotBaselineStatus('Snapshot name is required for compare.', true);
+                return;
+            }
+
+            setSnapshotBaselineStatus('Comparing current listing to baseline...');
+            try {
+                const payload = {
+                    snapshot_name: name,
+                    transfs_path: transfsPath || null,
+                    max_depth: Number.isNaN(maxDepth) ? null : maxDepth
+                };
+                const response = await fetch('/api/snapshots/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    setSnapshotBaselineStatus(`Compare failed: ${data.error || 'Unknown error'}`, true);
+                    return;
+                }
+
+                if (data.match) {
+                    setSnapshotBaselineStatus(`Baseline '${data.snapshot_name}' matches current listing.`);
+                    return;
+                }
+
+                const diff = data.diff || {};
+                setSnapshotBaselineStatus(
+                    `Mismatch: +${diff.added_count || 0} added, -${diff.removed_count || 0} removed, ~${diff.changed_count || 0} changed.`,
+                    true
+                );
+            } catch (error) {
+                setSnapshotBaselineStatus(`Compare failed: ${error.message}`, true);
+            }
+        }
+
+        async function loadLockedSnapshotList() {
+            setSnapshotBaselineStatus('Loading locked baseline list...');
+            try {
+                const response = await fetch('/api/snapshots');
+                const data = await response.json();
+                if (!data.success) {
+                    setSnapshotBaselineStatus(`List failed: ${data.error || 'Unknown error'}`, true);
+                    return;
+                }
+
+                const baselines = Array.isArray(data.baselines) ? data.baselines : [];
+                if (baselines.length === 0) {
+                    setSnapshotBaselineStatus('No locked baselines found yet. Capture one to start enforcement.');
+                    return;
+                }
+
+                const names = baselines.map(b => b.snapshot_name).join(', ');
+                setSnapshotBaselineStatus(`Locked baselines (${baselines.length}): ${names}`);
+            } catch (error) {
+                setSnapshotBaselineStatus(`List failed: ${error.message}`, true);
             }
         }
 
@@ -4677,7 +5440,12 @@
                 history.replaceState({ tab: 'metadata' }, '', '/metadata');
             } else if (path.startsWith('/browse/native')) {
                 const dirPath = path.replace('/browse/native', '') || '';
-                const fullPath = '/mnt/filestorefs/Native' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
+                // URL-decode path segments to handle archive paths with # (stored as %23)
+                const decodedPath = dirPath
+                    .split('/')
+                    .map(segment => decodeURIComponent(segment))
+                    .join('/');
+                const fullPath = '/mnt/filestorefs/Native' + (decodedPath.startsWith('/') ? decodedPath : '/' + decodedPath);
                 currentNativePath = fullPath;
                 
                 document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -4691,7 +5459,12 @@
                 history.replaceState({ tab: 'browse-native', path: fullPath }, '', path);
             } else if (path.startsWith('/browse/virtual')) {
                 const dirPath = path.replace('/browse/virtual', '') || '';
-                const fullPath = '/mnt/transfs' + (dirPath.startsWith('/') ? dirPath : '/' + dirPath);
+                // URL-decode path segments to handle archive paths with # (stored as %23)
+                const decodedPath = dirPath
+                    .split('/')
+                    .map(segment => decodeURIComponent(segment))
+                    .join('/');
+                const fullPath = '/mnt/transfs' + (decodedPath.startsWith('/') ? decodedPath : '/' + decodedPath);
                 currentVirtualPath = fullPath;
                 
                 document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -4740,6 +5513,7 @@
             await loadConfigSettings();
             await loadSetupClients();
             await loadLastTestResults();
+            await loadSnapshotClientSystemOptions();
             await updateAdvancedOptionsVisibility();
             await updateDbSyncButtonsVisibility();
             setupMetadataEditorFieldTooltips();

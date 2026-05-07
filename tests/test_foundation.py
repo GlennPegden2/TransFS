@@ -11,6 +11,7 @@ All other tests depend on these passing.
 """
 
 import os
+import sys
 import logging
 import hashlib
 import tempfile
@@ -18,6 +19,9 @@ import pytest
 from pathlib import Path
 from uuid import uuid4
 import yaml
+
+# Allow importing from the app package when running inside the container
+sys.path.insert(0, "/app")
 
 
 class TestVolumeMounts:
@@ -64,7 +68,7 @@ class TestClientMappings:
             "MiSTer",      # MiSTer FPGA emulator
             "RetroBat",    # RetroBat emulator suite
             "RetroPie",    # RetroPie emulator suite
-            "Mame",        # MAME arcade emulator
+            "MAME",        # MAME arcade emulator
             "Generic",     # Generic emulators
         }
         
@@ -88,14 +92,17 @@ class TestClientSystemMappings:
 
     @staticmethod
     def _load_clients_config():
-        """Load the clients.yaml configuration."""
-        config_path = Path("/app/config/clients.yaml")
-        if not config_path.exists():
-            pytest.skip(f"clients.yaml not found at {config_path}")
+        """Load the clients configuration using the modular config structure."""
+        try:
+            from config import read_clients_config
+        except ImportError:
+            pytest.skip("config module not importable")
 
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        return config
+        config_dir = "/app/config"
+        if not os.path.isdir(config_dir):
+            pytest.skip(f"Config directory not found at {config_dir}")
+
+        return read_clients_config(config_dir=config_dir)
 
     def test_client_folders_show_configured_systems_only(self):
         """Verify each client folder shows exactly its configured systems, nothing more."""
@@ -109,6 +116,11 @@ class TestClientSystemMappings:
 
             if not client_systems:
                 continue  # Skip clients with no systems configured
+
+            # Clients using category_paths have a different top-level layout (e.g. ROMS/)
+            # rather than individual system names, so this check doesn't apply to them.
+            if client_config.get("category_paths"):
+                continue
 
             client_path = transfs_root / client_name
             if not client_path.exists():

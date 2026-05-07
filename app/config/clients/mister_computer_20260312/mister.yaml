@@ -1,5 +1,5 @@
 name: MiSTer
-download_layout: source_based
+download_layout: folder_based
 default_target_path: '{name}/{system_name}/{maps}'
 systems:
 - name: Generic

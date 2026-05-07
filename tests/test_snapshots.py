@@ -1,111 +1,81 @@
-﻿"""Snapshot tests for system directory structures.
+﻿"""Locked snapshot tests for verified TransFS client/system combinations.
 
-These tests capture the complete directory tree for each system,
-making it easy to spot unexpected changes in the filesystem mapping.
-
-Run with `pytest --snapshot-update` to update snapshots after expected changes.
+Workflow:
+1. Verify a client/system combo manually (for example via the Debug UI).
+2. Capture a locked baseline from the Debug UI snapshot controls.
+3. This test enforces that listing output remains unchanged unless intentionally re-captured.
 """
 
-import pytest
-from dataclasses import dataclass
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
+
+import pytest
+
+
+BASELINE_DIR = Path("/tests/snapshots/locked")
 
 
 def get_directory_tree(path: Path, max_depth: int = 3, current_depth: int = 0) -> Dict[str, Any]:
-    """Recursively get directory tree structure.
-    
-    Args:
-        path: Root path to start tree from
-        max_depth: Maximum directory depth to traverse
-        current_depth: Current depth (internal)
-    
-    Returns:
-        Dictionary representing directory structure
-    """
+    """Recursively capture deterministic directory structure for comparison."""
     if current_depth >= max_depth:
         return {"_type": "truncated"}
-    
-    tree = {
-        "_type": "directory",
-        "_items": {},
-    }
-    
+
+    tree: Dict[str, Any] = {"_type": "directory", "_items": {}}
     try:
-        items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name))
-        
+        items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower(), p.name))
         for item in items:
-            # Skip hidden files
             if item.name.startswith("."):
                 continue
-            
             try:
                 if item.is_dir():
                     tree["_items"][item.name] = get_directory_tree(
                         item,
                         max_depth=max_depth,
-                        current_depth=current_depth + 1
+                        current_depth=current_depth + 1,
                     )
                 else:
-                    # For files, capture: name, size, is_symlink
-                    file_info = {
+                    file_info: Dict[str, Any] = {
                         "_type": "file",
                         "size": item.stat().st_size,
                     }
                     if item.is_symlink():
-                        file_info["target"] = str(item.resolve().relative_to(path.parent))
+                        file_info["target"] = str(item.resolve())
                     tree["_items"][item.name] = file_info
-            except (OSError, PermissionError) as e:
-                tree["_items"][item.name] = {"_type": "error", "reason": str(e)}
-    
-    except (OSError, PermissionError) as e:
-        tree["_type"] = "error"
-        tree["reason"] = str(e)
-    
+            except (OSError, PermissionError) as exc:
+                tree["_items"][item.name] = {"_type": "error", "reason": str(exc)}
+    except (OSError, PermissionError) as exc:
+        return {"_type": "error", "reason": str(exc)}
+
     return tree
 
 
-@dataclass
-class SnapshotTarget:
-    """Configuration for a snapshot test target."""
-    system_name: str
-    start_path: str
-    snapshot_name: str
-    max_depth: int = 3
-    skip_reason: Optional[str] = None
+def _baseline_files() -> list[Path]:
+    if not BASELINE_DIR.exists():
+        return []
+    return sorted(BASELINE_DIR.glob("*.json"))
 
 
-SNAPSHOT_TARGETS: List[SnapshotTarget] = [
-    SnapshotTarget(
-        system_name="MiSTer root",
-        start_path="/mnt/transfs/MiSTer",
-        snapshot_name="mister_root",
-        max_depth=2,
-    ),
-    SnapshotTarget(
-        system_name="Amstrad CPC",
-        start_path="/mnt/transfs/MiSTer/Amstrad/",
-        snapshot_name="amstrad_cpc_structure",
-        max_depth=2,
-    ),
-    SnapshotTarget(
-        system_name="Acorn Electron",
-        start_path="/mnt/transfs/MiSTer/AcornElectron",
-        snapshot_name="acorn_electron_structure",
-        max_depth=2,
-    ),
-]
+def test_locked_snapshots_exist():
+    """Ensure at least one locked baseline exists before running compare tests."""
+    baselines = _baseline_files()
+    if not baselines:
+        pytest.skip("No locked snapshots found. Capture one from the Debug UI snapshot controls.")
+    assert baselines
 
 
-@pytest.mark.parametrize("target", SNAPSHOT_TARGETS, ids=lambda t: t.system_name)
-def test_snapshot_directory_tree(snapshot, target: SnapshotTarget):
-    """Recursively capture a system's directory tree and compare to stored snapshot."""
-    if target.skip_reason:
-        pytest.skip(f"{target.system_name}: {target.skip_reason}")
-    
-    start = Path(target.start_path)
-    if not start.exists():
-        pytest.skip(f"{target.system_name}: start path not available at {start}")
-    
-    tree = get_directory_tree(start, max_depth=target.max_depth)
-    assert tree == snapshot(name=target.snapshot_name)
+@pytest.mark.parametrize("baseline_file", _baseline_files(), ids=lambda p: p.stem)
+def test_locked_snapshot_directory_tree(baseline_file: Path):
+    """Compare current directory tree with the captured locked baseline."""
+    with baseline_file.open("r", encoding="utf-8") as f:
+        baseline = json.load(f)
+
+    transfs_path = Path(baseline.get("transfs_path", ""))
+    max_depth = int(baseline.get("max_depth", 3))
+    expected_tree = baseline.get("tree")
+
+    if not transfs_path.exists():
+        pytest.skip(f"Baseline path missing: {transfs_path}")
+
+    current_tree = get_directory_tree(transfs_path, max_depth=max_depth)
+    assert current_tree == expected_tree

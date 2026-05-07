@@ -70,7 +70,7 @@ class SystemTestConfig:
 AMSTRAD_CPC_CONFIG = SystemTestConfig(
     system_name="Amstrad CPC",
     system_path="MiSTer/Amstrad",  # TransFS virtual path (what MiSTer expects)
-    source_base_path="Native/Amstrad/CPC",  # FileStore real path (normalized storage)
+    source_base_path="Native/Systems/Amstrad/CPC",  # FileStore real path (normalized storage)
     expected_files=[
         # BIOS files - both boot.rom and boot2.rom are served for compatibility
         ExpectedFile("boot.rom", is_generated=False),
@@ -99,7 +99,7 @@ AMSTRAD_CPC_CONFIG = SystemTestConfig(
 ACORN_ARCHIMEDES_CONFIG = SystemTestConfig(
     system_name="Acorn Archimedes",
     system_path="MiSTer/Archie",  # TransFS virtual path (what MiSTer expects)
-    source_base_path="Native/Acorn/Archimedes",  # FileStore real path (normalized storage)
+    source_base_path="Native/Systems/Acorn/Archimedes",  # FileStore real path (normalized storage)
     expected_files=[
         # BIOS file with checksum validation
         ExpectedFile(
@@ -126,7 +126,7 @@ ACORN_ARCHIMEDES_CONFIG = SystemTestConfig(
 ACORN_ELECTRON_CONFIG = SystemTestConfig(
     system_name="Acorn Electron",
     system_path="MiSTer/Acorn/Electron",
-    source_base_path="Native/Acorn/Electron",
+    source_base_path="Native/Systems/Acorn/Electron",
     expected_files=[
         ExpectedFile("boot.vhd", is_generated=False),
         ExpectedFile("Software", is_generated=True),
@@ -144,7 +144,7 @@ ACORN_ELECTRON_CONFIG = SystemTestConfig(
 ACORN_ATOM_CONFIG = SystemTestConfig(
     system_name="Acorn Atom",
     system_path="MiSTer/AcornAtom",
-    source_base_path="Native/Acorn/Atom",
+    source_base_path="Native/Systems/Acorn/Atom",
     expected_files=[
         ExpectedFile("boot.vhd", is_generated=False),
         ExpectedFile("HDs/hoglet67.vhd", is_generated=False),
@@ -162,7 +162,7 @@ ACORN_ATOM_CONFIG = SystemTestConfig(
 ACORN_BBC_CONFIG = SystemTestConfig(
     system_name="Acorn BBC Micro",
     system_path="MiSTer/BBCMicro",
-    source_base_path="Native/Acorn/BBC_B",
+    source_base_path="Native/Systems/Acorn/BBC_B",
     expected_files=[
         ExpectedFile("boot.vhd", is_generated=False),
     ],
@@ -426,7 +426,7 @@ def test_archimedes_riscos_byte_by_byte():
     """
     # Paths
     transfs_rom = Path("/mnt/transfs/MiSTer/Archie/riscos.rom")
-    filestore_rom = Path("/mnt/filestorefs/Native/Acorn/Archimedes/BIOS/riscos.rom")
+    filestore_rom = Path("/mnt/filestorefs/Native/Systems/Acorn/Archimedes/BIOS/riscos.rom")
     
     # Check filestore file exists first
     if not filestore_rom.exists():

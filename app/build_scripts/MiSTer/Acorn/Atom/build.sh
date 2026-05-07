@@ -9,7 +9,7 @@ TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"
 
-# Resolve software source directory (supports both legacy and source_based layouts)
+# Resolve software source directory (supports both legacy and folder-based layouts)
 SOFTWARE_SOURCE=""
 for candidate in \
     "$SOFTWARE_DIR/Software/Sources/hoglet67" \
@@ -29,7 +29,7 @@ fi
 
 echo "Found software source: $SOFTWARE_SOURCE"
 
-# Resolve blank VHD source (supports both legacy and source_based layouts)
+# Resolve blank VHD source (supports both legacy and folder-based layouts)
 BLANK_VHD=""
 for candidate in \
     "$SOFTWARE_DIR/Software/Sources/blankvhd/blank.vhd" \

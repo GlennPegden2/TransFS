@@ -19,7 +19,7 @@ from pathutils import (
 )
 from filetypes import get_filetype_maps, get_filetype_transforms
 from ziptutils import get_zip_mapping
-from zippath import exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
+from zippath import is_supported_archive_name, exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 from transforms import build_transform_pipeline, TransformPipeline
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ _RECURSIVE_FILENAME_INDEX_TTL = 900.0  # 15 minutes - expensive to rebuild (5000
 
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
     layout = system_info.get("download_layout") if system_info else None
-    if layout != "source_based":
+    if layout != "legacy_source_based":
         return source_dir
     normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
     if "sources" in normalized:
@@ -659,12 +659,12 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
 
 def _parse_zippath_notation(path_str: str) -> Optional[tuple[str, str]]:
     """
-    Parse zippath-style notation like 'Software/MMB/BEEB2.zip/BEEB.MMB'
-    Returns (zip_path, internal_path) if a .zip component is found, else None.
+    Parse archive-style notation like 'Software/MMB/BEEB2.zip/BEEB.MMB'.
+    Returns (archive_path, internal_path) if a supported archive component is found, else None.
     """
     parts = path_str.split('/')
     for i, part in enumerate(parts):
-        if part.lower().endswith('.zip'):
+        if is_supported_archive_name(part):
             zip_path = '/'.join(parts[:i+1])
             internal_path = '/'.join(parts[i+1:]) if i+1 < len(parts) else ''
             return (zip_path, internal_path) if internal_path else None
@@ -712,8 +712,8 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
         if not subpath:
             return None
 
-        # ZIP navigation support
-        zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
+        # Archive navigation support
+        zip_idx = next((i for i, part in enumerate(subpath) if is_supported_archive_name(part)), None)
         if zip_idx is not None and transform_zip and zip_mode != "file":
             zip_name = subpath[zip_idx]
             inner_parts = subpath[zip_idx + 1:]
@@ -762,10 +762,9 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
                 if os.path.exists(candidate):
                     return candidate
 
-                if system_info.get("download_layout") == "source_based":
-                    recursive_match = _find_file_recursive(source_dir, real_filename)
-                    if recursive_match:
-                        return recursive_match
+                recursive_match = _find_file_recursive(source_dir, real_filename)
+                if recursive_match:
+                    return recursive_match
         
         # REVERSE MAPPING: If not found, check if this extension is a transform output
         # E.g., requesting Game.hdv might actually be Game.2mg with two_mg transform
@@ -889,21 +888,19 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
                         if pipeline:
                             return {'path': candidate, 'transform_pipeline': pipeline}
                     
-                    # Recursive fallback for source_based layout
-                    if system_info.get("download_layout") == "source_based":
-                        recursive_match = _find_file_recursive(source_dir, real_filename)
-                        if recursive_match:
-                            cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
-                            pipeline = get_transform_pipeline_for_file(
-                                logger,
-                                system_info,
-                                real_filename,
-                                map_name,
-                                cache_config,
-                                full_path=recursive_match,
-                            )
-                            if pipeline:
-                                return {'path': recursive_match, 'transform_pipeline': pipeline}
+                    recursive_match = _find_file_recursive(source_dir, real_filename)
+                    if recursive_match:
+                        cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                        pipeline = get_transform_pipeline_for_file(
+                            logger,
+                            system_info,
+                            real_filename,
+                            map_name,
+                            cache_config,
+                            full_path=recursive_match,
+                        )
+                        if pipeline:
+                            return {'path': recursive_match, 'transform_pipeline': pipeline}
         
         # If we found a .zip in the path and transform_zip is enabled
         if found_zip and transform_zip:

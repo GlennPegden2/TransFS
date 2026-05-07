@@ -16,3 +16,4 @@ app/Native/
 legacy/
 .gitignore
 .github/copilot-instructions.md
+tests/snapshots/locked/

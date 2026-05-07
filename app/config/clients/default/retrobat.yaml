@@ -2,7 +2,7 @@
 # Defines system mappings and file organization for RetroBat frontend
 
 name: RetroBat
-download_layout: source_based
+download_layout: folder_based
 default_target_path: "{name}/{system_name}/{maps}"
 
 # Client-level base path for client infrastructure files (e.g., downloaded BIOS)
@@ -61,7 +61,8 @@ systems:
               - BIN
               - ISO
               - CHD
-            transform_zip: false
+            transform_zip: true
+            zip_mode: flatten
             supports_zaparoo: true
             preserve_structure: false
 #            extension_map:
@@ -75,6 +76,7 @@ systems:
             source_dir: BIOS
             extensions:
               - BIN
+              - ZIP
             preserve_structure: false  
   - name: AcornAtom
     manufacturer: Acorn

@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from filetypes import get_filetype_maps
 from pathutils import find_software_archive_entry
-from zippath import listdir as zippath_listdir, exists as zippath_exists, isfile as zippath_isfile
+from zippath import is_supported_archive_name, listdir as zippath_listdir, exists as zippath_exists, isfile as zippath_isfile
 import logging
 
 logger = logging.getLogger("transfs")
@@ -205,7 +205,7 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
 
 def _adjust_source_dir_for_layout(source_dir: str, system_info: dict) -> str:
     layout = system_info.get("download_layout") if system_info else None
-    if layout != "source_based":
+    if layout != "legacy_source_based":
         return source_dir
     normalized = (source_dir or "").replace("\\", "/").strip("/").lower()
     if "sources" in normalized:
@@ -1065,8 +1065,8 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 system["local_base_path"],
                 source_dir,
             )
-            # Check for zip navigation
-            zip_idx = next((i for i, part in enumerate(subpath) if part.lower().endswith('.zip')), None)
+            # Check for archive navigation
+            zip_idx = next((i for i, part in enumerate(subpath) if is_supported_archive_name(part)), None)
             if zip_idx is not None and transform_zip and zip_mode != "file":
                 zip_name = subpath[zip_idx]
                 inner_parts = subpath[zip_idx + 1:]
@@ -1075,7 +1075,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
                 if not os.path.isfile(zip_path):
                     zip_path = _find_file_recursive_indexed(base_dir, zip_name)
-                if os.path.isfile(zip_path):
+                if zip_path and os.path.isfile(zip_path):
                     target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
                     try:
                         internal = zippath_listdir(target)
@@ -1163,11 +1163,13 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 except Exception as e:
                     logger.warning(f"Filesystem fallback error in list_query_map: {e}")
 
-                # For source_based layouts, content may live in nested source folders.
+                # Content may live in nested source folders even without the legacy layout.
                 # If no direct files were found, walk recursively and include matching extensions.
-                if not fs_only_files and system.get("download_layout") == "source_based":
+                if not fs_only_files:
                     try:
                         allowed_exts = {str(ext).upper() for ext in extensions if ext and str(ext) != '*'}
+                        if transform_zip:
+                            allowed_exts.update({'ZIP', '7Z'})
                         for root_dir, _, filenames in os.walk(scan_dir):
                             for filename in filenames:
                                 if not show_hidden and filename.startswith('.'):
@@ -1190,7 +1192,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                                 except Exception:
                                     continue
                     except Exception as e:
-                        logger.warning(f"Recursive source_based fallback error in list_query_map: {e}")
+                        logger.warning(f"Recursive nested-folder fallback error in list_query_map: {e}")
                 
                 if fs_only_files:
                     logger.info(f"list_query_map: filesystem fallback found {len(fs_only_files)} files not in database")
@@ -1211,6 +1213,9 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
             # Get existing database filenames
             db_filenames = {entry.get('filename', '') if isinstance(entry, dict) else str(entry) for entry in db_entries}
+            allowed_exts = {str(ext).upper() for ext in extensions if ext and str(ext) != '*'}
+            if transform_zip:
+                allowed_exts.update({'ZIP', '7Z'})
             
             fs_only_files = []
             try:
@@ -1221,6 +1226,8 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                                 stat_info = entry.stat()
                                 _, ext = os.path.splitext(entry.name)
                                 ext_upper = ext[1:].upper() if ext else ''
+                                if allowed_exts and ext_upper not in allowed_exts:
+                                    continue
                                 
                                 fs_file_record = {
                                     'filename': entry.name,
@@ -1234,6 +1241,37 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                                 pass
             except Exception as e:
                 logger.warning(f"Filesystem merge error in list_query_map: {e}")
+
+            # Nested mounted folders (for example Software/Collections/<CollectionName>)
+            # should also surface without requiring a DB sync.
+            if not fs_only_files:
+                try:
+                    for root_dir, _, filenames in os.walk(scan_dir):
+                        for filename in filenames:
+                            if not show_hidden and filename.startswith('.'):
+                                continue
+                            if filename in db_filenames:
+                                continue
+
+                            _, ext = os.path.splitext(filename)
+                            ext_upper = ext[1:].upper() if ext else ''
+                            if allowed_exts and ext_upper not in allowed_exts:
+                                continue
+
+                            file_path = os.path.join(root_dir, filename)
+                            try:
+                                stat_info = os.stat(file_path)
+                                fs_only_files.append({
+                                    'filename': filename,
+                                    'source_path': file_path,
+                                    'extension': ext_upper,
+                                    'size': stat_info.st_size,
+                                    'mtime': stat_info.st_mtime,
+                                })
+                            except Exception:
+                                continue
+                except Exception as e:
+                    logger.warning(f"Recursive filesystem merge error in list_query_map: {e}")
             
             if fs_only_files:
                 logger.info(f"list_query_map: filesystem merge added {len(fs_only_files)} files not in database")
@@ -1253,7 +1291,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             if entry == db_entries[0]:
                 logger.info(f"DB entry structure: filename={filename}, extension={db_ext}, source_path={source_path}, full_entry={entry}")
             
-            if filename.lower().endswith('.zip'):
+            if is_supported_archive_name(filename):
                 zip_entries.append(filename)
                 if zip_mode == "file" or not transform_zip:
                     entries.add(filename)
@@ -1307,7 +1345,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                     zip_path = os.path.join(base_dir, "ZIP", zip_name)
                 if not os.path.isfile(zip_path):
                     zip_path = _find_file_recursive_indexed(base_dir, zip_name)
-                if os.path.isfile(zip_path):
+                if zip_path and os.path.isfile(zip_path):
                     try:
                         internal = zippath_listdir(zip_path)
                         for child in internal:
