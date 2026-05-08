@@ -5,6 +5,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
+- **YAML Configuration Linter**: New integrated linter for TransFS config files with both CLI (`tools/lint_config.py`) and web UI (Debug tab → Config Lint) entry points. Detects:
+  - Syntax errors and duplicate keys (YAML parsing)
+  - Missing required fields per config type (`app.yaml`, `clients/*.yaml`, `sources/*/*.yaml`)
+  - Invalid source type references in packs
+  - Missing recommended fields (warnings)
+  - Detailed suggestions for each issue
+  - JSON API endpoint `/api/lint-config` for programmatic access
+  - Real-time validation found 18 errors and 51 warnings across 84 config files
 - **Per-client disc cache for archived game images**: Implemented a "last inserted disc" cache keyed by `(client, system)` that preserves extracted temporary files indefinitely until a different game is accessed by that client on that system. When the 3DO core (or any core) re-reads a disc mid-game for audio streaming, seek operations, or other runtime access, the file is served instantly from the cache instead of requiring 18-20 second re-extraction from the archive. Different clients/systems maintain independent cache slots, so loading a different game automatically evicts and replaces the previous cache. This dramatically improves performance for games that stream or re-read audio tracks during gameplay.
 - **Managed Native external SMB/CIFS mounts**: Added persistent, web-UI-manageable mounts for mapping NAS folders into Native subpaths (including deep targets like `Native/Systems/.../Software/Sources/Nas-Collection`). New API endpoints support list/create/update/delete/validate/mount/unmount/reconcile flows under `/api/native-mounts*`, mount credentials are stored in persisted filestore secrets, and startup now reconciles enabled auto-reconnect mounts.
 

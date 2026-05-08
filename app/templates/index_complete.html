@@ -678,6 +678,7 @@
                 <button onclick="switchDebugSubtab('test-results')" class="debug-subtab-btn active" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid #2196F3; cursor: pointer; font-size: 0.95em; color: #2196F3; font-weight: 500;">Test Results</button>
                 <button onclick="switchDebugSubtab('logs')" class="debug-subtab-btn" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 0.95em; color: #666; font-weight: 500;">Logs</button>
                 <button onclick="switchDebugSubtab('config')" class="debug-subtab-btn" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 0.95em; color: #666; font-weight: 500;">Config & System</button>
+                <button onclick="switchDebugSubtab('lint')" class="debug-subtab-btn" style="padding: 0.6em 1.2em; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 0.95em; color: #666; font-weight: 500;">Config Lint</button>
             </div>
             
             <!-- Test Results Subtab -->
@@ -761,6 +762,33 @@
                             <div id="active-source-config" style="color: #999; margin-top: 0.3em;">Loading…</div>
                         </div>
                     </div>
+                </div>
+            </div>
+            
+            <!-- Config Lint Subtab -->
+            <div id="debug-lint" class="debug-subtab" style="display: none;">
+                <div style="margin-bottom: 1.5em;">
+                    <h3 style="margin: 0 0 1em 0; color: #333;">YAML Configuration Linter</h3>
+                    <p style="color: #666; margin: 0 0 1em 0; line-height: 1.4;">
+                        Check YAML configuration files for syntax errors, missing required fields, and best-practice violations.
+                    </p>
+                    <div style="display: flex; gap: 0.5em; flex-wrap: wrap;">
+                        <button onclick="runLintAll()" style="padding: 0.6em 1.2em; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em;">📋 Lint All Configs</button>
+                    </div>
+                </div>
+                
+                <div id="lint-status" style="margin-bottom: 1.5em; padding: 1em; background: #f5f5f5; border-radius: 4px; display: none; border-left: 4px solid #667eea;">
+                    <div style="display: flex; align-items: center; gap: 0.8em;">
+                        <span id="lint-status-icon" style="font-size: 1.2em;">⏳</span>
+                        <div style="flex: 1;">
+                            <strong id="lint-status-text">Linting...</strong>
+                            <div id="lint-status-detail" style="font-size: 0.9em; color: #666; margin-top: 0.3em;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="lint-results" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 1.5em; min-height: 200px;">
+                    <div style="color: #999; text-align: center; padding: 2em;">Click "Lint All Configs" to check for issues.</div>
                 </div>
             </div>
         </div>
@@ -5398,6 +5426,122 @@
                 document.getElementById('active-source-config').textContent = 'Error loading...';
                 console.error('Failed to load config sets:', error);
             }
+        }
+
+        // =============================================
+        // CONFIG LINTING
+        // =============================================
+        async function runLintAll() {
+            const statusDiv = document.getElementById('lint-status');
+            const resultsDiv = document.getElementById('lint-results');
+            
+            statusDiv.style.display = 'block';
+            statusDiv.style.borderLeftColor = '#667eea';
+            document.getElementById('lint-status-icon').textContent = '⏳';
+            document.getElementById('lint-status-text').textContent = 'Linting all configs...';
+            resultsDiv.innerHTML = '';
+            
+            try {
+                const response = await fetch('/api/lint-config', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.error) {
+                    showLintError(data.error);
+                    return;
+                }
+                
+                renderLintResults(data);
+            } catch (e) {
+                console.error('Lint error:', e);
+                showLintError(e.message);
+            }
+        }
+
+        function showLintError(message) {
+            const statusDiv = document.getElementById('lint-status');
+            const resultsDiv = document.getElementById('lint-results');
+            
+            statusDiv.style.display = 'block';
+            statusDiv.style.borderLeftColor = '#ff6b6b';
+            document.getElementById('lint-status-icon').textContent = '❌';
+            document.getElementById('lint-status-text').textContent = 'Lint Error';
+            document.getElementById('lint-status-detail').textContent = message;
+            
+            resultsDiv.innerHTML = `<div style="color: #d32f2f; padding: 1em;">Error: ${message}</div>`;
+        }
+
+        function renderLintResults(data) {
+            const statusDiv = document.getElementById('lint-status');
+            const resultsDiv = document.getElementById('lint-results');
+            
+            const summary = data;
+            const allResults = summary.results || [];
+            const hasErrors = (summary.total_errors || 0) > 0;
+            const hasWarnings = (summary.total_warnings || 0) > 0;
+            
+            // Update status
+            statusDiv.style.display = 'block';
+            if (hasErrors) {
+                statusDiv.style.borderLeftColor = '#d32f2f';
+                document.getElementById('lint-status-icon').textContent = '❌';
+                document.getElementById('lint-status-text').textContent = 'Lint Complete - Errors Found';
+            } else if (hasWarnings) {
+                statusDiv.style.borderLeftColor = '#ff9800';
+                document.getElementById('lint-status-icon').textContent = '⚠️';
+                document.getElementById('lint-status-text').textContent = 'Lint Complete - Warnings Found';
+            } else {
+                statusDiv.style.borderLeftColor = '#4caf50';
+                document.getElementById('lint-status-icon').textContent = '✓';
+                document.getElementById('lint-status-text').textContent = 'Lint Complete - All Good!';
+            }
+            document.getElementById('lint-status-detail').textContent = 
+                `${summary.total_files || 0} files checked: ${summary.clean_files || 0} clean, ${summary.total_warnings || 0} warning(s), ${summary.total_errors || 0} error(s)`;
+            
+            // Render results
+            if (!allResults || allResults.length === 0) {
+                resultsDiv.innerHTML = '<div style="padding: 1em; color: #999;">No results to display.</div>';
+                return;
+            }
+            
+            let html = '<div style="display: grid; gap: 0.8em;">';
+            
+            for (const result of allResults) {
+                const fileHasErrors = (result.issues || []).some(i => i.severity === 'ERROR');
+                const fileHasWarnings = (result.issues || []).some(i => i.severity === 'WARNING');
+                const statusIcon = fileHasErrors ? '❌' : fileHasWarnings ? '⚠️' : '✓';
+                const statusColor = fileHasErrors ? '#d32f2f' : fileHasWarnings ? '#ff9800' : '#4caf50';
+                
+                html += `
+                    <details style="padding: 0.8em; border: 1px solid #ddd; border-radius: 4px; background: #fafafa;">
+                        <summary style="cursor: pointer; color: ${statusColor}; font-weight: 500;">
+                            <span style="font-size: 1.1em; margin-right: 0.3em;">${statusIcon}</span>
+                            ${result.filepath || 'Unknown'}
+                        </summary>
+                        <div style="margin-top: 0.8em; padding-top: 0.8em; border-top: 1px solid #eee;">
+                `;
+                
+                if (!result.issues || result.issues.length === 0) {
+                    html += '<div style="color: #999; padding: 0.5em;">✓ No issues</div>';
+                } else {
+                    for (const issue of result.issues) {
+                        const issueColor = issue.severity === 'ERROR' ? '#d32f2f' : issue.severity === 'WARNING' ? '#ff9800' : '#2196F3';
+                        html += `
+                            <div style="margin-bottom: 0.6em; padding: 0.5em; background: white; border-left: 3px solid ${issueColor}; border-radius: 2px;">
+                                <div style="font-weight: 500; color: ${issueColor};">${issue.severity}</div>
+                                <div style="color: #555; margin-top: 0.2em;"><strong>${issue.path}:</strong> ${issue.message}</div>
+                        `;
+                        if (issue.suggestion) {
+                            html += `<div style="color: #2196F3; margin-top: 0.3em; font-size: 0.9em;">💡 ${issue.suggestion}</div>`;
+                        }
+                        html += '</div>';
+                    }
+                }
+                
+                html += '</div></details>';
+            }
+            
+            html += '</div>';
+            resultsDiv.innerHTML = html;
         }
 
         // =============================================

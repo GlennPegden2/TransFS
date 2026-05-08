@@ -5978,3 +5978,26 @@ def download_setup_windows_script(request: Request):
         logger.error(f"Error generating setup script: {e}", exc_info=True)
         return {'error': str(e)}, 500
 
+
+@app.post("/lint-config", tags=["Debug"])
+def lint_config(filepath: str = None):
+    """Lint YAML config files. If filepath given, lint that file; otherwise lint all."""
+    try:
+        from lint_config import lint_all, lint_file  # noqa: E402 (imported from /app)
+        
+        config_dir = os.path.join(os.path.dirname(__file__), "config")
+        
+        if filepath:
+            # Lint single file
+            if not os.path.exists(filepath):
+                return {"error": f"File not found: {filepath}"}, 404
+            result = lint_file(filepath)
+            return {"mode": "single", "result": result.to_dict()}
+        else:
+            # Lint all configs
+            summary = lint_all(config_dir)
+            return {"mode": "all", **summary.to_dict()}
+    except Exception as e:
+        logger.error(f"Error linting config: {e}", exc_info=True)
+        return {"error": str(e)}, 500
+
