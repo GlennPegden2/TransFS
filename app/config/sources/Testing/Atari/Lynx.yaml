@@ -1,0 +1,9 @@
+# Atari Lynx Software Sources
+
+base_path: Atari/Lynx/Software
+
+sources:
+  - name: TOSEC Atari Lynx Collection
+    type: ddl
+    url: https://archive.org/download/Atari_Lynx_TOSEC_2012_04_23/Atari_Lynx_TOSEC_2012_04_23.zip
+    folder: ROMs

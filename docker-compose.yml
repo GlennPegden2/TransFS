@@ -1,9 +1,36 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: transfs-postgres
+    hostname: postgres
+    environment:
+      POSTGRES_DB: transfs
+      POSTGRES_USER: transfs
+      POSTGRES_PASSWORD: transfs_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "shared_buffers=256MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transfs"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   transfs:
     build: .
     container_name: transfs
+    hostname: transfs
+    image: transfs-image
+    extra_hosts:
+      - "transfs-host:host-gateway"  # Maps to Docker host's IP
     cap_add:
       - SYS_ADMIN
     devices:
@@ -11,27 +38,37 @@ services:
     ports:
       - "3445:445"
       - "4139:139"
+      - "137:137/udp"  # NetBIOS Name Service
+      - "138:138/udp"  # NetBIOS Datagram Service
       - "5678:5678"  # Expose debug port
-      - "8000:8000"  # Expose FastAPI web service
+      - "8000:8000"  # Expose FastAPI web service (change to match transfs.yaml web_api.port if modified)
     security_opt:
       - apparmor:unconfined
     volumes:
       - ./content:/mnt/filestorefs   # Mount point on the host
       - ./app:/app                      # Mount project root for code and static/templates
+      - ./tests:/tests                      # Not needed in production, but useful for testing
+      - ./tests:/app/tests                  # Make tests visible under /app for pytest
+      # - ./transfs:/mnt/transfs # COMMENTED OUT: This prevents FUSE from mounting. Only uncomment for specific unit testing needs
+
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
+      - AVAHI_HOSTNAME=transfs.local
       - PYTHONUNBUFFERED=1
-    entrypoint: >
-      bash -c "
-        mkdir -p /mnt/filestorefs &&
-        service smbd start &&
-        if [ \"$DEBUG_MODE\" = \"1\" ]; then
-          echo 'Starting in debug mode...';
-          python3 -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/transfs.py &
-        else
-          echo 'Starting in normal mode...';
-          python3 /app/transfs.py &
-        fi &&
-        echo 'Starting FastAPI web service...' &&
-        uvicorn main:app --host 0.0.0.0 --port 8000 --reload &&
-        tail -f /dev/null
-      "
+      - PYTHONPATH=/app
+      - TRANSFS_PERSIST_ZIP_INDEX=1  # Enable ZIP index caching for better performance
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=transfs
+      - DB_USER=transfs
+      - DB_PASSWORD=transfs_pass
+      - SMB_ADVERTISE_HOST=${SMB_ADVERTISE_HOST:-192.168.95.36}
+      - SMB_ADVERTISE_PORT=${SMB_ADVERTISE_PORT:-3445}
+      - SMB_ADVERTISE_SHARE=${SMB_ADVERTISE_SHARE:-TransFS}
+      # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
+    entrypoint: ["/entrypoint.sh"]
+
+volumes:
+  postgres_data:

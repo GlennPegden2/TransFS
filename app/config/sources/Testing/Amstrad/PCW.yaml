@@ -1,0 +1,14 @@
+# Amstrad PCW Software Sources
+
+base_path: Amstrad/PCW/Software
+
+sources:
+  - name: TOSEC Amstrad PCW Collection
+    type: ddl
+    url: https://archive.org/download/Amstrad_PCW_TOSEC_2012_04_23/Amstrad_PCW_TOSEC_2012_04_23.zip
+    folder: Disks
+  
+  - name: 8bitChipInfo
+    type: ddl
+    url: http://8bitchip.info/commodore/Amstrad_PCW_8256_Games_Archive.tar.gz
+    folder: Collections

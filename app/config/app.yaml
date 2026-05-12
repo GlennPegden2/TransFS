@@ -1,0 +1,97 @@
+cache:
+  stat_cache_enabled: false
+  stat_cache_save_interval: 5.0
+  transform_output_size_cache_enabled: true
+  transform_pipeline_cache_enabled: true
+  readdir_direntry_cache_enabled: true
+  readdir_skip_cache_lookup_with_direntry: true
+performance:
+  use_mmap_for_reads: true
+  mmap_threshold_bytes: 10485760
+cache_warmer:
+  batch_size: 10
+  check_interval_seconds: 5
+  cpu_threshold_percent: 20.0
+  enabled: false
+  io_threshold_percent: 20.0
+  max_depth: 12
+startup_prewarm:
+  enabled: true
+  hot_paths:
+  - RetroBat
+  - RetroBat/bios
+  - RetroBat/ROMS/AcornAtom
+  - RetroBat/ROMS/AcornAtom/Tapes
+  - RetroBat/ROMS/AcornAtom/FDs
+  prewarm_subdirs: true
+  subdirectory_paths:
+  - RetroBat
+  - MiSTer
+  prewarm_recursive_indexes: true
+  recursive_index_paths:
+  - Native/Systems/Acorn/Atom/Software/Sources
+config_sets:
+  active_client_config: default
+  active_source_config: Testing
+database:
+  auto_sync: false
+  enabled: true
+  mode: enabled
+  sync_on_startup: false
+  host: postgres
+  port: 5432
+  name: transfs
+  user: transfs
+  password: transfs_pass
+  pool_size: 20
+  max_overflow: 10
+smb:
+  username: root
+  password: '1'
+  allow_guest: false
+native_external_mounts:
+- id: 3do-nas
+  display_name: 3DO on nas
+  enabled: true
+  target_subpath: Systems/3DO/3DO/Software/Collections/RetroRom-Collection
+  smb_host: 192.168.95.19
+  smb_share: software
+  smb_subpath: 3do/RetroRom-Collection
+  smb_port: null
+  guest: false
+  read_only: false
+  vers: '3.0'
+  auto_reconnect: true
+  extra_options: []
+  username: .\glenn
+  last_error: ''
+  last_ok: 1776209424
+  last_checked: 1776209424
+  credentials_file: /mnt/filestorefs/.secrets/transfs/native-mounts/3do-nas.cred
+filestore: /mnt/filestorefs
+show_hidden_files: true
+mame:
+  hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
+  hash_repo_branch: master
+  archive_base_url: https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
+  download_root: /mnt/filestorefs/Downloads/MAME
+  verify_checksums: true
+  max_concurrent_downloads: 3
+  cache_hash_files: true
+mountpoint: /mnt/transfs
+ssl_ignore_hosts:
+- arcarc.nl
+- releases.prodos8.com
+ui:
+  advanced_options: true
+  show_real_path_tooltips: true
+web_api:
+  host: ''
+  port: 8000
+zaparoo:
+  clients:
+  - enabled: true
+    host: 192.168.95.78
+    mount_path: /media/fat/cifs
+    name: MiSTer
+    port: 7497

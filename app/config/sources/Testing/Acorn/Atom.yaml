@@ -1,0 +1,108 @@
+# Acorn Atom Software Sources
+
+# Base path must match clients.yaml local_base_path (no Software/ suffix)
+base_path: Acorn/Atom/
+
+sources:
+
+  - name: RetrobatBios # No longer needed as we copy it fom windows
+    type: ddl
+    urls:
+      - https://github.com/RetroBat-Official/retrobat-bios/archive/refs/heads/main.zip
+    folder: Software/BIOS
+    extract: true
+
+  - name: MameBIOSroms
+    type: ddl
+    urls:
+      - "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip&file=atom.zip"
+    folder: Software/BIOS/mame/atom
+    extract: false
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: ROM
+        region: World
+        language: English
+
+
+  - name: hoglet67
+    type: ddl
+    urls:
+      - https://github.com/hoglet67/AtomSoftwareArchive/releases/download/V13_00/AtomSoftwareArchive_20240505_1129_V13.00.zip
+    folder: Software/Sources/hoglet67
+    extract: true
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: Disk
+        region: World
+        language: English
+        extension: ATM
+  
+  - name: blankvhd
+    type: ddl
+    urls:
+      - https://github.com/MiSTer-devel/AcornAtom_MiSTer/raw/main/releases/blank.zip
+    folder: Software/Utils
+    extract: true    
+
+  # MAME Software List downloader
+  # Downloads verified software from Internet Archive based on MAME hash files
+  - name: "Atom MAME Software"
+    type: mame
+    system: "atom"  # Matches atom_*.xml hash files in MAME repo
+    media_types:
+      - type: "cass"  # atom_cass.xml
+        folder: "Software/Sources/MAME/Cassettes"
+      - type: "flop"  # atom_flop.xml
+        folder: "Software/Sources/MAME/Floppies"
+      - type: "rom"   # atom_rom.xml
+        folder: "Software/Sources/MAME/ROMs"
+    filters:
+      # Optional filters to control which software is downloaded
+      # publishers: ["Acornsoft", "Bug Byte"]  # Uncomment to filter by publisher
+      exclude_unsupported: false  # Don't exclude - "supported" in MAME refers to emulation status, not availability
+      # year_range: [1980, 1990]  # Uncomment to filter by year
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: ROM
+        region: World
+        language: English
+
+packs:
+
+  - id: mame_atom_bios
+    name: BIOS ROMs for MAME/MESS derivatives
+    description: BIOS ROMs for MAME/MESS derivatives
+    estimated_size: 32k
+    sources: [MameBIOSroms]
+    supported_by: [RetroBat,Mame,Batocera,RetroPie]
+    info_links:
+      - label: IA Page
+        url: "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip"
+
+  - id: mame_atom_xml
+    name: Software in the official MAME XML lists
+    description: Software from the official MAME XML lists for the Atom
+    estimated_size: TBC
+    sources: ["Atom MAME Software"]
+    supported_by: [RetroBat,Mame,Batocera,RetroPie]
+    info_links:
+      - label: IA Page
+        url: "https://ia801806.us.archive.org/view_archive.php?archive=/12/items/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip"
+
+
+  - id: hoglet67
+    name: hoglet67s Atom Software Collection
+    description: hoglet67s Atom Software Collection (both as files and built into a VHD)
+    estimated_size: 15.3MB
+    sources: [hoglet67, blankvhd]
+    build_script: MiSTer/Acorn/Atom/build.sh
+    supported_by: [RetroBat,Mame,Batocera,RetroPie]
+    info_links:
+      - label: Hoglet67s Atom Software Archive
+        url: https://github.com/hoglet67/AtomSoftwareArchive
+    supported_by: [MiSTer,RetroBat,Mame,Batocera,RetroPie]
+

@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Acorn Electron"
 
 # Use BASE_PATH from environment, fallback to default if not set
-BASE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Acorn/Electron/}"
+BASE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Acorn/Electron/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 SOFTWARE_DIR="${BASE_DIR}/Collections"
@@ -56,5 +56,7 @@ mv $UNZIP_DIR/Acorn\ Electron\ \[TOSEC\]/Acorn\ Electron\ -\ Operating\ Systems\
 mv -f $UNZIP_DIR/Elk-PubGameADF/*/* "$SOFTWARE_DIR/../ADF"
 mv -f $UNZIP_DIR/Elk-PubGameDFS/*/* "$SOFTWARE_DIR/../DFS"
 mv -f $UNZIP_DIR/Elk-PubGameHFE/*/* "$SOFTWARE_DIR/../HFE"
+
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
 
 echo "Build complete."

@@ -1,0 +1,73 @@
+# Acorn Archimedes Software Sources
+
+base_path: 3DO/3DO/
+
+sources:
+  - name: bios
+    type: ddl
+    url: https://archive.org/download/mame-0.221-roms-merged/3do.zip    
+    folder: BIOS
+    extract: false
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: BIOS
+        region: World
+        language: English
+
+  - name: RetroRom-Collection
+    type: IA-COL
+    urls:
+    - https://archive.org/details/rr-3do
+    folder: Software/Collections/RetroRom-Collection
+    extract: true
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: CD
+        region: World
+        language: English
+    
+  - name: 3do-interactive-samplers
+    type: ddl
+    urls: 
+    - https://archive.org/download/the-3do-interactive-sampler-cd-4-3do-usa/The_3DO_Interactive_Sampler_CD_4.bin
+    - https://archive.org/download/the-3do-interactive-sampler-cd-4-3do-usa/The_3DO_Interactive_Sampler_CD_4.cue
+    folder: Software/Collections/3DO_Interactive_Sampler
+    extract: false
+    metadata:
+      ruleset: Generic
+      defaults:
+        media_type: CD
+        region: World
+        language: English
+  
+
+packs:
+  - id: just-bio
+    name: Bioses Only
+    description: Essential BIOS files no software
+    estimated_size: 2.2MB
+    sources: [bios]
+    supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
+    info_links:
+      - label: IA Page
+        url: "https://ia803104.us.archive.org/view_archive.php?archive=/8/items/MAME217RomsOnlyMerged/MAME%200.217%20ROMs%20%28merged%29.zip"
+
+  - id: minimal
+    name: Minimal Starter Set
+    description: Essential BIOS files and a samplers, to test the system
+    estimated_size: 710MB
+    sources: [bios,3do-interactive-samplers]
+    supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
+  
+  - id: retrorom
+    name: A full set of 3DO games from the RetroRom collection
+    description: Includes all the games from the RetroRom collection, which is a large set of 3DO games ripped from original discs. This pack is for users who want a more complete library of 3DO games to explore.
+    estimated_size: 31GB
+    sources: [RetroRom-Collection]
+    supported_by: [RetroBat,Batocera,RetroPie,MiSTer]
+    info_links:
+      - label: IA Page
+        url: https://archive.org/details/rr-3do
+  

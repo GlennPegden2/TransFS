@@ -1,0 +1,74 @@
+formats:
+  mame_softwarelist:
+    item_path: ".//software"
+    metadata:
+      title:
+        fallback:
+          - path: description
+          - attr: name
+      publisher:
+        path: publisher
+      release_year:
+        path: year
+        cast: int
+      is_prototype:
+        attr: supported
+        map:
+          "no": true
+          "*": false
+    tags:
+      static:
+        - mame_softwarelist
+    match:
+      filename:
+        source: "@name"
+        normalize: alnum_stem
+      checksums:
+        - item_path: ".//rom"
+          sha1_attr: sha1
+          crc_attr: crc
+  logiqx_dat_romlist:
+    item_path: ".//rom"
+    metadata:
+      title:
+        attr: name
+    tags:
+      static:
+        - logiqx_dat
+        - clrmamepro
+    match:
+      filename:
+        source: "@name"
+        normalize: alnum_stem
+      checksums:
+        - item_path: "."
+          name_attr: name
+          sha1_attr: sha1
+          crc_attr: crc
+  logiqx_dat_games:
+    item_path: ".//game"
+    metadata:
+      title:
+        fallback:
+          - path: description
+          - attr: name
+      publisher:
+        fallback:
+          - path: manufacturer
+          - path: publisher
+      release_year:
+        path: year
+        cast: int
+    tags:
+      static:
+        - logiqx_dat
+        - game_catalog
+    match:
+      filename:
+        source: "@name"
+        normalize: alnum_stem
+      checksums:
+        - item_path: ".//rom"
+          name_attr: name
+          sha1_attr: sha1
+          crc_attr: crc

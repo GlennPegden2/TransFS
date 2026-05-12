@@ -1,0 +1,6 @@
+# Samba username mapping file
+# Maps Windows authentication usernames to Unix usernames
+# Format: unix_name = windows_name1 windows_name2 ...
+
+# Map various root username formats to the Unix root user
+root = root "root@localhost" "root@*"

@@ -1,0 +1,15 @@
+name: atarimania
+version: "2026.02"
+description: "Atarimania Atari 2600 naming hints"
+tokens:
+  region:
+    - "(PAL)"
+    - "(SECAM)"
+    - "(SECOM)"
+  flags:
+    hack: "(Hack)"
+rules:
+  - id: atarimania_date_title_publisher
+    description: "If a date/year tag exists, title is everything before it; the next tag provides publisher (up to comma)."
+  - id: atarimania_single_remaining_publisher
+    description: "If only one non-date/non-code tag remains, use it as publisher (up to comma)."

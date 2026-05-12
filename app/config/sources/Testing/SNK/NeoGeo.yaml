@@ -1,0 +1,9 @@
+# SNK Neo Geo Software Sources
+
+base_path: SNK/NeoGeo/Software
+
+sources:
+  - name: Neo Geo ROM Set
+    type: ddl
+    url: https://archive.org/download/NeoGeoROMSet/NeoGeoROMSet.zip
+    folder: ROMs

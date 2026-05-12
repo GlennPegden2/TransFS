@@ -1,0 +1,7 @@
+# RetroPie Client Configuration
+# Defines system mappings and file organization for RetroPie platform
+
+name: RetroPie
+default_target_path: "{name}/{system_name}/{maps}"
+
+systems: []

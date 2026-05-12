@@ -1,0 +1,9 @@
+# Nintendo GBA Software Sources
+
+base_path: Nintendo/GBA/Software
+
+sources:
+  - name: No-Intro GBA Collection
+    type: ddl
+    url: https://archive.org/download/No-Intro-Collection_2016-01-03/Nintendo%20-%20Game%20Boy%20Advance.zip
+    folder: ROMs

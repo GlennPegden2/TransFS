@@ -1,0 +1,116 @@
+# Acorn BBC Micro Software Sources
+
+base_path: Acorn/BBC_B/
+
+sources:
+#  - name: beeb.zip
+#    type: ddl
+#    url: https://retro.m1ner.co.uk/bbc/BEEB.zip
+#    folder: MMB
+  
+#  - name: beeb2.zip
+#    type: ddl
+#    url: https://retro.m1ner.co.uk/bbc/BEEB2.zip
+#    folder: MMB
+  
+  - name: higgy_mmbeeb-v1.2.zip
+    type: ddl
+#    url: https://retro.m1ner.co.uk/bbc/higgy_mmbeeb-v1.2.zip
+    url: http://www.stardot.org.uk/files/mmb/higgy_mmbeeb-v1.2.zip
+    folder: Software/MMB
+
+  - name: best_beeb_games
+    type: ddl
+    urls: 
+      - https://www.bbcmicro.co.uk/gameimg/discs/366/Disc021-EliteD.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/25/Disc002-ChuckieEgg.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/266/Disc015-ReptonP.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2408/DiscA03-AviatorColour.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/85/Disc005-MrEe.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/432/Disc024-Thrust.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/3001/Disc999-Podd.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/425/Disc024-Repton3P.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/1335/Disc075-BlockbustersDomark.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/188/Disc011-ManicMiner.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/298/Disc017-Repton2.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/290/Disc017-Citadel.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2803/Disc999-EliteA.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/512/Disc029-ImogenSTDP.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/208/Disc012-KnightLore.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/439/Disc025-JetSetWilly.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/96/Disc006-Frak.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/4502/Disc999-MazeV2_0.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/812/Disc046-AroundTheWorldIn40ScreensP.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/267/Disc015-Revs.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/709/Disc040-ExileR.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/1681/Disc094-HobbitSTT.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/165/Disc010-AticAtac.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2451/DiscA05-KillerGorillaSAM3.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/4508/Disc182-CrystalCastleCB.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/238/Disc014-CastleQuest.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/398/Disc023-ChuckieEgg2.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2869/Disc014-LabyrinthAcornsoft.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/1508/Disc084-SamanthaFoxStripPokerD.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/79/Disc005-DareDevilDenis.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/194/Disc011-SabreWulf.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/3112/Disc999-StuntCarRacerSTD.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2843/Disc999-PrinceOfPersia.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/473/Disc027-DrWhoAndTheMinesOfTerrorR.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/564/Disc032-CodenameDroidStrykersRun2.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/805/Disc045-ReptonThruTimeP.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/412/Disc023-Ravenskull.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2838/DiscA11-TrainGame91.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/89/Disc005-TwinKingdomValleySTT.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/2843/Disc999-PrinceOfPersia.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/609/Disc034-SentinelP.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/3286/Disc999-StrykersRunEnhanced.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/35/Disc002-StarshipCommand.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/934/Disc052-SimCitySTD.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/443/Disc025-PalaceOfMagic.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/269/Disc015-Sim.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/598/Disc034-FireTrack.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/438/Disc025-Galaforce.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/274/Disc016-Boffin.ssd
+      - https://www.bbcmicro.co.uk/gameimg/discs/632/Disc036-Arkanoid.ssd
+    folder: Software/SSD
+
+
+  - name: BBC_Welcome_Disk
+    type: ddl
+    url: https://www.bbcmicro.co.uk/gameimg/discs/2874/Disc999-Welcome.ssd
+    folder: Software/SSD
+    rename:
+      - from: Disc999-Welcome.ssd
+        to: WelconeDisk.ssd
+
+packs:
+  - id: Welcome
+    name: Minimal - BBC Micro Welcome Disk 
+    description: The BBC Micro Welcome Disk contains introductory software to help new users get started with their BBC Micro computer. The content is almost identical to the Tape version.
+    estimated_size: 80K
+    sources: [BBC_Welcome_Disk]
+    info_links:
+      - label: BBCMicro.co.uk
+        url: https://www.bbcmicro.co.uk/game.php?id=2874
+      - label: 30 min video tour of the Welcome Disk software
+        url: https://www.youtube.com/watch?v=IMs8QuSd_tE  
+
+  - id: higgy_1.2
+    name: higgy's mmbeeb v1.2.zip
+    description: Higgy's evoltion of the original MMBEEB software package for the BBC Micro. It includes a large menu-driven collection of games and applications in MMB format.
+    estimated_size: 19.2MB
+    sources: [higgy_mmbeeb-v1.2.zip]
+    info_links:
+      - label: Announcemnt thread on MiSTer FPGA forums
+        url: https://misterfpga.org/viewtopic.php?t=1220
+
+  - id: BestBeebGames
+    name: Best Beeb Games  
+    description: A curated collection of the best games available for the BBC Micro computer, taken from bbcmicro.co.uk.
+    estimated_size: 10Mb
+    sources: [best_beeb_games]
+    build_script: MiSTer/Acorn/BBC_B/STH-rename.sh
+    info_links:
+      - label: BBCMicro.co.uk most popular games
+        url: https://www.bbcmicro.co.uk/index.php?search=&sort=p
+

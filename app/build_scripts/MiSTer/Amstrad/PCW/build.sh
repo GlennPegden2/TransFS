@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Amstrad PCW build"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Amstrad/PCW/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Amstrad/PCW/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"
@@ -27,5 +27,7 @@ mkdir -p "$DSK_DIR"
 tar -zxvf "$DOWNLOADED_ZIP" -C "$UNZIP_DIR"
 find "$UNZIP_DIR" -type f -exec mv -t "$DSK_DIR" {} +
 find "$UNZIP_DIR" -type d -empty -delete
+
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
 
 echo "Build complete. Flattened files are in $DSK_DIR"

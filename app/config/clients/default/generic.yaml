@@ -1,0 +1,22 @@
+# Generic Client Configuration
+# Fallback configuration for generic systems not specific to a platform
+
+name: Generic
+default_target_path: "{name}/{system_name}/{maps}"
+
+systems:
+  - name: Apple-II
+    display_name: "Apple //e"
+    manufacturer: Apple
+    system_mapping_name: AppleII
+    local_base_path: Apple/AppleII
+    maps:
+      - FDs:
+          query:
+            source_dir: Software
+            extensions:
+              - DSK
+              - DO
+              - PO
+            supports_zip: false
+            supports_zaparoo: true

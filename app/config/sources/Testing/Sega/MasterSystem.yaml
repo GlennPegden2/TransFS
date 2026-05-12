@@ -1,0 +1,9 @@
+# Sega Master System Software Sources
+
+base_path: Sega/MasterSystem/Software
+
+sources:
+  - name: No-Intro Master System Collection
+    type: ddl
+    url: https://archive.org/download/No-Intro-Collection_2016-01-03/Sega%20-%20Master%20System.zip
+    folder: ROMs

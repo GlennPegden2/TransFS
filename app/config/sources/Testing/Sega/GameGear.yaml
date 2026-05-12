@@ -1,0 +1,9 @@
+# Sega Game Gear Software Sources
+
+base_path: Sega/GameGear/Software
+
+sources:
+  - name: No-Intro Game Gear Collection
+    type: ddl
+    url: https://archive.org/download/No-Intro-Collection_2016-01-03/Sega%20-%20Game%20Gear.zip
+    folder: ROMs

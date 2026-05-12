@@ -1,0 +1,23 @@
+name: TOSEC
+version: "2020.11"
+description: "Baseline TOSEC naming rules (starter set)"
+tokens:
+  region:
+    - "(USA)"
+    - "(Japan)"
+    - "(Europe)"
+  language:
+    - "(En)"
+    - "(Ja)"
+    - "(Fr)"
+  flags:
+    prototype: "(Proto)"
+    homebrew: "(Homebrew)"
+    revision: "(Rev"
+rules:
+  - id: tosec_standard
+    pattern: "{title} ({year}) ({region}) [{flags}]"
+    mappings:
+      year: release_year
+      region: region
+      flags: flags

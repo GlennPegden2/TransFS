@@ -2,3 +2,18 @@ content/*
 .DS_Store
 __pycache__/
 .vscode/
+venv/
+.venv/
+.venv-win/
+.benchmarks/
+.pytest_cache/
+.github/
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github\instructions\snyk_rules.instructions.md
+.github/instructions/snyk_rules.instructions.md
+app/Native/
+legacy/
+.gitignore
+.github/copilot-instructions.md
+tests/snapshots/locked/

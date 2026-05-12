@@ -1,0 +1,17 @@
+# Atari 5200 Software Sources
+
+base_path: Atari/5200/Software
+
+sources:
+
+
+
+  - name: AtariAge 5200 .car Collection
+    type: ddl
+    url: https://forums.atariage.com/applications/core/interface/file/attachment.php?id=819172
+    folder: Software/CAR
+
+  - name: TOSEC Atari 5200 Collection
+    type: ddl
+    url: https://archive.org/download/Atari_5200_TOSEC_2012_04_23/Atari_5200_TOSEC_2012_04_23.zip
+    folder: ROMs # WTF were we doing here? 

@@ -1,0 +1,9 @@
+# Atari 7800 Software Sources
+
+base_path: Atari/7800/Software
+
+sources:
+  - name: TOSEC Atari 7800 Collection
+    type: ddl
+    url: https://archive.org/download/Atari_7800_TOSEC_2012_04_23/Atari_7800_TOSEC_2012_04_23.zip
+    folder: ROMs

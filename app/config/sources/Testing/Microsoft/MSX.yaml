@@ -1,0 +1,9 @@
+# Microsoft MSX Software Sources
+
+base_path: Microsoft/MSX/Software
+
+sources:
+  - name: TOSEC MSX Collection
+    type: ddl
+    url: https://archive.org/download/MSX_TOSEC_2012_04_23/MSX_TOSEC_2012_04_23.zip
+    folder: ROMs

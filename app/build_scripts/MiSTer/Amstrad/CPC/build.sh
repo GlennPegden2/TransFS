@@ -4,7 +4,7 @@ set -e
 echo "Build Script for Amstrad PCW build"
 
 # Use BASE_PATH from environment, fallback to default if not set
-SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Amstrad/PCW/}"
+SOFTWARE_DIR="${BASE_PATH:-/mnt/filestorefs/Native/Systems/Amstrad/PCW/}"
 TMP_DIR="${TMP_DIR:-/tmp/}"
 
 echo "Using SOFTWARE_DIR: $SOFTWARE_DIR"
@@ -39,11 +39,13 @@ mv $UNZIP_DIR/*/*\[DSK\]*/* $SOFTWARE_DIR/DSK
 mv $UNZIP_DIR/*/*\[ROM\]*/* $SOFTWARE_DIR/ROM
 mv $UNZIP_DIR/*/*\[CPR\]*/* $SOFTWARE_DIR/CPR
 mv $UNZIP_DIR/*/*Demos*/* $SOFTWARE_DIR/DSK/Demos
-mv $UNZIP_DIR/*/*Public Domain*/* $SOFTWARE_DIR/DSK/PD
+mv $UNZIP_DIR/*/*Public\ Domain*/* $SOFTWARE_DIR/DSK/PD
 mv $UNZIP_DIR/*/*Compilations*/* $SOFTWARE_DIR/DSK/Compilations
 #mv $UNZIP_DIR/*/*\[TAP\]*/* $SOFTWARE_DIR/TAP
 #mv $UNZIP_DIR/*/*\[HEX\]*/* $SOFTWARE_DIR/HEX
 #mv $UNZIP_DIR/*/*Boot\ Loader*/* $SOFTWARE_DIR/HEX
 #mv $UNZIP_DIR/*/*Firmware*/* $SOFTWARE_DIR/HEX
+
+rm -rf "$SOFTWARE_DIR/tmp/unzipped_software"
 
 echo "Build complete. Flattened files are in $DSK_DIR"

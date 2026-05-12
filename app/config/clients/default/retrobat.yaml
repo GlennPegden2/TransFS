@@ -1,0 +1,145 @@
+# RetroBat Client Configuration
+# Defines system mappings and file organization for RetroBat frontend
+
+name: RetroBat
+download_layout: folder_based
+default_target_path: "{name}/{system_name}/{maps}"
+
+# Client-level base path for client infrastructure files (e.g., downloaded BIOS)
+local_base_path: Clients/RetroBat
+
+# Category-based path templates
+# Maps with category="roms" will appear under ROMS/{system_name}
+# Maps with category="bios" will appear under bios/{system_name}
+# Maps with category="shared_bios" will appear under bios (no system subdirectory)
+category_paths:
+  roms: "{name}/ROMS/{system_name}"
+  bios: "{name}/bios/{system_name}"
+  mame_roms: "{name}/mame/roms/{system_name}"
+  mame_bios: "{name}/mame/bios/{system_name}"
+  shared_bios: "{name}/bios"  # Shared BIOS folder at client root
+  retroarch: "{name}/retroarch"
+
+# Client-level maps (apply globally to all systems in this client)
+# These files appear at /RetroBat/bios/* regardless of system
+maps:
+  - .:  # All files from Clients/RetroBat/bios/ (downloaded BIOS files)
+      category: shared_bios
+      query:
+        source_dir: BIOS
+        extensions:
+          - "*"
+        preserve_structure: true
+        supports_zaparoo: false
+        preserve_exact_filenames: true
+        transform_zip: true
+        zip_mode: flatten
+
+systems: 
+ # --- 3DO Company ---
+  - name: 3DO
+    manufacturer: 3DO
+    system_mapping_name: 3DO
+    local_base_path: Systems/3DO/3DO
+    maps:
+      - .:
+          category: shared_bios  
+          query:
+            source_dir: bios
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+            preserve_structure: false
+
+      - CDs:
+          category: roms  # Appears at /RetroBat/ROMS/3DO/CDs
+          query:
+            source_dir: Software
+            extensions:
+              - CUE
+              - BIN
+              - ISO
+              - CHD
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: true
+            preserve_structure: false
+#            extension_map:
+#              CUE: CHD
+#          transforms:
+#            CUE:
+#              - type: chd
+      - BIOS:
+          category: roms
+          query:
+            source_dir: BIOS
+            extensions:
+              - BIN
+              - ZIP
+            preserve_structure: false  
+  - name: AcornAtom
+    manufacturer: Acorn
+    system_mapping_name: Atom
+    local_base_path: Systems/Acorn/Atom
+    maps:
+      - FDs:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/FDs
+          query:
+            source_dir: Software/Sources
+            extensions:
+#              - ATM
+              - DSK
+            transform_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+      - ROMs:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/ROMs
+          query:
+            source_dir: Software/Sources
+            extensions:
+              - ROM
+            transform_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+      - Tapes:
+          category: roms  # Appears at /RetroBat/ROMS/AcornAtom/Tapes
+          query:
+            source_dir: Software/Sources
+            extensions:
+              - UEF
+            transform_zip: true
+            supports_zaparoo: false
+            preserve_exact_filenames: true
+#            preserve_structure: true  # Enable to see directory structure: FDs/Sources/hoglet67/AA/...
+      - atom.zip:
+          category: shared_bios  # Appears at /RetroBat/bios/atom.zip (shared root, not system-specific)
+          file:
+            path: Software/BIOS/atom.zip
+            zip_mode: file  # Treat as a file, not a browsable directory
+  # --- Emerson ---
+  - name: Arcadia
+    manufacturer: Emerson
+    system_mapping_name: Arcadia 2001
+    local_base_path: Emerson/Arcadia 2001
+    maps:
+      - ROMs:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: true
+      - .:
+          category: shared_bios  # Appears at /RetroBat/bios/ar_bios.zip (shared root, not system-specific)
+          query:
+            source_dir: BIOS
+            extensions:
+              - zip
+            transform_zip: true
+            zip_mode: file  # Serve the zip as a whole file, not expanded
+            supports_zaparoo: false
+
+

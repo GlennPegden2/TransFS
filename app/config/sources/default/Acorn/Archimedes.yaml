@@ -1,0 +1,43 @@
+# Acorn Archimedes Software Sources
+
+base_path: Acorn/Archimedes/
+
+sources:
+  - name: mister-bios
+    type: ddl
+    url: https://github.com/MiSTer-devel/Archie_MiSTer/raw/refs/heads/master/releases/riscos.rom
+    folder: BIOS
+
+  - name: 4corn-bios
+    type: ddl
+    url: https://www.4corn.co.uk/archive/roms/riscos3_71.zip
+    folder: Software/Collections/4corn
+    extract_from_archive:
+      - risocs-3.71.rom # Yes! They spelt it wrong!
+    rename:
+      - from: risocs-3.71.rom
+        to: ../../../BIOS/riscos3_71.rom
+  
+  - name: IA-RiscOS-RomPack
+    type: ddl
+    url: https://archive.org/download/RISC-OS-ROM-collection/ROMS.rar
+    folder: BIOS
+    extract: true
+
+  - name: arcarcnl-free-app-discs
+    type: ddl
+    urls: 
+     -  https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%201%20%281992%29%28Acorn%20Computers%29.adf
+      - https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Applications%20Disc%202%20%281992%29%28Acorn%20Computers%29.adf
+      - https://arcarc.nl/archive/ROMS/OS/OS%20Support%20Discs/RISC%20OS%203.10/RISC%20OS%203.10%20Support%20Disc%20%281992%29%28Acorn%20Computers%29.adf
+    folder: Software/ADF
+    
+
+packs:
+  - id: minimal
+    name: Minimal Starter Set
+    description: Essential BIOS files and a few freeware demo applications that shipped with RiscOS 3, to test the system
+    estimated_size: 11MB
+    sources: [mister-bios, 4corn-bios, arcarcnl-free-app-discs]
+  
+  

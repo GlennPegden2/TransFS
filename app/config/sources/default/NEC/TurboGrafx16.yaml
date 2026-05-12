@@ -1,0 +1,9 @@
+# NEC TurboGrafx16 Software Sources
+
+base_path: NEC/TurboGrafx16/Software
+
+sources:
+  - name: TOSEC TurboGrafx16 Collection
+    type: ddl
+    url: https://archive.org/download/TurboGrafx16_TOSEC_2012_04_23/TurboGrafx16_TOSEC_2012_04_23.zip
+    folder: ROMs
