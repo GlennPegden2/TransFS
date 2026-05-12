@@ -14,6 +14,27 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def get_smb_mode(config: dict) -> str:
+    """Return normalized SMB ownership mode.
+
+    Supported values:
+    - transfs_managed (default for backward compatibility)
+    - retronas_managed
+    - disabled
+    """
+    smb_config = (config or {}).get('smb', {}) or {}
+    mode = str(smb_config.get('mode', 'transfs_managed')).strip().lower()
+    if mode not in {'transfs_managed', 'retronas_managed', 'disabled'}:
+        logger.warning("Unknown smb.mode '%s'; defaulting to transfs_managed", mode)
+        return 'transfs_managed'
+    return mode
+
+
+def is_samba_managed_by_transfs(config: dict) -> bool:
+    """Return True when TransFS should manage Samba configuration/services."""
+    return get_smb_mode(config) == 'transfs_managed'
+
+
 def configure_samba_user(username: str, password: str) -> bool:
     """
     Configure a Samba user with the given password.
@@ -153,6 +174,11 @@ def setup_samba_from_config(config: dict) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    smb_mode = get_smb_mode(config)
+    if smb_mode != 'transfs_managed':
+        logger.info("Skipping Samba setup because smb.mode=%s", smb_mode)
+        return True
+
     smb_config = config.get('smb', {})
     username = smb_config.get('username', 'root')
     password = smb_config.get('password', '1')

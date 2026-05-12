@@ -1,5 +1,6 @@
 import yaml
 import os
+import socket
 from dataclasses import dataclass
 from typing import Optional
 from functools import lru_cache
@@ -160,6 +161,7 @@ def read_config(config_dir="config"):
     """
     # Read app config
     app_config = read_app_config(config_dir)
+    resolved_runtime = resolve_runtime_ports(config_dir=config_dir, app_config=app_config)
     
     # Read clients config
     clients_config = read_clients_config(config_dir)
@@ -208,7 +210,8 @@ def read_config(config_dir="config"):
     return {
         **app_config,
         **clients_config,
-        "archive_sources": archive_sources
+        "archive_sources": archive_sources,
+        "runtime_ports": resolved_runtime,
     }
 
 def get_clients(config_dir="config"):
@@ -278,10 +281,153 @@ def get_manufacturers_and_canonical_names(config_dir="config"):
 def get_web_api_config(config_dir="config") -> dict:
     """Get web API host and port configuration."""
     app_config = read_app_config(config_dir)
-    web_api = app_config.get("web_api", {})
+    resolved_runtime = resolve_runtime_ports(config_dir=config_dir, app_config=app_config)
+    web_api = resolved_runtime.get("web_api", app_config.get("web_api", {}))
     return {
-        "host": web_api.get("host", "0.0.0.0"),
-        "port": web_api.get("port", 8000)
+        "host": web_api.get("host", "0.0.0.0") or "0.0.0.0",
+        "port": int(web_api.get("allocated_port", web_api.get("port", 8000)))
+    }
+
+
+def _to_int_port(value, default_port: int) -> int:
+    """Convert value to a valid TCP/UDP port, falling back to default on invalid input."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default_port
+    if 1 <= port <= 65535:
+        return port
+    return default_port
+
+
+def _normalize_port_list(values) -> list[int]:
+    """Normalize a list of user-provided ports into unique, valid integers preserving order."""
+    if not isinstance(values, list):
+        return []
+    normalized = []
+    seen = set()
+    for item in values:
+        port = _to_int_port(item, default_port=-1)
+        if port == -1:
+            continue
+        if port in seen:
+            continue
+        seen.add(port)
+        normalized.append(port)
+    return normalized
+
+
+def _is_bind_available(host: str, port: int) -> bool:
+    """Check whether a TCP bind appears available on this host/port combination."""
+    bind_host = host or "0.0.0.0"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((bind_host, port))
+            return True
+    except OSError:
+        return False
+
+
+def _resolve_port_allocation(
+    service_name: str,
+    service_config: dict,
+    default_port: int,
+    default_fallback_ports: list[int],
+    auto_allocate: bool,
+) -> dict:
+    """Resolve port selection for a service with optional fallback probing."""
+    bind_host = service_config.get("bind_host") or service_config.get("host") or "0.0.0.0"
+    preferred_port = _to_int_port(
+        service_config.get("preferred_port", service_config.get("port", default_port)),
+        default_port,
+    )
+    fallback_ports = _normalize_port_list(service_config.get("fallback_ports", default_fallback_ports))
+    strict_standard_port = bool(service_config.get("strict_standard_port", False))
+
+    allocated_port = preferred_port
+    warning_nonstandard_port = False
+    conflicts_detected = []
+    attempted_ports = [preferred_port]
+    allocation_error = None
+
+    if auto_allocate:
+        if _is_bind_available(bind_host, preferred_port):
+            allocated_port = preferred_port
+        else:
+            conflicts_detected.append(preferred_port)
+            if strict_standard_port:
+                allocation_error = (
+                    f"{service_name} preferred port {preferred_port} is unavailable and strict_standard_port is enabled"
+                )
+            else:
+                for candidate in fallback_ports:
+                    if candidate == preferred_port:
+                        continue
+                    attempted_ports.append(candidate)
+                    if _is_bind_available(bind_host, candidate):
+                        allocated_port = candidate
+                        warning_nonstandard_port = (candidate != preferred_port)
+                        break
+                    conflicts_detected.append(candidate)
+
+                if allocated_port == preferred_port:
+                    allocation_error = (
+                        f"{service_name} could not allocate an available port from preferred+fallback set"
+                    )
+
+    return {
+        **service_config,
+        "bind_host": bind_host,
+        "preferred_port": preferred_port,
+        "fallback_ports": fallback_ports,
+        "strict_standard_port": strict_standard_port,
+        "allocated_port": allocated_port,
+        "warning_nonstandard_port": warning_nonstandard_port,
+        "auto_allocate_port": auto_allocate,
+        "attempted_ports": attempted_ports,
+        "conflicts_detected": conflicts_detected,
+        "allocation_error": allocation_error,
+    }
+
+
+def resolve_runtime_ports(config_dir="config", app_config: Optional[dict] = None) -> dict:
+    """Resolve runtime listener ports for services using an opt-in strategy.
+
+    Behavior is intentionally no-op by default for existing Docker workflows.
+    Enable by either:
+    - runtime.enable_port_auto_claim: true, or
+    - service-level auto_allocate_port: true
+    """
+    cfg = app_config if app_config is not None else read_app_config(config_dir)
+    runtime_cfg = cfg.get("runtime", {}) or {}
+    global_auto_allocate = bool(runtime_cfg.get("enable_port_auto_claim", False))
+
+    web_cfg = cfg.get("web_api", {}) or {}
+    smb_cfg = cfg.get("smb", {}) or {}
+
+    resolved_web = _resolve_port_allocation(
+        service_name="web_api",
+        service_config=web_cfg,
+        default_port=8000,
+        default_fallback_ports=[8001, 8080, 18000],
+        auto_allocate=global_auto_allocate or bool(web_cfg.get("auto_allocate_port", False)),
+    )
+    # Preserve legacy access to web_api.port for callers not yet migrated to allocated_port
+    resolved_web["port"] = int(resolved_web.get("allocated_port", resolved_web.get("port", 8000)))
+
+    resolved_smb = _resolve_port_allocation(
+        service_name="smb",
+        service_config=smb_cfg,
+        default_port=445,
+        default_fallback_ports=[3445, 1445, 2445],
+        auto_allocate=global_auto_allocate or bool(smb_cfg.get("auto_allocate_port", False)),
+    )
+
+    return {
+        "runtime": runtime_cfg,
+        "web_api": resolved_web,
+        "smb": resolved_smb,
     }
 
 def get_system_config(client_name: str, system_name: str, config_dir="config") -> Optional[SystemConfig]:

@@ -44,6 +44,7 @@ from config import (
     get_systems_for_client,
     get_manufacturers_and_canonical_names,
     get_system_config,
+    resolve_runtime_ports,
     read_config,
     read_app_config,
     read_clients_config,
@@ -2089,6 +2090,30 @@ def config_get(fields: str = None):
                 "sync_on_startup": False
             }),
             "native_external_mounts": config.get("native_external_mounts", []),
+        }
+    except Exception as e:  # pylint: disable=broad-except
+        return {"error": str(e)}
+
+
+@app.get("/runtime/ports", tags=["System"])
+def runtime_ports_status():
+    """Return resolved runtime port allocation status for installer diagnostics."""
+    try:
+        app_config = read_app_config() or {}
+        runtime_ports = resolve_runtime_ports(app_config=app_config)
+        smb_config = (app_config.get("smb") or {})
+        smb_mode = str(smb_config.get("mode", "transfs_managed")).strip().lower()
+        if smb_mode not in {"transfs_managed", "retronas_managed", "disabled"}:
+            smb_mode = "transfs_managed"
+
+        return {
+            "runtime": runtime_ports.get("runtime", {}),
+            "web_api": runtime_ports.get("web_api", {}),
+            "smb": {
+                **runtime_ports.get("smb", {}),
+                "mode": smb_mode,
+                "managed_by_transfs": smb_mode == "transfs_managed",
+            },
         }
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -5914,6 +5939,8 @@ def _get_connection_profile(request: Request | None = None):
     """Resolve externally reachable SMB endpoint for setup guidance and script generation."""
     config = read_config()
     smb_config = config.get('smb', {})
+    runtime_ports = resolve_runtime_ports(app_config=read_app_config())
+    resolved_smb = runtime_ports.get('smb', {})
 
     def _strip_port(hostname: str) -> str:
         value = (hostname or '').strip()
@@ -5944,7 +5971,8 @@ def _get_connection_profile(request: Request | None = None):
     if not host:
         host = _strip_port(avahi_hostname) or 'transfs.local'
 
-    port = advertised_port or '3445'
+    default_port = str(resolved_smb.get('allocated_port', resolved_smb.get('preferred_port', 3445)))
+    port = advertised_port or default_port
     try:
         port_num = int(str(port))
         if port_num < 1 or port_num > 65535:
@@ -5968,6 +5996,7 @@ def _get_connection_profile(request: Request | None = None):
     return {
         'host': host,
         'port': port,
+        'smb_mode': str(smb_config.get('mode', 'transfs_managed')).strip().lower() or 'transfs_managed',
         'share_name': share_name,
         'native_share_name': native_share_name,
         'unc_path': unc_path,

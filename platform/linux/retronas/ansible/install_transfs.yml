@@ -1,0 +1,134 @@
+---
+- name: Install and configure TransFS for RetroNAS
+  hosts: retronas_hosts
+  become: true
+
+  vars:
+    transfs_repo_url: https://github.com/example/transfs.git
+    transfs_repo_version: main
+    transfs_install_root: /opt/transfs
+    transfs_user: root
+    transfs_group: root
+
+    transfs_python_bin: python3
+    transfs_log_dir: /var/log/transfs
+
+    transfs_smb_mode: retronas_managed
+    transfs_smb_preferred_port: 445
+    transfs_smb_fallback_ports: 3445,1445,2445
+    transfs_smb_strict_standard_port: false
+
+    transfs_web_host: 0.0.0.0
+    transfs_web_preferred_port: 8000
+    transfs_web_fallback_ports: 8001,8080,18000
+    transfs_web_strict_standard_port: false
+
+    transfs_enable_port_auto_claim: true
+    transfs_runtime_profile: retronas-baremetal
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.package:
+        name:
+          - git
+          - python3
+          - python3-pip
+          - fuse3
+        state: present
+
+    - name: Ensure optional Samba packages are present when TransFS manages SMB
+      ansible.builtin.package:
+        name:
+          - samba
+        state: present
+      when: transfs_smb_mode == 'transfs_managed'
+
+    - name: Ensure TransFS install root exists
+      ansible.builtin.file:
+        path: "{{ transfs_install_root }}"
+        state: directory
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+
+    - name: Checkout TransFS repository
+      ansible.builtin.git:
+        repo: "{{ transfs_repo_url }}"
+        dest: "{{ transfs_install_root }}"
+        version: "{{ transfs_repo_version }}"
+        update: true
+
+    - name: Install Python dependencies
+      ansible.builtin.pip:
+        requirements: "{{ transfs_install_root }}/requirements.txt"
+        executable: pip3
+
+    - name: Ensure log directory exists
+      ansible.builtin.file:
+        path: "{{ transfs_log_dir }}"
+        state: directory
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+
+    - name: Deploy runtime environment file
+      ansible.builtin.template:
+        src: templates/transfs-retronas.env.j2
+        dest: /etc/default/transfs-retronas
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart transfs-retronas
+
+    - name: Ensure runtime scripts are executable
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "0755"
+      loop:
+        - "{{ transfs_install_root }}/platform/linux/configure_retronas.sh"
+        - "{{ transfs_install_root }}/platform/linux/start_transfs_retronas.sh"
+
+    - name: Apply RetroNAS config profile
+      ansible.builtin.command: "{{ transfs_install_root }}/platform/linux/configure_retronas.sh"
+      environment:
+        TRANSFS_APP_DIR: "{{ transfs_install_root }}/app"
+        TRANSFS_CONFIG_PATH: "{{ transfs_install_root }}/app/config/app.yaml"
+        TRANSFS_SMB_MODE: "{{ transfs_smb_mode }}"
+        TRANSFS_SMB_PREFERRED_PORT: "{{ transfs_smb_preferred_port | string }}"
+        TRANSFS_SMB_FALLBACK_PORTS: "{{ transfs_smb_fallback_ports }}"
+        TRANSFS_SMB_STRICT_STANDARD_PORT: "{{ transfs_smb_strict_standard_port | ternary('true', 'false') }}"
+        TRANSFS_WEB_HOST: "{{ transfs_web_host }}"
+        TRANSFS_WEB_PREFERRED_PORT: "{{ transfs_web_preferred_port | string }}"
+        TRANSFS_WEB_FALLBACK_PORTS: "{{ transfs_web_fallback_ports }}"
+        TRANSFS_WEB_STRICT_STANDARD_PORT: "{{ transfs_web_strict_standard_port | ternary('true', 'false') }}"
+        TRANSFS_ENABLE_PORT_AUTO_CLAIM: "{{ transfs_enable_port_auto_claim | ternary('true', 'false') }}"
+        TRANSFS_RUNTIME_PROFILE: "{{ transfs_runtime_profile }}"
+      changed_when: true
+      notify: Restart transfs-retronas
+
+    - name: Deploy systemd unit
+      ansible.builtin.template:
+        src: templates/transfs-retronas.service.j2
+        dest: /etc/systemd/system/transfs-retronas.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload and restart transfs-retronas
+
+    - name: Enable and start TransFS service
+      ansible.builtin.systemd:
+        name: transfs-retronas.service
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart transfs-retronas
+      ansible.builtin.systemd:
+        name: transfs-retronas.service
+        state: restarted
+
+    - name: Reload and restart transfs-retronas
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: transfs-retronas.service
+        state: restarted
