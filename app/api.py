@@ -48,6 +48,7 @@ from config import (
     read_app_config,
     read_clients_config,
 )
+from lint_config import lint_all as lint_all_configs, lint_file as lint_single_config
 from native_mounts import (
     build_unc_path,
     get_mount_status,
@@ -629,6 +630,11 @@ class SnapshotCompareRequest(BaseModel):
     snapshot_name: str
     transfs_path: Optional[str] = None
     max_depth: Optional[int] = None
+
+
+class LintConfigRequest(BaseModel):
+    scope: str = "all"  # all | app | clients | sources | file
+    file_path: Optional[str] = None
 
 
 def _ensure_db_for_metadata() -> None:
@@ -3060,6 +3066,71 @@ def run_tests(test_type: str = "snapshot"):
         return {"task_id": task_id, "status": "running"}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
+
+
+@app.post("/lint-config")
+def lint_config(request: LintConfigRequest):
+    """Run configuration linting and return summary + per-file issues."""
+    try:
+        config_root = Path("/app/config").resolve()
+        scope = (request.scope or "all").strip().lower()
+        valid_scopes = {"all", "app", "clients", "sources", "file"}
+        if scope not in valid_scopes:
+            return {
+                "success": False,
+                "error": f"Invalid scope '{scope}'. Valid scopes: {', '.join(sorted(valid_scopes))}"
+            }
+
+        if scope == "file":
+            if not request.file_path:
+                return {"success": False, "error": "file_path is required when scope='file'"}
+
+            requested = Path(request.file_path)
+            resolved = requested.resolve() if requested.is_absolute() else (config_root / requested).resolve()
+
+            # Keep linting constrained to config files
+            try:
+                resolved.relative_to(config_root)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"file_path must be within {config_root}"
+                }
+
+            if not resolved.exists() or not resolved.is_file():
+                return {"success": False, "error": f"Config file not found: {resolved}"}
+
+            result = lint_single_config(str(resolved)).to_dict()
+            files = [result]
+        else:
+            summary = lint_all_configs(str(config_root)).to_dict()
+            files = summary.get("files", [])
+
+            if scope == "app":
+                files = [f for f in files if f.get("config_type") == "app"]
+            elif scope == "clients":
+                files = [f for f in files if f.get("config_type") == "client"]
+            elif scope == "sources":
+                files = [f for f in files if f.get("config_type") == "source"]
+
+        total_errors = sum(int(f.get("errors", 0)) for f in files)
+        total_warnings = sum(int(f.get("warnings", 0)) for f in files)
+        clean_files = sum(1 for f in files if f.get("status") == "ok")
+
+        return {
+            "success": True,
+            "scope": scope,
+            "summary": {
+                "total_files": len(files),
+                "total_errors": total_errors,
+                "total_warnings": total_warnings,
+                "clean_files": clean_files,
+            },
+            "files": files,
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.getLogger("api").error(f"Error running config lint: {exc}", exc_info=True)
+        return {"success": False, "error": str(exc)}
 
 
 @app.get("/test-results/{task_id}")
@@ -5977,27 +6048,4 @@ def download_setup_windows_script(request: Request):
     except Exception as e:
         logger.error(f"Error generating setup script: {e}", exc_info=True)
         return {'error': str(e)}, 500
-
-
-@app.post("/lint-config", tags=["Debug"])
-def lint_config(filepath: str = None):
-    """Lint YAML config files. If filepath given, lint that file; otherwise lint all."""
-    try:
-        from lint_config import lint_all, lint_file  # noqa: E402 (imported from /app)
-        
-        config_dir = os.path.join(os.path.dirname(__file__), "config")
-        
-        if filepath:
-            # Lint single file
-            if not os.path.exists(filepath):
-                return {"error": f"File not found: {filepath}"}, 404
-            result = lint_file(filepath)
-            return {"mode": "single", "result": result.to_dict()}
-        else:
-            # Lint all configs
-            summary = lint_all(config_dir)
-            return {"mode": "all", **summary.to_dict()}
-    except Exception as e:
-        logger.error(f"Error linting config: {e}", exc_info=True)
-        return {"error": str(e)}, 500
 
