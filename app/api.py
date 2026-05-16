@@ -37,19 +37,22 @@ import requests
 import yaml
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from mega import Mega
 from pydantic import BaseModel
+try:
+    from mega import Mega as MegaClient
+    MEGA_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pylint: disable=broad-except
+    MegaClient = None
+    MEGA_IMPORT_ERROR = exc
 from config import (
     get_clients,
     get_systems_for_client,
     get_manufacturers_and_canonical_names,
     get_system_config,
-    resolve_runtime_ports,
     read_config,
     read_app_config,
     read_clients_config,
 )
-from lint_config import lint_all as lint_all_configs, lint_file as lint_single_config
 from native_mounts import (
     build_unc_path,
     get_mount_status,
@@ -142,6 +145,13 @@ def _read_app_yaml() -> dict:
     app_config_path = "config/app.yaml"
     with open(app_config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _create_mega_client():
+    if MegaClient is None:
+        detail = f": {MEGA_IMPORT_ERROR}" if MEGA_IMPORT_ERROR else ""
+        raise RuntimeError(f"MEGA downloader unavailable{detail}")
+    return MegaClient()
 
 
 def _write_app_yaml(app_config: dict) -> None:
@@ -631,11 +641,6 @@ class SnapshotCompareRequest(BaseModel):
     snapshot_name: str
     transfs_path: Optional[str] = None
     max_depth: Optional[int] = None
-
-
-class LintConfigRequest(BaseModel):
-    scope: str = "all"  # all | app | clients | sources | file
-    file_path: Optional[str] = None
 
 
 def _ensure_db_for_metadata() -> None:
@@ -2095,30 +2100,6 @@ def config_get(fields: str = None):
         return {"error": str(e)}
 
 
-@app.get("/runtime/ports", tags=["System"])
-def runtime_ports_status():
-    """Return resolved runtime port allocation status for installer diagnostics."""
-    try:
-        app_config = read_app_config() or {}
-        runtime_ports = resolve_runtime_ports(app_config=app_config)
-        smb_config = (app_config.get("smb") or {})
-        smb_mode = str(smb_config.get("mode", "transfs_managed")).strip().lower()
-        if smb_mode not in {"transfs_managed", "retronas_managed", "disabled"}:
-            smb_mode = "transfs_managed"
-
-        return {
-            "runtime": runtime_ports.get("runtime", {}),
-            "web_api": runtime_ports.get("web_api", {}),
-            "smb": {
-                **runtime_ports.get("smb", {}),
-                "mode": smb_mode,
-                "managed_by_transfs": smb_mode == "transfs_managed",
-            },
-        }
-    except Exception as e:  # pylint: disable=broad-except
-        return {"error": str(e)}
-
-
 class ConfigUpdate(BaseModel):
     """Request body for config updates."""
     mountpoint: str | None = None
@@ -3091,71 +3072,6 @@ def run_tests(test_type: str = "snapshot"):
         return {"task_id": task_id, "status": "running"}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
-
-
-@app.post("/lint-config")
-def lint_config(request: LintConfigRequest):
-    """Run configuration linting and return summary + per-file issues."""
-    try:
-        config_root = Path("/app/config").resolve()
-        scope = (request.scope or "all").strip().lower()
-        valid_scopes = {"all", "app", "clients", "sources", "file"}
-        if scope not in valid_scopes:
-            return {
-                "success": False,
-                "error": f"Invalid scope '{scope}'. Valid scopes: {', '.join(sorted(valid_scopes))}"
-            }
-
-        if scope == "file":
-            if not request.file_path:
-                return {"success": False, "error": "file_path is required when scope='file'"}
-
-            requested = Path(request.file_path)
-            resolved = requested.resolve() if requested.is_absolute() else (config_root / requested).resolve()
-
-            # Keep linting constrained to config files
-            try:
-                resolved.relative_to(config_root)
-            except ValueError:
-                return {
-                    "success": False,
-                    "error": f"file_path must be within {config_root}"
-                }
-
-            if not resolved.exists() or not resolved.is_file():
-                return {"success": False, "error": f"Config file not found: {resolved}"}
-
-            result = lint_single_config(str(resolved)).to_dict()
-            files = [result]
-        else:
-            summary = lint_all_configs(str(config_root)).to_dict()
-            files = summary.get("files", [])
-
-            if scope == "app":
-                files = [f for f in files if f.get("config_type") == "app"]
-            elif scope == "clients":
-                files = [f for f in files if f.get("config_type") == "client"]
-            elif scope == "sources":
-                files = [f for f in files if f.get("config_type") == "source"]
-
-        total_errors = sum(int(f.get("errors", 0)) for f in files)
-        total_warnings = sum(int(f.get("warnings", 0)) for f in files)
-        clean_files = sum(1 for f in files if f.get("status") == "ok")
-
-        return {
-            "success": True,
-            "scope": scope,
-            "summary": {
-                "total_files": len(files),
-                "total_errors": total_errors,
-                "total_warnings": total_warnings,
-                "clean_files": clean_files,
-            },
-            "files": files,
-        }
-    except Exception as exc:  # pylint: disable=broad-except
-        logging.getLogger("api").error(f"Error running config lint: {exc}", exc_info=True)
-        return {"success": False, "error": str(exc)}
 
 
 @app.get("/test-results/{task_id}")
@@ -4716,7 +4632,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                             
                             try:
                                 yield "      🌐 Starting MEGA download...\n"
-                                mega_client = Mega()
+                                mega_client = _create_mega_client()
                                 m = mega_client.login()
                                 downloaded_file = m.download_url(url, dest_dir)
                                 
@@ -5455,7 +5371,7 @@ async def api_download_stream(req: DownloadRequest):
                     elif source_type == "mega":
                         try:
                             yield f"Starting MEGA download: {url}\n"
-                            mega_client = Mega()
+                            mega_client = _create_mega_client()
                             m = mega_client.login()
                             m.download_url(url, dest_dir)
                             yield f"Downloaded MEGA file for {req.manufacturer} / {req.system} to {dest_dir}\n"
@@ -5939,8 +5855,6 @@ def _get_connection_profile(request: Request | None = None):
     """Resolve externally reachable SMB endpoint for setup guidance and script generation."""
     config = read_config()
     smb_config = config.get('smb', {})
-    runtime_ports = resolve_runtime_ports(app_config=read_app_config())
-    resolved_smb = runtime_ports.get('smb', {})
 
     def _strip_port(hostname: str) -> str:
         value = (hostname or '').strip()
@@ -5971,8 +5885,7 @@ def _get_connection_profile(request: Request | None = None):
     if not host:
         host = _strip_port(avahi_hostname) or 'transfs.local'
 
-    default_port = str(resolved_smb.get('allocated_port', resolved_smb.get('preferred_port', 3445)))
-    port = advertised_port or default_port
+    port = advertised_port or '3445'
     try:
         port_num = int(str(port))
         if port_num < 1 or port_num > 65535:
@@ -5996,7 +5909,6 @@ def _get_connection_profile(request: Request | None = None):
     return {
         'host': host,
         'port': port,
-        'smb_mode': str(smb_config.get('mode', 'transfs_managed')).strip().lower() or 'transfs_managed',
         'share_name': share_name,
         'native_share_name': native_share_name,
         'unc_path': unc_path,

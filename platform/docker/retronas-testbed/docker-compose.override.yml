@@ -1,0 +1,53 @@
+# Docker Compose fragment for RetroNAS testbed integration.
+# Copy this into retronas-docker as docker-compose.transfs-testbed.yml
+# and run with:
+#   docker compose -f docker-compose.yml -f docker-compose.transfs-testbed.yml --profile retronas-testbed up -d
+
+version: '3.8'
+
+services:
+  retronas:
+    image: retronas:testbed
+    container_name: retronas-testbed
+    profiles:
+      - retronas-testbed
+    command: ["./retronas.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - retronas-testbed-net
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "8000:8000"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: retronas-testbed-postgres
+    profiles:
+      - retronas-testbed
+    environment:
+      POSTGRES_DB: transfs
+      POSTGRES_USER: transfs
+      POSTGRES_PASSWORD: transfs
+    networks:
+      - retronas-testbed-net
+    volumes:
+      - retronas_testbed_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transfs -d transfs"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  retronas-testbed-net:
+    driver: bridge
+
+volumes:
+  retronas_testbed_postgres_data:

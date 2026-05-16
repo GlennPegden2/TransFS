@@ -21,6 +21,7 @@ from filetypes import get_filetype_maps, get_filetype_transforms
 from ziptutils import get_zip_mapping
 from zippath import is_supported_archive_name, exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 from transforms import build_transform_pipeline, TransformPipeline
+from retronas_support import resolve_retronas_support_source_path, retronas_support_not_applicable
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,10 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     if rel_parts[0] == "Native":
         # Map /Native to /mnt/filestorefs/Native
         return os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
+
+    projected_source = resolve_retronas_support_source_path(config, root, translated_path, for_write=False)
+    if not retronas_support_not_applicable(projected_source):
+        return projected_source
 
     client = get_client(config, rel_parts)
     if not client:
@@ -1254,6 +1259,10 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     
     if rel_parts[0] == "Native":
         return os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
+
+    projected_source = resolve_retronas_support_source_path(config, root, translated_path, for_write=True)
+    if not retronas_support_not_applicable(projected_source):
+        return projected_source
 
     client = get_client(config, rel_parts)
     if not client:

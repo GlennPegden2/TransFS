@@ -1,0 +1,81 @@
+#!/bin/bash
+set -euo pipefail
+
+# Configure TransFS app.yaml for RetroNAS-style bare-metal deployment.
+# This script is intended to be called by a playbook/installer.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+APP_DIR="${TRANSFS_APP_DIR:-${REPO_ROOT}/app}"
+CONFIG_PATH="${TRANSFS_CONFIG_PATH:-${APP_DIR}/config/app.yaml}"
+
+SMB_MODE="${TRANSFS_SMB_MODE:-retronas_managed}"
+SMB_PREFERRED_PORT="${TRANSFS_SMB_PREFERRED_PORT:-445}"
+SMB_FALLBACK_PORTS="${TRANSFS_SMB_FALLBACK_PORTS:-3445,1445,2445}"
+SMB_STRICT_STANDARD_PORT="${TRANSFS_SMB_STRICT_STANDARD_PORT:-false}"
+
+WEB_HOST="${TRANSFS_WEB_HOST:-0.0.0.0}"
+WEB_PREFERRED_PORT="${TRANSFS_WEB_PREFERRED_PORT:-8000}"
+WEB_FALLBACK_PORTS="${TRANSFS_WEB_FALLBACK_PORTS:-8001,8080,18000}"
+WEB_STRICT_STANDARD_PORT="${TRANSFS_WEB_STRICT_STANDARD_PORT:-false}"
+
+ENABLE_PORT_AUTO_CLAIM="${TRANSFS_ENABLE_PORT_AUTO_CLAIM:-true}"
+RUNTIME_PROFILE="${TRANSFS_RUNTIME_PROFILE:-retronas-baremetal}"
+
+if [ ! -f "${CONFIG_PATH}" ]; then
+    echo "Config not found: ${CONFIG_PATH}" >&2
+    exit 1
+fi
+
+python3 - <<'PY' "${CONFIG_PATH}" "${SMB_MODE}" "${SMB_PREFERRED_PORT}" "${SMB_FALLBACK_PORTS}" "${SMB_STRICT_STANDARD_PORT}" "${WEB_HOST}" "${WEB_PREFERRED_PORT}" "${WEB_FALLBACK_PORTS}" "${WEB_STRICT_STANDARD_PORT}" "${ENABLE_PORT_AUTO_CLAIM}" "${RUNTIME_PROFILE}"
+import sys
+import yaml
+
+cfg_path = sys.argv[1]
+smb_mode = sys.argv[2]
+smb_preferred = int(sys.argv[3])
+smb_fallback = [int(x.strip()) for x in sys.argv[4].split(',') if x.strip()]
+smb_strict = sys.argv[5].strip().lower() == 'true'
+
+web_host = sys.argv[6]
+web_preferred = int(sys.argv[7])
+web_fallback = [int(x.strip()) for x in sys.argv[8].split(',') if x.strip()]
+web_strict = sys.argv[9].strip().lower() == 'true'
+
+auto_claim = sys.argv[10].strip().lower() == 'true'
+runtime_profile = sys.argv[11]
+
+with open(cfg_path, 'r', encoding='utf-8') as fh:
+    cfg = yaml.safe_load(fh) or {}
+
+runtime = cfg.setdefault('runtime', {})
+runtime['profile'] = runtime_profile
+runtime['enable_port_auto_claim'] = auto_claim
+
+smb = cfg.setdefault('smb', {})
+smb['mode'] = smb_mode
+smb['preferred_port'] = smb_preferred
+smb['fallback_ports'] = smb_fallback
+smb['strict_standard_port'] = smb_strict
+smb['auto_allocate_port'] = auto_claim
+
+web = cfg.setdefault('web_api', {})
+web['host'] = web_host
+web['preferred_port'] = web_preferred
+web['fallback_ports'] = web_fallback
+web['strict_standard_port'] = web_strict
+web['auto_allocate_port'] = auto_claim
+
+with open(cfg_path, 'w', encoding='utf-8') as fh:
+    yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
+
+print(f"Updated {cfg_path}")
+print(f"  runtime.profile={runtime_profile}")
+print(f"  runtime.enable_port_auto_claim={auto_claim}")
+print(f"  smb.mode={smb_mode}")
+print(f"  smb.preferred_port={smb_preferred}, fallback={smb_fallback}, strict={smb_strict}")
+print(f"  web_api.host={web_host}")
+print(f"  web_api.preferred_port={web_preferred}, fallback={web_fallback}, strict={web_strict}")
+PY
+
+echo "RetroNAS config profile applied."

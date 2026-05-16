@@ -1,11 +1,11 @@
 # Build stage: extract chdman binary from mame-tools without bloating the final image
-FROM python:3.10-slim AS chdman-builder
+FROM python:3.12-slim AS chdman-builder
 RUN apt-get update && \
     echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
     apt-get install -y --no-install-recommends mame-tools
 
 # Runtime image
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 COPY --from=chdman-builder /usr/bin/chdman /usr/bin/chdman
 

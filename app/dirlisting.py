@@ -4,6 +4,7 @@ import pickle
 import threading
 from pathlib import Path
 from filetypes import get_filetype_maps
+from retronas_support import list_retronas_support_directory
 from pathutils import find_software_archive_entry
 from zippath import is_supported_archive_name, listdir as zippath_listdir, exists as zippath_exists, isfile as zippath_isfile
 import logging
@@ -520,6 +521,12 @@ def parse_trans_path(config,root,full_path: str) -> list:
     client = next((c for c in config.get('clients', []) if c['name'] == client_name), None)
     if not client:
         return []
+
+    # Projection-enabled clients can expose an alternate namespace shape
+    # (for example, MiSTer CIFS-style games/saves/savestates/BIOS top-levels).
+    projected_entries = list_retronas_support_directory(config, root, full_path, show_hidden=show_hidden)
+    if projected_entries is not None:
+        return projected_entries
     
     # Level 1: List systems/categories under client
     if lev == 1:

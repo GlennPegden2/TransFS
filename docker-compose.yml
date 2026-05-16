@@ -1,5 +1,9 @@
 services:
   postgres:
+    profiles:
+      - operational
+      - development
+      - retronas-testbed
     image: postgres:15-alpine
     container_name: transfs-postgres
     hostname: postgres
@@ -25,6 +29,9 @@ services:
       retries: 5
 
   transfs:
+    profiles:
+      - operational
+      - development
     build: .
     container_name: transfs
     hostname: transfs
@@ -69,6 +76,66 @@ services:
       - SMB_ADVERTISE_SHARE=${SMB_ADVERTISE_SHARE:-TransFS}
       # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
     entrypoint: ["/entrypoint.sh"]
+
+  retronas-pr-export:
+    image: python:3.10-slim
+    container_name: transfs-retronas-pr-export
+    profiles:
+      - retronas-pr-export
+    network_mode: none
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - ./artifacts/retronas-pr:/output
+    command:
+      - bash
+      - -lc
+      - >-
+        chmod +x /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh &&
+        /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh /output
+
+  retronas-testbed:
+    image: python:3.10-slim
+    container_name: transfs-retronas-testbed-prep
+    profiles:
+      - retronas-testbed-prep
+    network_mode: none
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - ./artifacts/retronas-testbed:/output
+    command:
+      - bash
+      - -lc
+      - >-
+        chmod +x /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh &&
+        /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh /output
+
+  retronas-testbed-runtime:
+    image: retronas:testbed
+    container_name: retronas-testbed
+    profiles:
+      - retronas-testbed
+    stdin_open: true
+    tty: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=transfs
+      - DB_USER=transfs
+      - DB_PASSWORD=transfs_pass
+      - MY_IPS=127.0.0.1
+    ports:
+      - "8000:8000"
 
 volumes:
   postgres_data:

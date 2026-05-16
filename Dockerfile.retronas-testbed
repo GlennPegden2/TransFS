@@ -1,0 +1,38 @@
+# Dockerfile for RetroNAS Testbed
+# This image layers PR artifacts from TransFS onto a retronas-docker base image
+
+# --- Set your retronas-docker image tag here ---
+FROM retronas-docker:latest
+
+# Copy PR artifacts (exported by build_retronas_pr_export.sh)
+# Assumes build context includes artifacts/retronas-testbed/transfs-retronas-installer
+COPY artifacts/retronas-testbed/transfs-retronas-installer/ /opt/retronas/transfs-retronas-installer/
+
+# Place live PR installer files where RetroNAS expects them so the testbed
+# always exercises the current PR source, even if a local export bundle is stale.
+COPY platform/linux/retronas-pr/ansible/install_transfs.yml /opt/retronas/ansible/install_transfs.yml
+COPY platform/linux/retronas-pr/ansible/templates/ /opt/retronas/ansible/templates/
+COPY platform/linux/retronas-pr/register_transfs_menu.sh /opt/retronas/scripts/register_transfs_menu.sh
+COPY platform/linux/configure_retronas.sh /opt/retronas/transfs-retronas-installer/platform/linux/configure_retronas.sh
+COPY platform/linux/start_transfs_retronas.sh /opt/retronas/transfs-retronas-installer/platform/linux/start_transfs_retronas.sh
+COPY platform/linux/transfs_retronas_ctl.sh /opt/retronas/transfs-retronas-installer/platform/linux/transfs_retronas_ctl.sh
+
+# Override app code with live source to ensure latest fixes (e.g., lazy mega-py import)
+COPY app/ /opt/retronas/transfs-retronas-installer/app/
+
+# Bootstrap entrypoint registers menu idempotently before launching RetroNAS
+COPY platform/docker/retronas-testbed/entrypoint-bootstrap.sh /opt/retronas/scripts/transfs-testbed-bootstrap.sh
+RUN chmod +x /opt/retronas/scripts/register_transfs_menu.sh /opt/retronas/scripts/transfs-testbed-bootstrap.sh
+
+# Optionally, run registration or setup steps here
+# RUN bash /opt/retronas/scripts/register_transfs_menu.sh || true
+
+# Keep retronas command but wrap startup to ensure TransFS is present in install menu
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/retronas/scripts/transfs-testbed-bootstrap.sh"]
+CMD ["/opt/retronas/retronas.sh", "-g"]
+
+# Document usage
+# Build with:
+#   docker build -f Dockerfile.retronas-testbed -t retronas-testbed .
+# Run with:
+#   docker run -it retronas-testbed

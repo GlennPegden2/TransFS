@@ -5,6 +5,45 @@ name: MiSTer
 download_layout: folder_based
 default_target_path: "{name}/{system_name}/{maps}"
 
+retronas_support:
+  enabled: false
+  transport: smb
+  auto_map_system_name: true
+  canonical_roots:
+    roms: "Canonical/roms/{src}"
+    saves: "Canonical/saves/{src}"
+    savestates: "Canonical/savestates/{src}"
+    bios: "Canonical/bios/{src}"
+  top_levels:
+    - name: games
+      source_root: roms
+      per_system: true
+    - name: saves
+      source_root: saves
+      per_system: true
+    - name: savestates
+      source_root: savestates
+      per_system: true
+    - name: BIOS
+      source_root: bios
+      per_system: true
+  overrides:
+    - top_level: games
+      client_name: PSX
+      src: sony/playstation1
+    - top_level: saves
+      client_name: PSX
+      src: sony/playstation1
+    - top_level: savestates
+      client_name: PSX
+      src: sony/playstation1
+    - top_level: BIOS
+      client_name: PSX
+      src: sony/playstation1
+    - top_level: games
+      client_name: PlayStation
+      src: sony/playstation1
+
 systems:
  # --- 3DO Company ---
   - name: 3do

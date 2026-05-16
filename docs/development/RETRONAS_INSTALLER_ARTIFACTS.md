@@ -8,6 +8,7 @@ This document describes the first-pass artifacts added to support a RetroNAS con
 - `platform/linux/start_transfs_retronas.sh`
 - `platform/linux/transfs-retronas.service`
 - `platform/linux/retronas/ansible/install_transfs.yml`
+- `platform/linux/retronas/ansible/inventory.example.ini`
 - `platform/linux/retronas/ansible/templates/transfs-retronas.service.j2`
 - `platform/linux/retronas/ansible/templates/transfs-retronas.env.j2`
 
@@ -39,6 +40,7 @@ Example:
 
 ```bash
 cd /opt/transfs/platform/linux/retronas/ansible
+cp inventory.example.ini inventory.ini
 ansible-playbook -i inventory.ini install_transfs.yml
 ```
 
@@ -49,6 +51,12 @@ The playbook:
 - Deploys `/etc/default/transfs-retronas` and `/etc/systemd/system/transfs-retronas.service`.
 - Executes `configure_retronas.sh` with playbook variables.
 - Enables and starts `transfs-retronas.service`.
+
+Smoke verification after playbook run:
+
+```bash
+ssh root@<host> "systemctl is-active transfs-retronas && curl -fsS http://127.0.0.1:8000/api/runtime/ports"
+```
 
 ## Key environment variables for playbook customization
 
