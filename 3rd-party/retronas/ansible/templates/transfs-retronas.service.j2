@@ -1,0 +1,17 @@
+[Unit]
+Description=TransFS Runtime (RetroNAS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/transfs-retronas
+User={{ transfs_user }}
+Group={{ transfs_group }}
+WorkingDirectory={{ transfs_install_root }}/app
+ExecStart={{ transfs_install_root }}/platform/retronas/start_transfs_retronas.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

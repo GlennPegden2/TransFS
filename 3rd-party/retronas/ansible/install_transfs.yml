@@ -1,0 +1,379 @@
+---
+- name: Install and configure TransFS for RetroNAS
+  hosts: "{{ transfs_target_hosts | default('localhost') }}"
+  become: true
+  connection: "{{ transfs_connection | default('local') }}"
+
+  vars:
+    transfs_repo_url: https://github.com/GlennPegden2/TransFS.git
+    transfs_repo_version: main
+    transfs_install_root: /opt/transfs
+    transfs_user: root
+    transfs_group: root
+
+    transfs_venv_path: "{{ transfs_install_root }}/.venv"
+    transfs_python_bin: "{{ transfs_venv_path }}/bin/python"
+    transfs_log_dir: /var/log/transfs
+
+    # 'auto' detects the runtime environment and picks the appropriate mode:
+    #   - bare-metal (no /.dockerenv)  → retronas_managed  (RetroNAS owns Samba)
+    #   - Docker, any host OS          → transfs_managed   (TransFS owns Samba)
+    # Override explicitly if the auto-detection is wrong for your setup.
+    transfs_smb_mode: auto
+    transfs_smb_preferred_port: 445
+    transfs_smb_fallback_ports: 3445,1445,2445
+    transfs_smb_strict_standard_port: false
+
+    transfs_web_host: 0.0.0.0
+    transfs_web_preferred_port: 8000
+    transfs_web_fallback_ports: 8001,8080,18000
+    transfs_web_strict_standard_port: false
+
+    transfs_enable_port_auto_claim: true
+    transfs_runtime_profile: retronas-baremetal
+
+    # Samba share settings (retronas_managed mode only)
+    transfs_smb_allow_guest: false           # set true to allow unauthenticated access
+    transfs_smb_conf_path: /etc/samba/smb.conf
+    transfs_smb_share_conf: /etc/samba/transfs.conf
+    # Set to true to abort installation if Samba is not present (retronas_managed mode).
+    # Leave false if you want TransFS installed even without SMB access (web API still works).
+    transfs_smb_require_samba: false
+
+  tasks:
+    # --- Environment detection (used to auto-configure SMB mode) ---------------
+    - name: Detect Docker runtime (presence of /.dockerenv)
+      ansible.builtin.stat:
+        path: /.dockerenv
+      register: transfs_dockerenv_stat
+
+    - name: Read kernel version (used to detect Windows/WSL host)
+      ansible.builtin.command: uname -r
+      register: transfs_kernel_version
+      changed_when: false
+
+    - name: Resolve effective SMB mode from 'auto'
+      # In Docker: TransFS manages its own Samba regardless of host OS.
+      # On Windows-hosted Docker, port 445 is blocked on the *host* but the
+      # container still binds 445 internally (compose maps it to 3445 on host).
+      # On bare-metal RetroNAS: RetroNAS already owns Samba on port 445.
+      ansible.builtin.set_fact:
+        transfs_smb_mode: >-
+          {%- if transfs_smb_mode != 'auto' -%}
+            {{ transfs_smb_mode }}
+          {%- elif transfs_dockerenv_stat.stat.exists -%}
+            transfs_managed
+          {%- else -%}
+            retronas_managed
+          {%- endif -%}
+        transfs_windows_host: >-
+          {{ 'microsoft' in transfs_kernel_version.stdout | lower
+             or 'wsl' in transfs_kernel_version.stdout | lower }}
+
+    - name: Report detected environment
+      ansible.builtin.debug:
+        msg: >
+          Environment: {{ 'Docker' if transfs_dockerenv_stat.stat.exists else 'bare-metal' }},
+          host OS: {{ 'Windows/WSL' if transfs_windows_host else 'Linux' }},
+          SMB mode: {{ transfs_smb_mode }}
+    # ---------------------------------------------------------------------------
+
+    - name: Install required packages
+      ansible.builtin.package:
+        name:
+          - build-essential
+          - git
+          - libfuse3-dev
+          - pkg-config
+          - python3
+          - python3-dev
+          - python3-pip
+          - python3-venv
+          - fuse3
+        state: present
+
+    - name: Ensure FUSE mountpoint exists
+      ansible.builtin.file:
+        path: /mnt/transfs
+        state: directory
+        owner: root
+        group: root
+        mode: "0777"
+
+    - name: Check for /dev/fuse device
+      ansible.builtin.stat:
+        path: /dev/fuse
+      register: fuse_dev_stat
+
+    - name: Fail if /dev/fuse is missing
+      ansible.builtin.fail:
+        msg: >-
+          /dev/fuse is missing. This container/host cannot run FUSE filesystems.
+          Please run with --device /dev/fuse --cap-add SYS_ADMIN and ensure FUSE is enabled.
+      when: not fuse_dev_stat.stat.exists
+
+    - name: Check for curl (for diagnostics)
+      ansible.builtin.command: which curl
+      register: curl_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install curl if missing
+      ansible.builtin.package:
+        name: curl
+        state: present
+      when: curl_check.rc != 0
+
+    - name: Check for reachable postgres host
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import socket, sys
+            try:
+                s = socket.create_connection(('postgres', 5432), timeout=3)
+                s.close()
+                sys.exit(0)
+            except Exception:
+                sys.exit(1)
+      register: pg_check
+      changed_when: false
+      failed_when: false
+
+    - name: Warn if postgres is not reachable
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: The postgres host is not reachable from this container. TransFS may fail to start.
+      when: pg_check.rc != 0
+
+    - name: Ensure optional Samba packages are present when TransFS manages SMB
+      ansible.builtin.package:
+        name:
+          - samba
+        state: present
+      when: transfs_smb_mode == 'transfs_managed'
+
+    - name: Ensure TransFS install root exists
+      ansible.builtin.file:
+        path: "{{ transfs_install_root }}"
+        state: directory
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+
+    - name: Checkout TransFS repository
+      ansible.builtin.git:
+        repo: "{{ transfs_repo_url }}"
+        dest: "{{ transfs_install_root }}"
+        version: "{{ transfs_repo_version }}"
+        update: true
+
+    - name: Build filtered requirements (exclude mega.py, add modern tenacity)
+      # mega.py 1.0.8 metadata pins tenacity<6.0.0 but only uses the sync API
+      # which is unchanged through tenacity 9.x.  Installing mega.py via
+      # --no-deps lets us pick a tenacity that is compatible with Python 3.11+
+      # (asyncio.coroutine was removed in 3.11; tenacity<6 used it).
+      ansible.builtin.shell: |
+        grep -v '^mega\.py' "{{ transfs_install_root }}/requirements.txt" \
+          > /tmp/transfs-reqs-no-mega.txt
+        echo "tenacity>=8.0" >> /tmp/transfs-reqs-no-mega.txt
+      changed_when: true
+
+    - name: Install Python dependencies (excluding mega.py)
+      ansible.builtin.pip:
+        requirements: /tmp/transfs-reqs-no-mega.txt
+        virtualenv: "{{ transfs_venv_path }}"
+        virtualenv_command: python3 -m venv
+
+    - name: Install mega.py without dependency resolution
+      # Skips pip's constraint enforcement so tenacity>=8.0 is retained.
+      # mega.py works correctly at runtime with any tenacity version.
+      ansible.builtin.pip:
+        name: mega.py
+        extra_args: "--no-deps"
+        virtualenv: "{{ transfs_venv_path }}"
+
+    - name: Ensure platform/retronas directory exists
+      ansible.builtin.file:
+        path: "{{ transfs_install_root }}/platform/retronas"
+        state: directory
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+
+    - name: Deploy RetroNAS runtime helper scripts
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "{{ transfs_install_root }}/platform/retronas/{{ item }}"
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+      loop:
+        - configure_retronas.sh
+        - start_transfs_retronas.sh
+        - transfs_retronas_ctl.sh
+
+    - name: Ensure log directory exists
+      ansible.builtin.file:
+        path: "{{ transfs_log_dir }}"
+        state: directory
+        owner: "{{ transfs_user }}"
+        group: "{{ transfs_group }}"
+        mode: "0755"
+
+    - name: Deploy runtime environment file
+      ansible.builtin.template:
+        src: templates/transfs-retronas.env.j2
+        dest: /etc/default/transfs-retronas
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart transfs-retronas
+
+    - name: Apply RetroNAS config profile
+      ansible.builtin.command: "{{ transfs_install_root }}/platform/retronas/configure_retronas.sh"
+      environment:
+        TRANSFS_APP_DIR: "{{ transfs_install_root }}/app"
+        TRANSFS_CONFIG_PATH: "{{ transfs_install_root }}/app/config/app.yaml"
+        TRANSFS_SMB_MODE: "{{ transfs_smb_mode }}"
+        TRANSFS_SMB_PREFERRED_PORT: "{{ transfs_smb_preferred_port | string }}"
+        TRANSFS_SMB_FALLBACK_PORTS: "{{ transfs_smb_fallback_ports }}"
+        TRANSFS_SMB_STRICT_STANDARD_PORT: "{{ transfs_smb_strict_standard_port | ternary('true', 'false') }}"
+        TRANSFS_WEB_HOST: "{{ transfs_web_host }}"
+        TRANSFS_WEB_PREFERRED_PORT: "{{ transfs_web_preferred_port | string }}"
+        TRANSFS_WEB_FALLBACK_PORTS: "{{ transfs_web_fallback_ports }}"
+        TRANSFS_WEB_STRICT_STANDARD_PORT: "{{ transfs_web_strict_standard_port | ternary('true', 'false') }}"
+        TRANSFS_ENABLE_PORT_AUTO_CLAIM: "{{ transfs_enable_port_auto_claim | ternary('true', 'false') }}"
+        TRANSFS_RUNTIME_PROFILE: "{{ transfs_runtime_profile }}"
+      changed_when: true
+      notify: Restart transfs-retronas
+
+    - name: Check for systemctl availability
+      ansible.builtin.command: systemctl --version
+      register: transfs_systemctl_check
+      changed_when: false
+      failed_when: false
+
+    # --- Samba share registration (retronas_managed mode) ----------------------
+    # In retronas_managed mode RetroNAS already owns smbd. We inject the TransFS
+    # share by deploying /etc/samba/transfs.conf and adding an include directive
+    # to smb.conf, mirroring how the retronas.role.samba role works.
+    - name: Check for Samba (retronas_managed mode)
+      ansible.builtin.command: which smbd
+      register: transfs_smbd_available
+      changed_when: false
+      failed_when: false
+      when: transfs_smb_mode == 'retronas_managed'
+
+    - name: Warn if Samba is unavailable in retronas_managed mode
+      ansible.builtin.debug:
+        msg: >-
+          Samba (smbd) was not found. In retronas_managed mode TransFS shares are
+          served via RetroNAS's existing Samba. Install the RetroNAS Samba module
+          first, then re-run this installer to enable SMB access to TransFS.
+          TransFS itself (FUSE mount + web API) will still be installed and functional.
+      when:
+        - transfs_smb_mode == 'retronas_managed'
+        - (transfs_smbd_available.rc | default(1)) != 0
+        - not transfs_smb_require_samba
+
+    - name: Fail if Samba is unavailable and transfs_smb_require_samba is set
+      ansible.builtin.fail:
+        msg: >-
+          Samba (smbd) was not found, and transfs_smb_require_samba=true.
+          Install the RetroNAS Samba module first, then re-run this installer.
+      when:
+        - transfs_smb_mode == 'retronas_managed'
+        - (transfs_smbd_available.rc | default(1)) != 0
+        - transfs_smb_require_samba
+
+    - name: Deploy TransFS Samba share config (retronas_managed)
+      ansible.builtin.template:
+        src: templates/transfs-samba.conf.j2
+        dest: "{{ transfs_smb_share_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: transfs_smb_mode == 'retronas_managed' and (transfs_smbd_available.rc | default(1)) == 0
+      notify: Reload Samba for TransFS
+
+    - name: Register TransFS share in smb.conf (retronas_managed)
+      ansible.builtin.ini_file:
+        path: "{{ transfs_smb_conf_path }}"
+        section: TransFS
+        option: include
+        value: "{{ transfs_smb_share_conf }}"
+      when: transfs_smb_mode == 'retronas_managed' and (transfs_smbd_available.rc | default(1)) == 0
+      notify: Reload Samba for TransFS
+    # ---------------------------------------------------------------------------
+
+    - name: Deploy systemd unit
+      ansible.builtin.template:
+        src: templates/transfs-retronas.service.j2
+        dest: /etc/systemd/system/transfs-retronas.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload and restart transfs-retronas
+      when: transfs_systemctl_check.rc == 0
+
+    - name: Enable and start TransFS service
+      ansible.builtin.systemd:
+        name: transfs-retronas.service
+        enabled: true
+        state: started
+      when: transfs_systemctl_check.rc == 0
+
+    - name: Start TransFS runtime without systemd
+      ansible.builtin.command: "{{ transfs_install_root }}/platform/retronas/transfs_retronas_ctl.sh start"
+      register: transfs_portable_runtime_start
+      changed_when: "'Started TransFS with PID' in transfs_portable_runtime_start.stdout"
+      when: transfs_systemctl_check.rc != 0
+
+    - name: Report portable runtime activation in non-systemd environments
+      ansible.builtin.debug:
+        msg: >-
+          systemctl is not available in this environment, so TransFS was started via
+          {{ transfs_install_root }}/platform/retronas/transfs_retronas_ctl.sh.
+          This is expected in the RetroNAS Docker testbed container.
+      when: transfs_systemctl_check.rc != 0
+
+  handlers:
+    - name: Restart transfs-retronas via systemd
+      listen: Restart transfs-retronas
+      ansible.builtin.systemd:
+        name: transfs-retronas.service
+        state: restarted
+      when: transfs_systemctl_check.rc == 0
+
+    - name: Restart transfs-retronas via portable launcher
+      listen: Restart transfs-retronas
+      ansible.builtin.command: "{{ transfs_install_root }}/platform/retronas/transfs_retronas_ctl.sh restart"
+      when: transfs_systemctl_check.rc != 0
+
+    - name: Reload and restart transfs-retronas via systemd
+      listen: Reload and restart transfs-retronas
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: transfs-retronas.service
+        state: restarted
+      when: transfs_systemctl_check.rc == 0
+
+    - name: Reload and restart transfs-retronas via portable launcher
+      listen: Reload and restart transfs-retronas
+      ansible.builtin.command: "{{ transfs_install_root }}/platform/retronas/transfs_retronas_ctl.sh restart"
+      when: transfs_systemctl_check.rc != 0
+
+    - name: Reload Samba for TransFS
+      listen: Reload Samba for TransFS
+      # Prefer a graceful reload so active connections aren't dropped. Fall back
+      # to a full restart via systemd if reload isn't available (e.g. older smbd).
+      ansible.builtin.shell: |
+        if command -v smbcontrol >/dev/null 2>&1 && pgrep smbd >/dev/null 2>&1; then
+          smbcontrol all reload-config
+        elif systemctl is-active smbd >/dev/null 2>&1; then
+          systemctl reload smbd 2>/dev/null || systemctl restart smbd
+        fi
+      changed_when: false
+      failed_when: false

@@ -95,7 +95,7 @@ def update_smb_conf_guest_access(allow_guest: bool) -> bool:
         if allow_guest:
             # Allow guest access (Bad User maps failed auth to guest)
             content = re.sub(
-                r'map to guest\s*=\s*\w+',
+                r'map to guest\s*=\s*[\w ]+',
                 'map to guest = Bad User',
                 content
             )
@@ -104,7 +104,7 @@ def update_smb_conf_guest_access(allow_guest: bool) -> bool:
         else:
             # Reject guest access (Never rejects unauthenticated connections)
             content = re.sub(
-                r'map to guest\s*=\s*\w+',
+                r'map to guest\s*=\s*[\w ]+',
                 'map to guest = Never',
                 content
             )

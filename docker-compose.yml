@@ -77,40 +77,6 @@ services:
       # - DEBUG_MODE=1  # Commented out to allow FUSE to start. Uncomment only when debugging with debugpy
     entrypoint: ["/entrypoint.sh"]
 
-  retronas-pr-export:
-    image: python:3.10-slim
-    container_name: transfs-retronas-pr-export
-    profiles:
-      - retronas-pr-export
-    network_mode: none
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
-      - ./artifacts/retronas-pr:/output
-    command:
-      - bash
-      - -lc
-      - >-
-        chmod +x /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh &&
-        /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh /output
-
-  retronas-testbed:
-    image: python:3.10-slim
-    container_name: transfs-retronas-testbed-prep
-    profiles:
-      - retronas-testbed-prep
-    network_mode: none
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
-      - ./artifacts/retronas-testbed:/output
-    command:
-      - bash
-      - -lc
-      - >-
-        chmod +x /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh &&
-        /workspace/platform/linux/retronas-pr/build_retronas_pr_export.sh /output
-
   retronas-testbed-runtime:
     image: retronas:testbed
     container_name: retronas-testbed
@@ -135,7 +101,11 @@ services:
       - DB_PASSWORD=transfs_pass
       - MY_IPS=127.0.0.1
     ports:
-      - "8000:8000"
+      - "3445:445"      # SMB (maps to host 3445 to avoid conflict with host Samba)
+      - "4139:139"      # NetBIOS session
+      - "137:137/udp"   # NetBIOS name service
+      - "138:138/udp"   # NetBIOS datagram
+      - "8000:8000"     # TransFS web API
 
 volumes:
   postgres_data:

@@ -37,13 +37,8 @@ import requests
 import yaml
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
+from mega import Mega
 from pydantic import BaseModel
-try:
-    from mega import Mega as MegaClient
-    MEGA_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pylint: disable=broad-except
-    MegaClient = None
-    MEGA_IMPORT_ERROR = exc
 from config import (
     get_clients,
     get_systems_for_client,
@@ -52,6 +47,7 @@ from config import (
     read_config,
     read_app_config,
     read_clients_config,
+    reload_config,
 )
 from native_mounts import (
     build_unc_path,
@@ -94,6 +90,7 @@ Downloads are shared across all clients - the same source files work for MiSTer,
 
 _dat_import_jobs: dict[str, dict] = {}
 _dat_import_jobs_lock = threading.Lock()
+logger = logging.getLogger("api")
 
 
 # ============================================================================
@@ -145,13 +142,6 @@ def _read_app_yaml() -> dict:
     app_config_path = "config/app.yaml"
     with open(app_config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
-
-
-def _create_mega_client():
-    if MegaClient is None:
-        detail = f": {MEGA_IMPORT_ERROR}" if MEGA_IMPORT_ERROR else ""
-        raise RuntimeError(f"MEGA downloader unavailable{detail}")
-    return MegaClient()
 
 
 def _write_app_yaml(app_config: dict) -> None:
@@ -1265,7 +1255,7 @@ def metadata_stats():
 def metadata_entries(
     search: str = "",
     publisher: str = "",
-    year: int = None,
+    year: int = 0,
     tag: str = "",
     provider: str = "",
     page: int = 1,
@@ -1721,20 +1711,24 @@ def metadata_clear_all(req: MetadataClearAllRequest):
 def cache_status(path: str):
     """Get cache status for a given path."""
     try:
-        from dirlisting import get_cache_status
+        from dirlisting import get_cached_stat
         # Translate /mnt/transfs to /mnt/filestorefs for cache lookup
         cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs')
-        return get_cache_status(cache_path)
+        cached = get_cached_stat(cache_path, os.path.dirname(cache_path))
+        return {"cached": cached is not None, "path": cache_path}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
 
 @app.post("/cache/clear", tags=["Cache"])
-def cache_clear(path: str = None):
+def cache_clear(path: str | None = None):
     """Clear stat cache for a specific path or all stat cache entries."""
     try:
         from dirlisting import clear_stat_cache_path
         # Translate /mnt/transfs to /mnt/filestorefs for cache lookup
         cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs') if path else None
+        if cache_path is None:
+            from dirlisting import clear_stat_cache
+            return clear_stat_cache()
         return clear_stat_cache_path(cache_path)
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1946,7 +1940,7 @@ def fuse_stop():
     if remaining:
         for pid in remaining:
             try:
-                os.kill(pid, signal.SIGKILL)
+                os.kill(pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
             except Exception:
                 continue
 
@@ -2042,7 +2036,7 @@ def cache_info():
 
 
 @app.get("/config")
-def config_get(fields: str = None):
+def config_get(fields: str | None = None):
     """Get current application configuration.
     
     Args:
@@ -2194,7 +2188,7 @@ def config_set(config_update: ConfigUpdate):
         with open(app_config_path, "w", encoding="utf-8") as f:
             yaml.dump(app_config, f, default_flow_style=False)
 
-        read_config.cache_clear()
+        reload_config()
         
         return {
             "updated": True,
@@ -2259,7 +2253,7 @@ def create_native_mount(request: NativeMountRequest):
             app_config["native_external_mounts"] = entries
             _write_app_yaml(app_config)
 
-        read_config.cache_clear()
+        reload_config()
         return {"created": True, "mount": _public_native_mount_entry(read_config(), new_entry)}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2309,7 +2303,7 @@ def update_native_mount(mount_id: str, request: NativeMountUpdateRequest):
         app_config["native_external_mounts"] = entries
         _write_app_yaml(app_config)
 
-        read_config.cache_clear()
+        reload_config()
         return {"updated": True, "mount": _public_native_mount_entry(read_config(), updated)}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2341,7 +2335,7 @@ def delete_native_mount(mount_id: str):
         app_config["native_external_mounts"] = entries
         _write_app_yaml(app_config)
 
-        read_config.cache_clear()
+        reload_config()
         return {"deleted": True, "unmount": unmount_result}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2536,7 +2530,6 @@ async def import_config_set(file: bytes, config_type: str, config_set_name: str)
     Returns success status and prompts to activate if successful.
     """
     try:
-        import zipfile
         from io import BytesIO
         
         if not file or not config_type or not config_set_name:
@@ -3811,10 +3804,8 @@ def file_metadata(path: str):
                 if not file_row:
                     # Final fallback: resolve virtual path to real source path(s) and try again
                     try:
-                        import logging
                         from sourcepath import get_source_path
 
-                        logger = logging.getLogger("api")
                         source_path = get_source_path(logger, config, "/mnt/transfs", path)
                         resolved_paths = []
 
@@ -3870,7 +3861,6 @@ def file_metadata(path: str):
                         try:
                             from sourcepath import get_source_path
 
-                            logger = logging.getLogger("api")
                             source_path = get_source_path(logger, config, "/mnt/transfs", path)
                             if isinstance(source_path, str):
                                 resolved_source_path = source_path
@@ -4309,6 +4299,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                 yield f"      ⚠ Skipping invalid media_type config: {media_config}\n"
                                 continue
                             
+                            mame_base_path = base_path
                             mame_dest_dir = os.path.join(mame_base_path, target_folder)
                             yield f"   🔍 Downloading MAME {system}_{media_type}...\n"
                             yield f"      📂 Destination: {mame_dest_dir}\n"
@@ -4320,9 +4311,6 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                     # Only yield on completion
                                     if bytes_dl >= total_bytes:
                                         pass  # Don't yield intermediate progress to avoid flooding
-                                
-                                # Calculate the correct base path (same as for DDL sources)
-                                mame_base_path = os.path.join(filestore, "Native", system_config.local_base_path)
                                 
                                 stats = manager.download_for_system(
                                     system,
@@ -4632,7 +4620,7 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                             
                             try:
                                 yield "      🌐 Starting MEGA download...\n"
-                                mega_client = _create_mega_client()
+                                mega_client = Mega()
                                 m = mega_client.login()
                                 downloaded_file = m.download_url(url, dest_dir)
                                 
@@ -5371,7 +5359,7 @@ async def api_download_stream(req: DownloadRequest):
                     elif source_type == "mega":
                         try:
                             yield f"Starting MEGA download: {url}\n"
-                            mega_client = _create_mega_client()
+                            mega_client = Mega()
                             m = mega_client.login()
                             m.download_url(url, dest_dir)
                             yield f"Downloaded MEGA file for {req.manufacturer} / {req.system} to {dest_dir}\n"
@@ -5732,7 +5720,7 @@ class MAMEDownloadRequest(BaseModel):
     system: str
     media_type: str
     target_folder: str
-    filters: dict = None
+    filters: Optional[dict] = None
 
 
 @app.post("/mame/download", tags=["MAME Downloads"])
