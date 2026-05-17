@@ -1,9 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-
 # Bare-metal and container startup runner for RetroNAS/systemd deployments.
-# Ensures FUSE mountpoint and device are present, and provides clear diagnostics if not.
+# Deployed by the TransFS Ansible installer (install_transfs.yml).
 
 TRANSFS_ROOT="${TRANSFS_ROOT:-/opt/transfs}"
 APP_DIR="${TRANSFS_APP_DIR:-${TRANSFS_ROOT}/app}"
@@ -25,8 +24,6 @@ if [ ! -c /dev/fuse ]; then
     echo "       Please run with --device /dev/fuse --cap-add SYS_ADMIN and ensure FUSE is enabled."
     exit 1
 fi
-
-# Runtime capability checks are enforced by the container launcher/compose profile.
 
 cd "${APP_DIR}"
 
@@ -85,12 +82,24 @@ if [ "${SMB_MODE}" != "transfs_managed" ]; then
     echo "SMB management disabled for mode '${SMB_MODE}'"
 fi
 
-${PYTHON_BIN} -c "from config import read_app_config; from native_mounts import reconcile_mounts; cfg=read_app_config() or {}; entries=cfg.get('native_external_mounts', []) or []; reconcile_mounts(cfg, entries)"
+${PYTHON_BIN} - <<'PY'
+from config import read_app_config
+from native_mounts import reconcile_mounts
+
+cfg = read_app_config() or {}
+entries = cfg.get("native_external_mounts", []) or []
+
+try:
+    result = reconcile_mounts(cfg, entries) or {}
+    failed = int(result.get("failed", 0))
+    print(f"Native mount reconcile complete (failed={failed})")
+except Exception as exc:
+    print(f"WARNING: Native mount reconcile failed: {exc}")
+PY
 
 if [ "${SMB_MANAGED}" = "1" ]; then
     ${PYTHON_BIN} -c "from config import read_app_config; from smb_config import setup_samba_from_config; cfg=read_app_config() or {}; setup_samba_from_config(cfg)"
 fi
-
 
 echo "Starting FUSE process..."
 ${PYTHON_BIN} -m transfs >> "${LOG_DIR}/transfs.log" 2>&1 &

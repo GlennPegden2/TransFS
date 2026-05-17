@@ -4,7 +4,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+- **Linting errors resolved in `api.py` and `smb_config.py`**: Added module-level `logger`; replaced non-existent `get_cache_status` import with `get_cached_stat`; fixed `Optional` type annotations on `path`, `fields`, and `filters` parameters; removed redundant local `import zipfile` (already at module level); used `getattr(signal, 'SIGKILL', ...)` for cross-platform type-checker compatibility; fixed `mame_base_path` used-before-assignment by reusing the already-computed `base_path`; replaced `read_config.cache_clear()` calls with `reload_config()` (module-level import) to satisfy static analysis; removed accidentally committed git command from top of `smb_config.py`.
+- **`.github/` folder untracked and `.gitignore` cleaned up**: Removed redundant per-file ignore entries (copilot-instructions, snyk rules) that duplicated the existing `.github/` directory rule. All Copilot workspace config files are now consistently gitignored.
+
 ### Changed
+- **RetroNAS integration restructured to match upstream PR conventions**: All RetroNAS PR contribution files now live under `3rd-party/retronas/`, mirroring the RetroNAS repo layout exactly. Runtime scripts (`configure_retronas.sh`, `start_transfs_retronas.sh`, `transfs_retronas_ctl.sh`) converted from static files to Jinja2 templates (`.j2`) under `3rd-party/retronas/ansible/templates/`, following the same pattern as other RetroNAS modules (e.g., adtpro). Playbook updated to deploy scripts via `ansible.builtin.template` (mode 0755) rather than copying pre-built assets. Removed all dead scaffolding: `artifacts/` folder, `retronas-pr-export`/`retronas-testbed-prep` compose services, "Build RetroNAS Artifacts" VS Code task, `build_retronas_pr_export.sh`, `register_transfs_menu.sh`, `entrypoint-bootstrap.sh`, and the old `platform/linux/retronas/` bundle builder. `platform/retronas/` (now superseded by templates) moved to `legacy/platform-retronas/`. `Dockerfile.retronas-testbed` simplified to 2 COPY lines + entrypoint.
+
+
 - **Python base image upgraded from 3.10 to 3.12**: Updated `Dockerfile` (both `chdman-builder` and runtime stages) from `python:3.10-slim` to `python:3.12-slim`. All dependencies confirmed compatible: `libtorrent 2.0.11` has pre-built cp312 wheels, `pyfuse3 3.4.2` compiles cleanly on 3.12 (requires `>=3.10`), `mega.py 1.0.8` is fully synchronous with no `asyncio.coroutine` usage and works on 3.12/3.13. The retronas-testbed container already runs Python 3.12 in production.
 
 - **Refactored RetroNAS integration structure**: Reorganized RetroNAS-related code to clarify three distinct objectives:

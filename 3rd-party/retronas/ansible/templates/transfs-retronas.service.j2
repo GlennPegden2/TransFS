@@ -9,7 +9,7 @@ EnvironmentFile=/etc/default/transfs-retronas
 User={{ transfs_user }}
 Group={{ transfs_group }}
 WorkingDirectory={{ transfs_install_root }}/app
-ExecStart={{ transfs_install_root }}/platform/linux/start_transfs_retronas.sh
+ExecStart={{ transfs_install_root }}/platform/retronas/start_transfs_retronas.sh
 Restart=on-failure
 RestartSec=3
 

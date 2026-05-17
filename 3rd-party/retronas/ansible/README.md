@@ -11,7 +11,7 @@ This folder contains a first-pass playbook skeleton for installing TransFS in a 
 The installer now supports two runtime activation paths:
 
 - Bare-metal RetroNAS hosts with `systemctl`: deploy and enable `transfs-retronas.service`.
-- Non-systemd environments such as the RetroNAS Docker testbed: start TransFS directly via `platform/linux/transfs_retronas_ctl.sh`.
+- Non-systemd environments such as the RetroNAS Docker testbed: start TransFS directly via `platform/retronas/transfs_retronas_ctl.sh`.
 
 ## Usage example
 
@@ -32,7 +32,7 @@ ansible-playbook -i inventory.ini install_transfs.yml \
 After deployment, verify the runtime and resolved ports:
 
 ```bash
-ssh root@<host> "if command -v systemctl >/dev/null 2>&1; then systemctl is-active transfs-retronas; else /opt/transfs/platform/linux/transfs_retronas_ctl.sh status; fi && curl -fsS http://127.0.0.1:8000/api/runtime/ports"
+ssh root@<host> "if command -v systemctl >/dev/null 2>&1; then systemctl is-active transfs-retronas; else /opt/transfs/platform/retronas/transfs_retronas_ctl.sh status; fi && curl -fsS http://127.0.0.1:8000/api/runtime/ports"
 ```
 
 ## Key variables
@@ -52,5 +52,5 @@ ssh root@<host> "if command -v systemctl >/dev/null 2>&1; then systemctl is-acti
 
 - Default `transfs_smb_mode` is `retronas_managed`.
 - If `transfs_smb_mode` is `transfs_managed`, the playbook installs Samba and the runtime may control `smbd`/`nmbd`.
-- The playbook executes `platform/linux/configure_retronas.sh` to apply runtime port and mode settings into `app/config/app.yaml`.
+- The playbook executes `platform/retronas/configure_retronas.sh` to apply runtime port and mode settings into `app/config/app.yaml`.
 - The portable control path is intended for containers and other environments without PID 1 systemd; it is also what the RetroNAS testbed exercises.

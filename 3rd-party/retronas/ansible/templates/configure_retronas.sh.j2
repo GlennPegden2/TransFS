@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Configure TransFS app.yaml for RetroNAS-style bare-metal deployment.
-# This script is intended to be called by a playbook/installer.
+# Deployed by the TransFS Ansible installer (install_transfs.yml).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

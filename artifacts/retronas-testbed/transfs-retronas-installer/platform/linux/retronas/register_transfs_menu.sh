@@ -1,11 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# Registers TransFS as an installable RetroNAS menu item.
+# Registers TransFS as an experimental RetroNAS menu item.
 # Usage:
-#   ./register_transfs_menu.sh [install_menu_json] [ansible_dir]
+#   ./register_transfs_menu.sh [experimental_menu_json] [ansible_dir]
 
-MENU_JSON="${1:-/opt/retronas/config/menu/install.json}"
+MENU_JSON="${1:-/opt/retronas/config/menu/experimental.json}"
 ANSIBLE_DIR="${2:-/opt/retronas/ansible}"
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -14,7 +14,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 if [ ! -f "${MENU_JSON}" ]; then
-  echo "Error: install menu JSON not found: ${MENU_JSON}"
+  echo "Error: experimental menu JSON not found: ${MENU_JSON}"
   exit 1
 fi
 
@@ -64,4 +64,4 @@ jq '
 
 mv "${TMP_FILE}" "${MENU_JSON}"
 TRANSFS_INDEX="$(jq -r '.menu.items[] | select(.id == "transfs") | .index' "${MENU_JSON}")"
-echo "Registered TransFS in RetroNAS install menu with index ${TRANSFS_INDEX} (alphabetical order)."
+echo "Registered TransFS in RetroNAS experimental menu with index ${TRANSFS_INDEX} (alphabetical order)."

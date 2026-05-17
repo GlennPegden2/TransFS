@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# Portable service controller for TransFS on RetroNAS (non-systemd environments).
+# Deployed by the TransFS Ansible installer (install_transfs.yml).
+
 ACTION="${1:-start}"
 ENV_FILE="${TRANSFS_ENV_FILE:-/etc/default/transfs-retronas}"
 
@@ -12,7 +15,7 @@ if [ -f "${ENV_FILE}" ]; then
 fi
 
 TRANSFS_ROOT="${TRANSFS_ROOT:-/opt/transfs}"
-START_SCRIPT="${TRANSFS_START_SCRIPT:-${TRANSFS_ROOT}/platform/linux/start_transfs_retronas.sh}"
+START_SCRIPT="${TRANSFS_START_SCRIPT:-${TRANSFS_ROOT}/platform/retronas/start_transfs_retronas.sh}"
 PID_FILE="${TRANSFS_PID_FILE:-/var/run/transfs-retronas.pid}"
 LOG_DIR="${TRANSFS_LOG_DIR:-/var/log/transfs}"
 LAUNCH_LOG="${TRANSFS_CTL_LOG:-${LOG_DIR}/launcher.log}"
@@ -42,7 +45,6 @@ cleanup_orphan_processes() {
         return 0
     fi
 
-    # Clean up manually launched runtimes that are not managed by PID file.
     pkill -f "python -m uvicorn main:app" 2>/dev/null || true
     pkill -f "python -m transfs" 2>/dev/null || true
 }
