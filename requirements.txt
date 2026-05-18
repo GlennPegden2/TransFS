@@ -11,6 +11,7 @@ fastapi
 uvicorn
 libtorrent
 rarfile
+pycryptodome
 mega.py
 py7zr
 psutil
