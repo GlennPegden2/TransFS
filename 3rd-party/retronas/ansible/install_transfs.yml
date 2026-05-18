@@ -32,8 +32,9 @@
     transfs_enable_port_auto_claim: true
     transfs_runtime_profile: retronas-baremetal
 
-    # Samba share settings (retronas_managed mode only)
+    # Samba share settings
     transfs_smb_allow_guest: false           # set true to allow unauthenticated access
+    transfs_smb_password: "1"               # default matches MiSTer; set to "" to skip password setup
     transfs_smb_conf_path: /etc/samba/smb.conf
     transfs_smb_share_conf: /etc/samba/transfs.conf
     # Set to true to abort installation if Samba is not present (retronas_managed mode).
@@ -265,6 +266,40 @@
       register: transfs_systemctl_check
       changed_when: false
       failed_when: false
+
+    # --- Samba configuration (transfs_managed mode) ----------------------------
+    # In transfs_managed mode TransFS fully owns Samba, but we still use the
+    # same safe include pattern as retronas_managed rather than overwriting the
+    # existing smb.conf.  This avoids conflicts with any config the base image
+    # (e.g. retronas-docker) already has in /etc/samba/smb.conf.
+    - name: Deploy TransFS share definitions (transfs_managed)
+      ansible.builtin.template:
+        src: templates/transfs-managed-shares.conf.j2
+        dest: "{{ transfs_smb_share_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: transfs_smb_mode == 'transfs_managed'
+      notify: Reload Samba for TransFS
+
+    - name: Register TransFS shares in smb.conf global include (transfs_managed)
+      ansible.builtin.lineinfile:
+        path: "{{ transfs_smb_conf_path }}"
+        insertafter: '^\s*\[global\]'
+        line: "   include = {{ transfs_smb_share_conf }}"
+        regexp: "include = {{ transfs_smb_share_conf | regex_escape() }}"
+      when: transfs_smb_mode == 'transfs_managed'
+      notify: Reload Samba for TransFS
+
+    - name: Set Samba password for TransFS user (transfs_managed)
+      ansible.builtin.shell: |
+        printf '%s\n%s\n' '{{ transfs_smb_password }}' '{{ transfs_smb_password }}' | smbpasswd -s -a {{ transfs_user }}
+      when:
+        - transfs_smb_mode == 'transfs_managed'
+        - transfs_smb_password | length > 0
+      no_log: true
+      changed_when: true
+    # ---------------------------------------------------------------------------
 
     # --- Samba share registration (retronas_managed mode) ----------------------
     # In retronas_managed mode RetroNAS already owns smbd. We inject the TransFS
