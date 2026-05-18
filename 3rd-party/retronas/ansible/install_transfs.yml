@@ -42,6 +42,11 @@
 
   tasks:
     # --- Environment detection (used to auto-configure SMB mode) ---------------
+    - name: Detect RetroNAS environment (presence of /opt/retronas)
+      ansible.builtin.stat:
+        path: /opt/retronas
+      register: transfs_retronas_stat
+
     - name: Detect Docker runtime (presence of /.dockerenv)
       ansible.builtin.stat:
         path: /.dockerenv
@@ -53,14 +58,16 @@
       changed_when: false
 
     - name: Resolve effective SMB mode from 'auto'
-      # In Docker: TransFS manages its own Samba regardless of host OS.
-      # On Windows-hosted Docker, port 445 is blocked on the *host* but the
-      # container still binds 445 internally (compose maps it to 3445 on host).
-      # On bare-metal RetroNAS: RetroNAS already owns Samba on port 445.
+      # RetroNAS already owns Samba, so always use retronas_managed when running
+      # inside a RetroNAS environment (detected by /opt/retronas/).
+      # In a standalone Docker install, TransFS manages its own Samba.
+      # On bare-metal (non-RetroNAS, non-Docker): defer to retronas_managed.
       ansible.builtin.set_fact:
         transfs_smb_mode: >-
           {%- if transfs_smb_mode != 'auto' -%}
             {{ transfs_smb_mode }}
+          {%- elif transfs_retronas_stat.stat.exists -%}
+            retronas_managed
           {%- elif transfs_dockerenv_stat.stat.exists -%}
             transfs_managed
           {%- else -%}
@@ -73,7 +80,7 @@
     - name: Report detected environment
       ansible.builtin.debug:
         msg: >
-          Environment: {{ 'Docker' if transfs_dockerenv_stat.stat.exists else 'bare-metal' }},
+          Environment: {{ 'RetroNAS' if transfs_retronas_stat.stat.exists else ('Docker' if transfs_dockerenv_stat.stat.exists else 'bare-metal') }},
           host OS: {{ 'Windows/WSL' if transfs_windows_host else 'Linux' }},
           SMB mode: {{ transfs_smb_mode }}
     # ---------------------------------------------------------------------------
@@ -81,6 +88,7 @@
     - name: Install required packages
       ansible.builtin.package:
         name:
+          - apt-utils
           - build-essential
           - git
           - libfuse3-dev
@@ -168,6 +176,7 @@
         dest: "{{ transfs_install_root }}"
         version: "{{ transfs_repo_version }}"
         update: true
+        force: true
 
     - name: Build filtered requirements (exclude mega.py, add modern tenacity)
       # mega.py 1.0.8 metadata pins tenacity<6.0.0 but only uses the sync API
