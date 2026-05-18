@@ -5,6 +5,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Fixed
+- **Ansible playbook — SMB auto-detection logic corrected**: `retronas_managed` is now only selected when running inside a RetroNAS environment AND the host is native Linux. On Windows/WSL-hosted containers (even with `/opt/retronas` present) the mode defaults to `transfs_managed`, because Windows holds port 445 and RetroNAS cannot own Samba there. Previous behaviour unconditionally set `retronas_managed` whenever `/opt/retronas` existed.
+
+### Added
+- **`smb.mode: custom` option in app.yaml**: In addition to `transfs_managed`, `retronas_managed`, and `disabled`, a `custom` mode is now supported. Set `smb.mode: custom` and `smb.conf_path: /path/to/smb.conf` to have TransFS manage Samba auth/guest settings against a user-specified config file rather than the default `/etc/samba/smb.conf`. `get_smb_conf_path()` helper added to `smb_config.py`; 7 new unit tests added in `test_smb_mode_behavior.py`.
+
 - **Ansible playbook `install_transfs.yml` — RetroNAS environment detection added**: Playbook now detects the presence of `/opt/retronas` and sets `retronas_managed` SMB mode, avoiding a spurious Samba apt install inside the RetroNAS Docker container. Previously, standalone-Docker mode (`transfs_managed`) was selected, causing a large batch apt install (51 packages) that failed mid-way because Samba's postinst script cleared the dpkg temp directory when `apt-utils` was absent. Fix: (1) "Detect RetroNAS environment" stat task added before mode resolution; (2) `retronas_managed` branch added to the Jinja2 mode-resolution block; (3) `apt-utils` added to required packages so debconf works in standalone-Docker mode.
 - **Ansible playbook — `git` checkout task now idempotent**: Added `force: true` to the `ansible.builtin.git` task so the playbook can be re-run on a host where `/opt/transfs` already has local modifications without aborting.
 - **Ansible playbook — platform/retronas directory created before template deploy**: Added an explicit `ansible.builtin.file` task to create `{{ transfs_install_root }}/platform/retronas/` with correct ownership and mode before the template-deploy loop, preventing "destination does not exist" failures on first install.

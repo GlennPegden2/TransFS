@@ -58,24 +58,26 @@
       changed_when: false
 
     - name: Resolve effective SMB mode from 'auto'
-      # RetroNAS already owns Samba, so always use retronas_managed when running
-      # inside a RetroNAS environment (detected by /opt/retronas/).
-      # In a standalone Docker install, TransFS manages its own Samba.
-      # On bare-metal (non-RetroNAS, non-Docker): defer to retronas_managed.
+      # Default: transfs_managed (TransFS installs and owns Samba).
+      # retronas_managed is used ONLY when both conditions are true:
+      #   1. Running inside a RetroNAS environment (/opt/retronas exists)
+      #   2. The host is native Linux (not Windows or WSL)
+      # On Windows-hosted containers RetroNAS cannot own port 445 (Windows holds
+      # it), so we fall back to transfs_managed even inside a RetroNAS container.
       ansible.builtin.set_fact:
-        transfs_smb_mode: >-
-          {%- if transfs_smb_mode != 'auto' -%}
-            {{ transfs_smb_mode }}
-          {%- elif transfs_retronas_stat.stat.exists -%}
-            retronas_managed
-          {%- elif transfs_dockerenv_stat.stat.exists -%}
-            transfs_managed
-          {%- else -%}
-            retronas_managed
-          {%- endif -%}
         transfs_windows_host: >-
           {{ 'microsoft' in transfs_kernel_version.stdout | lower
              or 'wsl' in transfs_kernel_version.stdout | lower }}
+        transfs_smb_mode: >-
+          {%- set _win = 'microsoft' in transfs_kernel_version.stdout | lower
+                         or 'wsl' in transfs_kernel_version.stdout | lower -%}
+          {%- if transfs_smb_mode != 'auto' -%}
+            {{ transfs_smb_mode }}
+          {%- elif transfs_retronas_stat.stat.exists and not _win -%}
+            retronas_managed
+          {%- else -%}
+            transfs_managed
+          {%- endif -%}
 
     - name: Report detected environment
       ansible.builtin.debug:

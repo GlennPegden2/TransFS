@@ -46,6 +46,14 @@ database:
   pool_size: 20
   max_overflow: 10
 smb:
+  # mode controls how TransFS interacts with Samba:
+  #   transfs_managed  - TransFS installs Samba and owns /etc/samba/smb.conf (default)
+  #   retronas_managed - RetroNAS owns Samba; TransFS injects its share only
+  #   custom           - Like transfs_managed but uses a user-specified smb.conf path;
+  #                      set conf_path below when using this mode
+  #   disabled         - No SMB configuration; web API still functions
+  mode: transfs_managed
+  # conf_path: /etc/samba/smb.conf   # only used when mode is 'custom'
   username: root
   password: '1'
   allow_guest: false

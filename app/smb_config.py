@@ -18,21 +18,41 @@ def get_smb_mode(config: dict) -> str:
     """Return normalized SMB ownership mode.
 
     Supported values:
-    - transfs_managed (default for backward compatibility)
-    - retronas_managed
-    - disabled
+    - transfs_managed (default) — TransFS installs and fully owns Samba with
+      its built-in smb.conf template.
+    - retronas_managed          — RetroNAS/system owns Samba; TransFS injects
+      its share definition into the existing smb.conf only.
+    - custom                    — Like transfs_managed but uses a user-specified
+      smb.conf path (set smb.conf_path in app.yaml).
+    - disabled                  — No SMB configuration; web API still works.
     """
     smb_config = (config or {}).get('smb', {}) or {}
     mode = str(smb_config.get('mode', 'transfs_managed')).strip().lower()
-    if mode not in {'transfs_managed', 'retronas_managed', 'disabled'}:
+    if mode not in {'transfs_managed', 'retronas_managed', 'custom', 'disabled'}:
         logger.warning("Unknown smb.mode '%s'; defaulting to transfs_managed", mode)
         return 'transfs_managed'
     return mode
 
 
+def get_smb_conf_path(config: dict) -> str:
+    """Return the smb.conf path to use.
+
+    For 'custom' mode returns the path from smb.conf_path in app.yaml.
+    All other modes use the standard /etc/samba/smb.conf.
+    """
+    smb_cfg = (config or {}).get('smb', {}) or {}
+    if get_smb_mode(config) == 'custom':
+        return str(smb_cfg.get('conf_path', '/etc/samba/smb.conf'))
+    return '/etc/samba/smb.conf'
+
+
 def is_samba_managed_by_transfs(config: dict) -> bool:
-    """Return True when TransFS should manage Samba configuration/services."""
-    return get_smb_mode(config) == 'transfs_managed'
+    """Return True when TransFS should manage Samba configuration/services.
+
+    True for transfs_managed and custom modes.
+    False for retronas_managed and disabled.
+    """
+    return get_smb_mode(config) in {'transfs_managed', 'custom'}
 
 
 def configure_samba_user(username: str, password: str) -> bool:
@@ -72,18 +92,19 @@ def configure_samba_user(username: str, password: str) -> bool:
         return False
 
 
-def update_smb_conf_guest_access(allow_guest: bool) -> bool:
+def update_smb_conf_guest_access(allow_guest: bool, conf_path: str = "/etc/samba/smb.conf") -> bool:
     """
     Update smb.conf to enable or disable guest access.
-    
+
     Args:
         allow_guest: True to allow guest access, False to require authentication
-        
+        conf_path:   Path to the smb.conf file to modify
+
     Returns:
         True if successful, False otherwise
     """
-    smb_conf_path = Path("/etc/samba/smb.conf")
-    
+    smb_conf_path = Path(conf_path)
+
     if not smb_conf_path.exists():
         logger.warning("smb.conf not found at /etc/samba/smb.conf")
         return False
@@ -175,19 +196,20 @@ def setup_samba_from_config(config: dict) -> bool:
         True if successful, False otherwise
     """
     smb_mode = get_smb_mode(config)
-    if smb_mode != 'transfs_managed':
+    if smb_mode not in {'transfs_managed', 'custom'}:
         logger.info("Skipping Samba setup because smb.mode=%s", smb_mode)
         return True
 
+    conf_path = get_smb_conf_path(config)
     smb_config = config.get('smb', {})
     username = smb_config.get('username', 'root')
     password = smb_config.get('password', '1')
     allow_guest = smb_config.get('allow_guest', False)
-    
+
     logger.info(f"Setting up Samba user: {username}")
-    
+
     # Update smb.conf guest access setting
-    if not update_smb_conf_guest_access(allow_guest):
+    if not update_smb_conf_guest_access(allow_guest, conf_path=conf_path):
         logger.warning("Failed to update smb.conf guest access setting")
     
     # Configure the user
