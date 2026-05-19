@@ -200,13 +200,14 @@ def _resolve_source_base(
             local_base_path=canonical.local_base_path,
             filestore=filestore,
         )
-        # If the template rendered to an absolute path (e.g. RetroNAS paths like
-        # /data/retronas/roms/{src}), use it directly without the Native/ prefix.
+        # If the template rendered to an absolute path (i.e. {filestore} was
+        # expanded), return it directly — it already includes the Native/ segment.
         if os.path.isabs(rel):
             return rel
         rel = _norm_rel(rel)
     else:
-        rel = _norm_rel(os.path.join("Canonical", top_level.source_root, canonical.src))
+        # Default: RetroNAS-inside-Native convention — Native/{category}/{src}
+        rel = _norm_rel(os.path.join(top_level.source_root, canonical.src))
 
     return os.path.join(filestore, "Native", rel)
 

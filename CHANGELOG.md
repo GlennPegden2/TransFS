@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+- **RetroNAS-inside-Native content storage convention**: All native content is now stored under `{filestore}/Native/{category}/{manufacturer}/{system}` (e.g. `Native/roms/acorn/bbcmicro/`), adopting the RetroNAS category-first layout inside the FUSE `Native/` passthrough directory. This replaces the old `Native/Systems/{TitleCased}` layout. Key impacts:
+  - `app/config.py`: `_normalize_native_local_base_path` and `_normalize_source_base_path` now produce `roms/{lowercase_src}` (e.g. `roms/acorn/bbcmicro`) instead of `Systems/Acorn/Bbcmicro`. Legacy `Systems/` prefixes are stripped and `roms/` prepended automatically for backward compat. Paths that already carry a known category prefix (`roms/`, `saves/`, `savestates/`, `bios/`, `wallpapers/`, `clients/`) are kept as-is.
+  - `app/retronas_support.py`: Default fallback path (when no `canonical_roots` configured) now uses `Native/{category}/{src}` — the `Canonical/` intermediate directory has been removed.
+  - `tools/import_mister_cifs.py`: Generated `canonical_roots` now uses `{filestore}/Native/{category}/{src}` for every category (roms, saves, savestates, bios, wallpapers), matching both the FUSE read path and the downloader write path.
+  - `app/api.py`: `archive_sources`-based download endpoints now apply `_normalize_source_base_path` to `base_path_rel` so old-style paths in `app.yaml` are transparently converted.
+  - **Download once, serve everywhere**: Regular TransFS client configs (resolved via `sourcepath.py`) and RetroNAS `canonical_roots` templates now both resolve to the same disk location, so content downloaded via any mechanism is immediately visible through all configured virtual paths.
+
 ### Added
 - **`tools/import_mister_cifs.py` generalised to all RetroNAS CIFS platforms**: The MiSTer CIFS importer has been expanded into a multi-platform generator. It now auto-discovers every `install_*_cifs.yml` playbook in the RetroNAS ansible directory and generates a separate `config/clients/retronas/<platform>.yaml` for each one. Supported platforms: MiSTer, Batocera, Recalbox, RetroDeck, EmuDeck, EmuELEC, RetroArch, Analogue Pocket, RomM. New CLI flags: `--all` (generate all found platforms), `--playbook PATH` (generate from a specific playbook), `--output-dir DIR` (target directory for `--all` mode). Backward-compatible: default invocation still generates only `mister.yaml`. New platforms without `top_level_paths` in their playbook (EmuELEC, RetroArch) use sensible per-platform fallbacks. A `CLIENT_DISPLAY_NAMES` lookup table maps `system_key` to human-readable client names; unknown keys fall back to title-case. The `generate_client_config()` function replaces the old `generate_mister_yaml()` (alias kept for compatibility).
 

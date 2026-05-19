@@ -246,15 +246,21 @@ def generate_client_config(
             "per_system": per_system,
         })
 
-    # canonical_roots: map each generic category to its filestore path template.
-    # RetroNAS stores content as: <retronas_path>/<generic>/<src>
+    # canonical_roots: RetroNAS-inside-Native convention.
+    # All categories live under {filestore}/Native/{category}/{src}.
+    # - {filestore} is resolved at runtime from the TransFS app config.
+    # - {src}       is the lower-case manufacturer/system path from RetroNAS
+    #               (e.g. "acorn/bbcmicro").
+    # ROMs/games downloaded by TransFS go to Native/roms/{src}/.
+    # Saves written by the emulator go to Native/saves/{src}/ etc.
     canon_roots_final: dict[str, str] = {}
     for tl in top_level_paths:
         if not tl.get("enabled", True):
             continue
         generic = str(tl.get("generic") or tl.get("name") or "").lower()
-        if generic:
-            canon_roots_final[generic] = f"{retronas_path}/{generic}/{{src}}"
+        if not generic:
+            continue
+        canon_roots_final[generic] = "{filestore}/Native/" + generic + "/{src}"
 
     # --- Build save overrides -----------------------------------------------
     overrides_cfg = []

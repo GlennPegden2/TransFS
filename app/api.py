@@ -48,6 +48,7 @@ from config import (
     read_app_config,
     read_clients_config,
     reload_config,
+    _normalize_source_base_path,
 )
 from native_mounts import (
     build_unc_path,
@@ -5361,8 +5362,8 @@ async def api_build_stream(req: BuildRequest):
             system = build.get("system")
             manufacturer_sources = archive_sources.get(manufacturer, {})
             system_entry = manufacturer_sources.get(system, {})
-            base_path_rel = system_entry.get("base_path", "")
-            base_path = os.path.join(filestore, "Native" , base_path_rel)
+            base_path_rel = _normalize_source_base_path(system_entry.get("base_path", ""))
+            base_path = os.path.join(filestore, "Native", base_path_rel)
             for client in req.clients:
                 script_path = os.path.join(
                     "build_scripts", client, manufacturer, system, "build.sh"
@@ -5414,8 +5415,8 @@ async def api_download_stream(req: DownloadRequest):
             yield "System not found\n"
             return
 
-        base_path_rel = system_entry.get("base_path", "")
-        base_path = os.path.join(filestore, "Native" , base_path_rel)
+        base_path_rel = _normalize_source_base_path(system_entry.get("base_path", ""))
+        base_path = os.path.join(filestore, "Native", base_path_rel)
         sources = system_entry.get("sources", [])
         download_layout = _get_download_layout_for_system(clients, req.manufacturer, req.system)
 

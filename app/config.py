@@ -6,30 +6,58 @@ from typing import Optional
 from functools import lru_cache
 
 
+# Categories that already encode a RetroNAS-inside-Native or special prefix.
+_NATIVE_KNOWN_PREFIXES = frozenset({
+    "roms", "saves", "savestates", "bios", "wallpapers", "clients",
+})
+
+
 def _normalize_native_local_base_path(local_base_path: Optional[str]) -> str:
-    """Normalize system local base paths under Native/Systems for new architecture."""
+    """Normalize a system local_base_path to RetroNAS-inside-Native convention.
+
+    Output form: ``roms/{manufacturer}/{system}`` (all lowercase).
+    Handles legacy ``Systems/`` prefix by stripping it before applying the
+    ``roms/`` category prefix.
+    """
     normalized = (local_base_path or "").replace("\\", "/").strip("/")
     if not normalized:
         return ""
 
     lower = normalized.lower()
-    if lower.startswith("systems/") or lower.startswith("clients/"):
-        return normalized
+    first_part = lower.split("/")[0]
 
-    return f"Systems/{normalized}"
+    # Already uses a known category prefix (new convention or client-specific path).
+    if first_part in _NATIVE_KNOWN_PREFIXES:
+        return lower
+
+    # Legacy Systems/ prefix — strip it, then apply roms/ prefix.
+    if lower.startswith("systems/"):
+        return "roms/" + lower[len("systems/"):]
+
+    # Raw path (e.g. "Acorn/Bbcmicro") — add roms/ prefix and lowercase.
+    return "roms/" + lower
 
 
 def _normalize_source_base_path(base_path: Optional[str]) -> str:
-    """Normalize source base_path under Native/Systems for new architecture."""
+    """Normalize a source archive base_path to RetroNAS-inside-Native convention.
+
+    Output form: ``roms/{manufacturer}/{system}`` (all lowercase).
+    Mirrors the logic of :func:`_normalize_native_local_base_path`.
+    """
     normalized = (base_path or "").replace("\\", "/").strip("/")
     if not normalized:
         return ""
 
     lower = normalized.lower()
-    if lower.startswith("systems/") or lower.startswith("clients/"):
-        return normalized
+    first_part = lower.split("/")[0]
 
-    return f"Systems/{normalized}"
+    if first_part in _NATIVE_KNOWN_PREFIXES:
+        return lower
+
+    if lower.startswith("systems/"):
+        return "roms/" + lower[len("systems/"):]
+
+    return "roms/" + lower
 
 @dataclass
 class Pack:
