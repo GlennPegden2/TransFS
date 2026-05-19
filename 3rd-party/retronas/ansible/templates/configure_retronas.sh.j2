@@ -74,6 +74,9 @@ web['fallback_ports'] = web_fallback
 web['strict_standard_port'] = web_strict
 web['auto_allocate_port'] = auto_claim
 
+config_sets = cfg.setdefault('config_sets', {})
+config_sets['active_client_config'] = 'retronas'
+
 with open(cfg_path, 'w', encoding='utf-8') as fh:
     yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
 
@@ -85,6 +88,7 @@ print(f"  smb.mode={smb_mode}")
 print(f"  smb.preferred_port={smb_preferred}, fallback={smb_fallback}, strict={smb_strict}")
 print(f"  web_api.host={web_host}")
 print(f"  web_api.preferred_port={web_preferred}, fallback={web_fallback}, strict={web_strict}")
+print(f"  config_sets.active_client_config=retronas")
 PY
 
 echo "RetroNAS config profile applied."
