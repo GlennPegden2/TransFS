@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-import_mister_cifs.py — Generate a TransFS mister.yaml from RetroNAS mister_cifs data.
+import_mister_cifs.py — Generate TransFS client configs from RetroNAS *_cifs playbooks.
 
-Reads the RetroNAS systems map and mister_cifs playbook variables to generate a
-mister.yaml client config that reflects the MiSTer CIFS directory structure.
+Reads the RetroNAS systems map and one or more install_*_cifs.yml playbook files to
+generate TransFS client YAML configs that reflect each platform's CIFS directory
+structure.  Configs are written to the 'retronas' client config set.
 
-The generated config is written to a new 'retronas' config set so it does not
-overwrite the default MiSTer config.
+Supports all RetroNAS CIFS playbooks that follow the standard format:
+  install_mister_cifs.yml, install_batocera_cifs.yml, install_retrodeck_cifs.yml, etc.
 
 Usage (inside container, or with --retronas-root pointing to a copy):
-    python3 tools/import_mister_cifs.py
-    python3 tools/import_mister_cifs.py --retronas-root /opt/retronas --output /app/config/clients/retronas/mister.yaml
-    python3 tools/import_mister_cifs.py --dry-run
+
+  # Generate/refresh just the MiSTer config (default, backward-compatible):
+  python3 tools/import_mister_cifs.py
+
+  # Generate from a specific playbook:
+  python3 tools/import_mister_cifs.py --playbook /opt/retronas/ansible/install_batocera_cifs.yml
+
+  # Generate all configs from every *_cifs.yml found in retronas/ansible/:
+  python3 tools/import_mister_cifs.py --all
+
+  # Dry-run (print YAML, write nothing):
+  python3 tools/import_mister_cifs.py --all --dry-run
 """
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import sys
 from pathlib import Path
@@ -34,9 +45,15 @@ DEFAULT_RETRONAS_ROOT = "/opt/retronas"
 DEFAULT_SYSTEMS_FILE = "ansible/retronas_systems.yml"
 DEFAULT_CIFS_PLAYBOOK = "ansible/install_mister_cifs.yml"
 DEFAULT_VARS_FILE = "ansible/retronas_vars.yml"
-DEFAULT_OUTPUT = "/app/config/clients/retronas/mister.yaml"
 
-# top_level_paths defined in install_mister_cifs.yml (fallback if not parseable)
+# Derive output paths relative to this script's location so they work regardless
+# of whether TransFS is installed at /app (main container) or /opt/transfs (testbed).
+# tools/import_mister_cifs.py → project root is one level up → app/config/clients/retronas
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT_DIR = str(_PROJECT_ROOT / "app" / "config" / "clients" / "retronas")
+DEFAULT_OUTPUT = str(_PROJECT_ROOT / "app" / "config" / "clients" / "retronas" / "mister.yaml")
+
+# top_level_paths used when a playbook defines none (MiSTer-style layout).
 FALLBACK_TOP_LEVEL_PATHS = [
     {"name": "games",      "enabled": True,  "generic": "roms",        "systems": True},
     {"name": "saves",      "enabled": True,  "generic": "saves",       "systems": True},
@@ -44,6 +61,37 @@ FALLBACK_TOP_LEVEL_PATHS = [
     {"name": "BIOS",       "enabled": True,  "generic": "bios",        "systems": True},
     {"name": "wallpapers", "enabled": True,  "generic": "wallpapers",  "systems": False},
 ]
+
+# Per-platform fallback top_level_paths for platforms that don't define them in their
+# playbook vars (e.g. emuelec, retroarch).  Keyed by system_key.
+PLATFORM_FALLBACK_TOP_LEVELS: dict[str, list[dict[str, Any]]] = {
+    "emuelec": [
+        {"name": "roms",   "enabled": True, "generic": "roms",        "systems": True},
+        {"name": "saves",  "enabled": True, "generic": "saves",       "systems": True},
+        {"name": "states", "enabled": True, "generic": "savestates",  "systems": True},
+        {"name": "bios",   "enabled": True, "generic": "bios",        "systems": True},
+    ],
+    "retroarch": [
+        {"name": "roms",   "enabled": True, "generic": "roms",        "systems": True},
+        {"name": "saves",  "enabled": True, "generic": "saves",       "systems": True},
+        {"name": "states", "enabled": True, "generic": "savestates",  "systems": True},
+        {"name": "system", "enabled": True, "generic": "bios",        "systems": True},
+    ],
+}
+
+# Human-readable display name for each known system_key.
+CLIENT_DISPLAY_NAMES: dict[str, str] = {
+    "analoguepocket": "Analogue Pocket",
+    "batocera":       "Batocera",
+    "emudeck":        "EmuDeck",
+    "emuelec":        "EmuELEC",
+    "mister":         "MiSTer",
+    "recalbox":       "Recalbox",
+    "retroarch":      "RetroArch",
+    "retrodeck":      "RetroDeck",
+    "retropie":       "RetroPie",
+    "romm":           "RomM",
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -119,18 +167,38 @@ def _manufacturer_from_src(src: str) -> str:
     return manufacturer_map.get(key, parts[0].title())
 
 
+def _client_name_from_key(system_key: str) -> str:
+    """Return the human-readable client display name for a system_key."""
+    return CLIENT_DISPLAY_NAMES.get(system_key.lower(), system_key.title())
+
+
+def _output_filename_from_key(system_key: str) -> str:
+    """Derive the YAML output filename from a system_key (e.g. 'batocera' → 'batocera.yaml')."""
+    return f"{system_key.lower()}.yaml"
+
+
+def discover_cifs_playbooks(ansible_dir: str) -> list[str]:
+    """
+    Return paths to all install_*_cifs.yml playbooks found in ansible_dir,
+    sorted alphabetically.
+    """
+    pattern = os.path.join(ansible_dir, "install_*_cifs.yml")
+    return sorted(glob.glob(pattern))
+
+
 # ---------------------------------------------------------------------------
 # Core generation logic
 # ---------------------------------------------------------------------------
 
-def generate_mister_yaml(
+def generate_client_config(
     systems_file: str,
     cifs_playbook: str,
     retronas_path: str = "/data/retronas",
     verbose: bool = False,
 ) -> dict[str, Any]:
     """
-    Parse RetroNAS files and generate the TransFS mister.yaml content.
+    Parse RetroNAS files and generate a TransFS client YAML config for the
+    platform identified by the system_key declared in the playbook vars.
 
     Returns a dict ready for yaml.dump().
     """
@@ -138,25 +206,32 @@ def generate_mister_yaml(
     # --- Load systems map ---------------------------------------------------
     systems_data = _load_yaml(systems_file)
     system_map: list[dict[str, Any]] = systems_data.get("system_map") or []
-    save_links: list[dict[str, Any]] = systems_data.get("system_links") or []
 
     if not system_map:
         print(f"WARNING: No system_map found in {systems_file}", file=sys.stderr)
 
-    # --- Load mister_cifs playbook vars -------------------------------------
+    # --- Load playbook vars -------------------------------------------------
     playbook_vars = _extract_vars_from_playbook(cifs_playbook)
-    top_level_paths: list[dict[str, Any]] = playbook_vars.get("top_level_paths") or FALLBACK_TOP_LEVEL_PATHS
+    system_key: str = str(playbook_vars.get("system_key") or "mister").lower()
+
+    # Resolve top_level_paths: playbook → platform fallback → global fallback
+    top_level_paths: list[dict[str, Any]] = (
+        playbook_vars.get("top_level_paths")
+        or PLATFORM_FALLBACK_TOP_LEVELS.get(system_key)
+        or FALLBACK_TOP_LEVEL_PATHS
+    )
     save_overrides: list[dict[str, Any]] = playbook_vars.get("save_overrides") or []
-    system_key: str = str(playbook_vars.get("system_key") or "mister")
+
+    client_name = _client_name_from_key(system_key)
 
     if verbose:
-        print(f"system_key: {system_key}")
-        print(f"top_level_paths: {[t.get('name') for t in top_level_paths]}")
-        print(f"save_overrides count: {len(save_overrides)}")
+        print(f"system_key:         {system_key}")
+        print(f"client_name:        {client_name}")
+        print(f"top_level_paths:    {[t.get('name') for t in top_level_paths]}")
+        print(f"save_overrides:     {len(save_overrides)}")
 
     # --- Build retronas_support section ------------------------------------
     top_levels_cfg = []
-    canon_roots_cfg: dict[str, str] = {}
     for tl in top_level_paths:
         if not tl.get("enabled", True):
             continue
@@ -170,12 +245,9 @@ def generate_mister_yaml(
             "source_root": generic,
             "per_system": per_system,
         })
-        canon_roots_cfg[generic] = f"{{{generic}_src}}"  # placeholder — override below
 
-    # canonical_roots: map each generic root to its canonical path template
-    # Under MiSTer CIFS the filestore layout is:
-    #   <retronas_path>/<generic>/<src>   e.g. /data/retronas/roms/nintendo/gameboy
-    # TransFS uses {src} as the system canonical src.
+    # canonical_roots: map each generic category to its filestore path template.
+    # RetroNAS stores content as: <retronas_path>/<generic>/<src>
     canon_roots_final: dict[str, str] = {}
     for tl in top_level_paths:
         if not tl.get("enabled", True):
@@ -184,7 +256,7 @@ def generate_mister_yaml(
         if generic:
             canon_roots_final[generic] = f"{retronas_path}/{generic}/{{src}}"
 
-    # --- Build overrides from save_overrides --------------------------------
+    # --- Build save overrides -----------------------------------------------
     overrides_cfg = []
     save_dir_names = [
         tl["name"]
@@ -192,55 +264,63 @@ def generate_mister_yaml(
         if tl.get("enabled", True) and tl.get("generic", "") in ("saves", "savestates")
     ]
     for override in save_overrides:
-        client_name = str(override.get("name") or "")
+        client_entry_name = str(override.get("name") or "")
         src = str(override.get("src") or "")
-        if not client_name or not src:
+        if not client_entry_name or not src:
             continue
         for tl_name in save_dir_names:
             overrides_cfg.append({
                 "top_level": tl_name,
-                "client_name": client_name,
+                "client_name": client_entry_name,
                 "src": src,
             })
 
     # --- Build systems list -------------------------------------------------
     systems_cfg = []
-    seen_mister_names: set[str] = set()
+    seen_platform_names: set[str] = set()
 
     for entry in system_map:
         if not isinstance(entry, dict):
             continue
-        mister_name = str(entry.get("mister") or "").strip()
-        if not mister_name:
+
+        # Use the platform-specific name field (e.g. 'batocera', 'mister').
+        # Skip systems where this platform has no entry.
+        platform_name = str(entry.get(system_key) or "").strip()
+        if not platform_name:
             continue
-        if mister_name in seen_mister_names:
+        if platform_name in seen_platform_names:
             continue
-        seen_mister_names.add(mister_name)
+        seen_platform_names.add(platform_name)
 
         src = str(entry.get("src") or "").strip()
-        pretty_name = str(entry.get("pretty_name") or mister_name).strip()
+        pretty_name = str(entry.get("pretty_name") or platform_name).strip()
         manufacturer = _manufacturer_from_src(src)
 
-        # Derive a reasonable local_base_path from the MiSTer structure
-        # MiSTer organises per system in e.g. games/SNES, BIOS/SNES etc.
-        # local_base_path in TransFS is a sub-path hint for download layout.
-        # Use manufacturer + pretty_name as a default, or just the mister name.
+        # Derive canonical_system_name for TransFS source file lookup.
+        # RetroNAS pretty_names often include a manufacturer prefix
+        # (e.g. "Acorn BBC Micro"), but TransFS source files are named
+        # without it (e.g. "BBC Micro.yaml").  Strip the prefix so that
+        # get_system_config can resolve the correct source config file.
+        canonical_system_name = pretty_name
+        prefix = manufacturer + " "
+        if canonical_system_name.startswith(prefix):
+            canonical_system_name = canonical_system_name[len(prefix):]
+
+        # local_base_path: two-level path derived from the src field.
         if src:
             parts = src.replace("\\", "/").split("/")
-            if len(parts) >= 2:
-                local_base_path = "/".join(p.title() for p in parts)
-            else:
-                local_base_path = mister_name
+            local_base_path = "/".join(p.title() for p in parts) if len(parts) >= 2 else platform_name
         else:
-            local_base_path = mister_name
+            local_base_path = platform_name
 
         system_entry: dict[str, Any] = {
-            "name": mister_name,
+            "name": platform_name,
             "manufacturer": manufacturer,
             "system_mapping_name": pretty_name,
+            "canonical_system_name": canonical_system_name,
             "canonical_src": src,
             "local_base_path": local_base_path,
-            "maps": [],  # no detailed maps — this is a structural import
+            "maps": [],
         }
         systems_cfg.append(system_entry)
 
@@ -249,7 +329,7 @@ def generate_mister_yaml(
 
     # --- Assemble full config -----------------------------------------------
     config: dict[str, Any] = {
-        "name": "MiSTer",
+        "name": client_name,
         "download_layout": "folder_based",
         "default_target_path": "{name}/{system_name}/{maps}",
         "retronas_support": {
@@ -267,12 +347,36 @@ def generate_mister_yaml(
 
 
 # ---------------------------------------------------------------------------
+# Backward-compatible alias
+# ---------------------------------------------------------------------------
+
+def generate_mister_yaml(
+    systems_file: str,
+    cifs_playbook: str,
+    retronas_path: str = "/data/retronas",
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """Alias for generate_client_config (kept for backward compatibility)."""
+    return generate_client_config(
+        systems_file=systems_file,
+        cifs_playbook=cifs_playbook,
+        retronas_path=retronas_path,
+        verbose=verbose,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate a TransFS mister.yaml from RetroNAS mister_cifs configuration."
+        description=(
+            "Generate TransFS client configs from RetroNAS install_*_cifs.yml playbooks.\n"
+            "By default generates only mister.yaml (backward-compatible).\n"
+            "Use --all to generate configs for every *_cifs playbook found."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--retronas-root",
@@ -280,14 +384,42 @@ def main() -> None:
         help=f"Path to RetroNAS installation root (default: {DEFAULT_RETRONAS_ROOT})",
     )
     parser.add_argument(
+        "--playbook",
+        metavar="PATH",
+        help=(
+            "Path to a specific install_*_cifs.yml playbook to generate a config for. "
+            "Overrides the default MiSTer playbook. Mutually exclusive with --all."
+        ),
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_playbooks",
+        help=(
+            "Auto-discover and generate configs for all install_*_cifs.yml playbooks "
+            "found in <retronas-root>/ansible/. Mutually exclusive with --playbook."
+        ),
+    )
+    parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT,
-        help=f"Destination for the generated mister.yaml (default: {DEFAULT_OUTPUT})",
+        help=(
+            f"Output path for single-playbook mode (default: {DEFAULT_OUTPUT}). "
+            "Ignored when --all is used."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            f"Output directory used by --all mode (default: {DEFAULT_OUTPUT_DIR}). "
+            "Each client gets a <system_key>.yaml file inside this directory."
+        ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the generated YAML to stdout without writing any files",
+        help="Print generated YAML to stdout without writing any files",
     )
     parser.add_argument(
         "--verbose",
@@ -296,19 +428,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.playbook and args.all_playbooks:
+        parser.error("--playbook and --all are mutually exclusive")
+
     retronas_root = args.retronas_root.rstrip("/")
     systems_file = os.path.join(retronas_root, DEFAULT_SYSTEMS_FILE)
-    cifs_playbook = os.path.join(retronas_root, DEFAULT_CIFS_PLAYBOOK)
     vars_file = os.path.join(retronas_root, DEFAULT_VARS_FILE)
+    ansible_dir = os.path.join(retronas_root, "ansible")
 
-    # Validate inputs
-    for label, path in [
-        ("Systems file", systems_file),
-        ("MiSTer CIFS playbook", cifs_playbook),
-    ]:
-        if not os.path.exists(path):
-            print(f"ERROR: {label} not found: {path}", file=sys.stderr)
-            sys.exit(1)
+    # Validate the systems map exists (needed for all modes)
+    if not os.path.exists(systems_file):
+        print(f"ERROR: Systems file not found: {systems_file}", file=sys.stderr)
+        sys.exit(1)
 
     # Read retronas_path from vars file
     retronas_path = "/data/retronas"
@@ -316,54 +447,111 @@ def main() -> None:
         rn_vars = _load_yaml(vars_file)
         retronas_path = str(rn_vars.get("retronas_path") or retronas_path)
     else:
-        print(f"WARNING: RetroNAS vars file not found at {vars_file}; using default path {retronas_path}", file=sys.stderr)
+        print(
+            f"WARNING: RetroNAS vars file not found at {vars_file}; "
+            f"using default retronas_path={retronas_path}",
+            file=sys.stderr,
+        )
 
     if args.verbose:
         print(f"RetroNAS root : {retronas_root}")
         print(f"Systems file  : {systems_file}")
-        print(f"CIFS playbook : {cifs_playbook}")
         print(f"retronas_path : {retronas_path}")
-        print(f"Output file   : {args.output}")
 
-    config = generate_mister_yaml(
-        systems_file=systems_file,
-        cifs_playbook=cifs_playbook,
-        retronas_path=retronas_path,
-        verbose=args.verbose,
-    )
+    # ------------------------------------------------------------------
+    # Determine which playbooks to process
+    # ------------------------------------------------------------------
+    if args.all_playbooks:
+        playbooks = discover_cifs_playbooks(ansible_dir)
+        if not playbooks:
+            print(f"ERROR: No install_*_cifs.yml files found in {ansible_dir}", file=sys.stderr)
+            sys.exit(1)
+        if args.verbose:
+            print(f"Found {len(playbooks)} CIFS playbooks: {[os.path.basename(p) for p in playbooks]}")
+    elif args.playbook:
+        if not os.path.exists(args.playbook):
+            print(f"ERROR: Playbook not found: {args.playbook}", file=sys.stderr)
+            sys.exit(1)
+        playbooks = [args.playbook]
+    else:
+        # Default: MiSTer only (backward-compatible behaviour)
+        default_playbook = os.path.join(retronas_root, DEFAULT_CIFS_PLAYBOOK)
+        if not os.path.exists(default_playbook):
+            print(f"ERROR: MiSTer CIFS playbook not found: {default_playbook}", file=sys.stderr)
+            sys.exit(1)
+        playbooks = [default_playbook]
 
-    output_yaml = yaml.dump(
-        config,
-        default_flow_style=False,
-        allow_unicode=True,
-        sort_keys=False,
-        indent=2,
-        width=120,
-    )
+    # ------------------------------------------------------------------
+    # Process each playbook
+    # ------------------------------------------------------------------
+    for playbook_path in playbooks:
+        playbook_name = os.path.basename(playbook_path)
 
-    header = (
-        "# MiSTer FPGA Client Configuration — generated from RetroNAS mister_cifs\n"
-        "# Generated by tools/import_mister_cifs.py\n"
-        "# This config is part of the 'retronas' config set and reflects the\n"
-        "# directory structure created by the RetroNAS MiSTer_CIFS Ansible playbook.\n"
-        "#\n"
-        "# Do not hand-edit — re-run the importer to refresh after RetroNAS changes.\n\n"
-    )
+        # Peek at the system_key before full generation (for output path)
+        peek_vars = _extract_vars_from_playbook(playbook_path)
+        system_key = str(peek_vars.get("system_key") or "mister").lower()
 
-    if args.dry_run:
-        print(header, end="")
-        print(output_yaml)
-        return
+        # Determine output path
+        if args.all_playbooks:
+            output_path = os.path.join(args.output_dir, _output_filename_from_key(system_key))
+        elif args.playbook:
+            # Single custom playbook: derive output from --output-dir unless --output given
+            if args.output != DEFAULT_OUTPUT:
+                output_path = args.output
+            else:
+                output_path = os.path.join(args.output_dir, _output_filename_from_key(system_key))
+        else:
+            # Default MiSTer mode: honour --output exactly
+            output_path = args.output
 
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        if args.verbose:
+            print(f"\n--- Processing {playbook_name} (system_key={system_key}) ---")
+            print(f"    Output: {output_path}")
 
-    with open(output_path, "w", encoding="utf-8") as fh:
-        fh.write(header)
-        fh.write(output_yaml)
+        config = generate_client_config(
+            systems_file=systems_file,
+            cifs_playbook=playbook_path,
+            retronas_path=retronas_path,
+            verbose=args.verbose,
+        )
 
-    print(f"Generated {len(config.get('systems', []))} system entries.")
-    print(f"Written to: {output_path}")
+        client_display = config.get("name", system_key)
+        n_systems = len(config.get("systems", []))
+
+        output_yaml = yaml.dump(
+            config,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            indent=2,
+            width=120,
+        )
+
+        header = (
+            f"# {client_display} Client Configuration — generated from RetroNAS {playbook_name}\n"
+            "# Generated by tools/import_mister_cifs.py\n"
+            "# This config is part of the 'retronas' config set and reflects the\n"
+            f"# directory structure created by the RetroNAS {playbook_name} Ansible playbook.\n"
+            "#\n"
+            "# Do not hand-edit — re-run the importer to refresh after RetroNAS changes.\n\n"
+        )
+
+        if args.dry_run:
+            print(f"# ===== {output_path} =====")
+            print(header, end="")
+            print(output_yaml)
+            continue
+
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(header)
+            fh.write(output_yaml)
+
+        print(f"[{client_display}] {n_systems} systems → {out}")
+
+    if not args.dry_run:
+        print("Done.")
 
 
 if __name__ == "__main__":

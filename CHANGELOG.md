@@ -5,7 +5,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
-- **RetroNAS tab in Web UI**: New "RetroNAS" tab detects whether TransFS is running inside a RetroNAS environment by checking for `/opt/retronas/ansible/retronas_vars.yml` on disk (not the `retronas_managed` SMB flag). Shows RetroNAS status, data path, and MiSTer CIFS deployment state. Displays "RetroNAS not detected" when not in a RetroNAS environment.
+- **`tools/import_mister_cifs.py` generalised to all RetroNAS CIFS platforms**: The MiSTer CIFS importer has been expanded into a multi-platform generator. It now auto-discovers every `install_*_cifs.yml` playbook in the RetroNAS ansible directory and generates a separate `config/clients/retronas/<platform>.yaml` for each one. Supported platforms: MiSTer, Batocera, Recalbox, RetroDeck, EmuDeck, EmuELEC, RetroArch, Analogue Pocket, RomM. New CLI flags: `--all` (generate all found platforms), `--playbook PATH` (generate from a specific playbook), `--output-dir DIR` (target directory for `--all` mode). Backward-compatible: default invocation still generates only `mister.yaml`. New platforms without `top_level_paths` in their playbook (EmuELEC, RetroArch) use sensible per-platform fallbacks. A `CLIENT_DISPLAY_NAMES` lookup table maps `system_key` to human-readable client names; unknown keys fall back to title-case. The `generate_client_config()` function replaces the old `generate_mister_yaml()` (alias kept for compatibility).
+
+- **`canonical_system_name` field in generated client configs**: Each system entry now includes a `canonical_system_name` field that strips the manufacturer prefix from `pretty_name` (e.g. `Acorn BBC Micro` → `BBC Micro`). This allows `app/config.py`'s `get_system_config()` to correctly resolve the matching source YAML file (which is named by system only, not manufacturer+system).
+
+- **`app/config.py` prefers `canonical_system_name` for source-file lookup**: `get_system_config` now checks `canonical_system_name` (and the legacy typo `cananonical_system_name`) before falling back to `system_mapping_name`. This fixes pack resolution for any client config whose `system_mapping_name` includes a manufacturer prefix.
+
 
 - **MiSTer CIFS config import from Web UI**: The RetroNAS tab includes an "Import MiSTer CIFS Config" button that calls the new `/api/retronas/import-mister-cifs` endpoint to generate a `config/clients/retronas/mister.yaml` from the live RetroNAS system map. Re-import is supported to refresh after RetroNAS changes.
 

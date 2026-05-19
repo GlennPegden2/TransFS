@@ -448,7 +448,11 @@ def get_system_config(client_name: str, system_name: str, config_dir="config") -
                 system_mapping = system.get("system_mapping_name")
                 if system_actual_name == system_name or system_mapping == system_name:
                     manufacturer = system.get("manufacturer")
-                    canonical_name = system_mapping or system.get("cananonical_system_name")
+                    canonical_name = (
+                        system.get("canonical_system_name")
+                        or system.get("cananonical_system_name")  # legacy typo spelling
+                        or system_mapping
+                    )
                     local_base_path = system.get("local_base_path")
                     actual_system_name = system_actual_name
                     break
