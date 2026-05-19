@@ -32,7 +32,7 @@ veto files = /.snapshot/
 
 [TransFSNative]
 comment = TransFS Native Storage
-path = /mnt/filestorefs/Native
+path = {{ transfs_filestore_path }}/Native
 browseable = yes
 read only = no
 {% if transfs_smb_allow_guest %}
