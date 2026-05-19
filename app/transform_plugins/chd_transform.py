@@ -25,10 +25,18 @@ logger = logging.getLogger(__name__)
 
 # Default cache directory — persists across container restarts on the filestore volume.
 # Override with the TRANSFS_CHD_CACHE_DIR environment variable.
-DEFAULT_CACHE_DIR = os.environ.get(
-    "TRANSFS_CHD_CACHE_DIR",
-    "/mnt/filestorefs/.cache/chd",
-)
+def _get_default_cache_dir() -> str:
+    env = os.environ.get("TRANSFS_CHD_CACHE_DIR")
+    if env:
+        return env
+    try:
+        from config import read_app_config  # pylint: disable=import-outside-toplevel
+        cfg = read_app_config()
+        return os.path.join(cfg.get("filestore", "/data/retronas"), ".cache", "chd")
+    except Exception:  # pylint: disable=broad-except
+        return "/data/retronas/.cache/chd"
+
+DEFAULT_CACHE_DIR = _get_default_cache_dir()
 
 
 @dataclass

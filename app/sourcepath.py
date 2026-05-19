@@ -195,10 +195,10 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
     rel_parts = path.parts[len(root_parts):]
 
     if not rel_parts:
-        return config.get("filestore", "/mnt/filestorefs")
+        return config.get("filestore", "/data/retronas")
     if rel_parts[0] == "Native":
         # Map /Native to /mnt/filestorefs/Native
-        return os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
+        return os.path.join(config.get("filestore", "/data/retronas"), "Native", *rel_parts[1:])
 
     projected_source = resolve_retronas_support_source_path(config, root, translated_path, for_write=False)
     if not retronas_support_not_applicable(projected_source):
@@ -209,11 +209,11 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         return None
 
     if len(rel_parts) == 1:
-        return config.get("filestore", "/mnt/filestorefs")
+        return config.get("filestore", "/data/retronas")
 
     # Check client-level maps (global maps under client root, e.g. /RetroBat/bios/*)
     if len(rel_parts) >= 2:
-        filestore_root = config.get("filestore", "/mnt/filestorefs")
+        filestore_root = config.get("filestore", "/data/retronas")
         client_local_base = client.get('local_base_path', '')
         translated_norm = str(path).replace('\\', '/').rstrip('/')
         client_name = client.get('name', '')
@@ -287,7 +287,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
         # Fallback for category paths that intentionally omit {system_name}
         # (e.g. shared BIOS at /RetroBat/bios/* backed by a specific system map).
         translated_norm = str(path).replace('\\', '/')
-        filestore_root = config.get("filestore", "/mnt/filestorefs")
+        filestore_root = config.get("filestore", "/data/retronas")
         client_name = client.get('name', '')
 
         for candidate_system in client.get('systems', []):
@@ -371,7 +371,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                 file_spec = map_config['file']
                 if isinstance(file_spec, dict):
                     source_file_path = file_spec.get('path', '')
-                    filestore_root = config.get("filestore", "/mnt/filestorefs")
+                    filestore_root = config.get("filestore", "/data/retronas")
                     # Construct full path: /mnt/filestorefs/Native/{path}
                     # The path in config already includes the full path from Native/
                     full_path = os.path.join(filestore_root, "Native", source_file_path)
@@ -441,7 +441,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                 
                 # Build the full path in the filesystem
                 base_path = os.path.join(
-                    config.get("filestore", "/mnt/filestorefs"),
+                    config.get("filestore", "/data/retronas"),
                     "Native",
                     system_info['local_base_path'],
                     source_dir
@@ -477,7 +477,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                 if file_path:
                     # Resolve the file path relative to local_base_path
                     base = os.path.join(
-                        config.get("filestore", "/mnt/filestorefs"),
+                        config.get("filestore", "/data/retronas"),
                         "Native",
                         system_info['local_base_path'],
                         file_path
@@ -522,7 +522,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                 if zip_match is not None:
                     zip_file, internal_path = zip_match
                     base = os.path.join(
-                        config.get("filestore", "/mnt/filestorefs"),
+                        config.get("filestore", "/data/retronas"),
                         "Native",
                         system_info['local_base_path'],
                         zip_file
@@ -535,7 +535,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                     return None
                 
                 base = os.path.join(
-                    config.get("filestore", "/mnt/filestorefs"),
+                    config.get("filestore", "/data/retronas"),
                     "Native",
                     system_info['local_base_path'],
                     source_filename
@@ -610,7 +610,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
                             file_path = file_config.get('path')
                             if file_path:
                                 base = os.path.join(
-                                    config.get("filestore", "/mnt/filestorefs"),
+                                    config.get("filestore", "/data/retronas"),
                                     "Native",
                                     system_info['local_base_path'],
                                     file_path
@@ -649,7 +649,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
 
     # Fallback: just join filestore, local_base_path, and the rest
     base = os.path.join(
-        config.get("filestore", "/mnt/filestorefs"),
+        config.get("filestore", "/data/retronas"),
         "Native",
         system_info['local_base_path']
     )
@@ -1055,7 +1055,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         if not file_path:
             return None
         base = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get("filestore", "/data/retronas"),
             "Native",
             system_info['local_base_path'],
             file_path
@@ -1081,7 +1081,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
     if "source_dir" in mapdict:
         base = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get("filestore", "/data/retronas"),
             "Native",
             system_info['local_base_path'],
             mapdict["source_dir"]
@@ -1112,7 +1112,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         preserve_structure = bool(query_cfg.get("preserve_structure", False))
         bases = [
             os.path.join(
-                config.get("filestore", "/mnt/filestorefs"),
+                config.get("filestore", "/data/retronas"),
                 "Native",
                 system_info['local_base_path'],
                 source_dir,
@@ -1150,7 +1150,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         return None
     if "source_filename" in mapdict:
         base = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get("filestore", "/data/retronas"),
             "Native",
             system_info['local_base_path'],
             mapdict["source_filename"]
@@ -1185,7 +1185,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
         ds = mapdict["default_source"]
         if "source_dir" in ds:
             base = os.path.join(
-                config.get("filestore", "/mnt/filestorefs"),
+                config.get("filestore", "/data/retronas"),
                 "Native",
                 system_info['local_base_path'],
                 ds["source_dir"]
@@ -1206,7 +1206,7 @@ def get_regular_source_path(logger, config, system_info: dict, rel_parts: tuple)
                 return None
         if "source_filename" in ds:
             base = os.path.join(
-                config.get("filestore", "/mnt/filestorefs"),
+                config.get("filestore", "/data/retronas"),
                 "Native",
                 system_info['local_base_path'],
                 ds["source_filename"]
@@ -1258,7 +1258,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
         return None
     
     if rel_parts[0] == "Native":
-        return os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", *rel_parts[1:])
+        return os.path.join(config.get("filestore", "/data/retronas"), "Native", *rel_parts[1:])
 
     projected_source = resolve_retronas_support_source_path(config, root, translated_path, for_write=True)
     if not retronas_support_not_applicable(projected_source):
@@ -1277,7 +1277,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     translated_norm = str(path).replace('\\', '/').rstrip('/')
     translated_lower = translated_norm.lower()
     client_name = client.get('name', '')
-    filestore = config.get("filestore", "/mnt/filestorefs")
+    filestore = config.get("filestore", "/data/retronas")
 
     # Resolve client-level maps first (global maps under client root)
     client_local_base = client.get('local_base_path', '')
@@ -1437,7 +1437,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
                     return None
                 
                 base = os.path.join(
-                    config.get("filestore", "/mnt/filestorefs"),
+                    config.get("filestore", "/data/retronas"),
                     "Native",
                     system_info['local_base_path'],
                     source_filename
@@ -1450,7 +1450,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     local_base = system_info.get('local_base_path', '') if system_info else ''
     if local_base:
         result = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get("filestore", "/data/retronas"),
             "Native",
             local_base,
             *rel_parts[2:]
@@ -1462,7 +1462,7 @@ def get_source_path_for_write(logger, config, root, translated_path: str) -> Opt
     # This handles clients like RetroBat that don't have system definitions but still need write support
     if client:
         result = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get("filestore", "/data/retronas"),
             "Native",
             *rel_parts[1:]  # Everything after the client name
         )

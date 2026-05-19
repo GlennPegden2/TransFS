@@ -235,7 +235,7 @@
         <div class="file-browser">
             <h2>Native File System Browser</h2>
             <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
-                <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">/mnt/filestorefs/Native</div>
+                <div class="breadcrumb" id="native-breadcrumb" style="flex: 1; margin: 0;">{{ native_path }}</div>
                 <button id="sync-native-db-btn" onclick="syncDatabaseNative()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #9C27B0; color: white; border: none; border-radius: 3px; display: none;" title="Sync database for this native folder">🔄 Sync contents</button>
                 <button id="native-scan-toggle-btn" onclick="toggleNativeScanPanel()" style="padding: 0.3em 0.6em; font-size: 0.8em; cursor: pointer; background: #1976d2; color: white; border: none; border-radius: 3px;" title="Toggle metadata scanner">🔍 Scan Metadata</button>
             </div>
@@ -262,7 +262,7 @@
         <div class="file-browser">
             <h2>Virtual File System Browser</h2>
             <div style="display: flex; gap: 0.5em; align-items: center; margin-bottom: 1em;">
-                <div class="breadcrumb" id="virtual-breadcrumb" style="flex: 1; margin: 0;">/mnt/transfs</div>
+                <div class="breadcrumb" id="virtual-breadcrumb" style="flex: 1; margin: 0;">{{ mountpoint }}</div>
             </div>
             <div class="file-list" id="virtual-files">Loading...</div>
             <div id="virtual-timing" style="padding: 0.5em; margin-top: 1em; background: #f0f0f0; border-radius: 4px; font-size: 0.85em; color: #666; display: none;">
@@ -551,6 +551,71 @@
                 </div>
             </div>
             
+            <!-- Zaparoo Clients -->
+            <div style="border: 1px solid #00695c; background: #e0f2f1; padding: 1.5em; border-radius: 8px; margin-bottom: 2em;">
+                <h3 style="margin-top: 0; color: #00695c;">🎮 Zaparoo Clients</h3>
+                <p style="margin: 0.5em 0 1em 0; color: #444; font-size: 0.9em;">
+                    Configure Zaparoo-enabled clients (e.g. MiSTer). Each client needs a host IP, port, and the mount path where TransFS is mounted on that device.
+                </p>
+
+                <div id="zaparoo-clients-status" style="display:none; border-left: 4px solid #2196F3; padding: 0.7em; margin-bottom: 1em; background: #e3f2fd; border-radius: 4px;"></div>
+
+                <div style="overflow-x: auto; margin-bottom: 1em;">
+                    <table style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #b2dfdb;">
+                        <thead>
+                            <tr style="background: #b2dfdb; text-align: left;">
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Name</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Host</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Port</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Mount Path</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Enabled</th>
+                                <th style="padding: 0.5em; border-bottom: 1px solid #b2dfdb;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="zaparoo-clients-table-body">
+                            <tr><td colspan="6" style="padding: 0.8em; color: #666;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="display: flex; gap: 0.5em; margin-bottom: 1em;">
+                    <button type="button" onclick="clearZaparooClientForm()" style="padding: 0.5em 1em; background: #00695c; color: white; border: none; border-radius: 4px; cursor: pointer;">Add Client</button>
+                </div>
+
+                <div style="border: 1px solid #b2dfdb; background: white; border-radius: 6px; padding: 1em;">
+                    <h4 style="margin-top: 0; color: #00695c;">Add / Edit Client</h4>
+                    <input id="zaparoo-client-edit-index" type="hidden" value="-1">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8em;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Name</label>
+                            <input id="zaparoo-client-name" type="text" placeholder="MiSTer" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Host (IP Address)</label>
+                            <input id="zaparoo-client-host" type="text" placeholder="192.168.1.100" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Port</label>
+                            <input id="zaparoo-client-port" type="number" placeholder="7497" value="7497" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.2em; font-weight: 500;">Mount Path</label>
+                            <input id="zaparoo-client-mount-path" type="text" placeholder="/media/fat/cifs" style="width: 100%; padding: 0.45em; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                        </div>
+                    </div>
+                    <div style="margin-top: 0.8em;">
+                        <label style="display: inline-flex; align-items: center; gap: 0.4em;">
+                            <input id="zaparoo-client-enabled" type="checkbox" checked>
+                            <span>Enabled</span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 0.5em; margin-top: 1em;">
+                        <button type="button" onclick="saveZaparooClient()" style="padding: 0.5em 1em; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Client</button>
+                        <button type="button" onclick="clearZaparooClientForm()" style="padding: 0.5em 1em; background: #6d4c41; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear Form</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Action Buttons -->
             <div style="display: flex; gap: 0.5em;">
                 <button type="button" onclick="saveConfigSettings()" style="padding: 0.7em 1.5em; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em;">Save Settings</button>
@@ -774,9 +839,15 @@
         // =============================================
         // INITIALIZATION & CORE FUNCTIONS
         // =============================================
-        let currentNativePath = '/mnt/filestorefs/Native';
-        let currentVirtualPath = '/mnt/transfs';
+        const TRANSFS_PATHS = {
+            filestore: '{{ filestore }}',
+            nativePath: '{{ native_path }}',
+            mountpoint: '{{ mountpoint }}'
+        };
+        let currentNativePath = TRANSFS_PATHS.nativePath;
+        let currentVirtualPath = TRANSFS_PATHS.mountpoint;
         let zaparooStatus = { clients: [], has_enabled: false };
+        let zaparooClients = [];
         let manufacturerSystemMap = {};
         let allSystemsMeta = {};
         let currentPacksData = null;
@@ -876,7 +947,7 @@
             
             if (!skipHistory) {
                 if (tabName === 'browse-native') {
-                    const nativeRelPath = currentNativePath.replace('/mnt/filestorefs/Native', '');
+                    const nativeRelPath = currentNativePath.replace(TRANSFS_PATHS.nativePath, '');
                     const encodedNativePath = nativeRelPath
                         .split('/')
                         .map(segment => encodeURIComponent(segment))
@@ -1032,7 +1103,7 @@
                 if (data.error) throw new Error(data.error);
 
                 metadataDatFormats = data.formats || [];
-                metadataDatDefaultFolder = (data.default_dat_folder || '/mnt/filestorefs/Native/DATs').trim();
+                metadataDatDefaultFolder = (data.default_dat_folder || TRANSFS_PATHS.nativePath + '/DATs').trim();
                 formatSelect.innerHTML = metadataDatFormats.length
                     ? metadataDatFormats.map(format => `<option value="${escapeHtml(format.id)}">${escapeHtml(format.id)}</option>`).join('')
                     : '<option value="">No XML formats available</option>';
@@ -1113,7 +1184,7 @@
                 const files = data.files || [];
                 metadataDatFilesCache = files;
                 metadataDatDefaultFolder = (data.folder || metadataDatDefaultFolder || '').trim();
-                if (folderInfoEl) folderInfoEl.textContent = `DAT folder: ${metadataDatDefaultFolder || '/mnt/filestorefs/Native/DATs'}`;
+                if (folderInfoEl) folderInfoEl.textContent = `DAT folder: ${metadataDatDefaultFolder || TRANSFS_PATHS.nativePath + '/DATs'}`;
                 const suggestedCount = files.filter(file => file.suggested).length;
                 if (summaryEl) {
                     summaryEl.textContent = `${files.length} DAT/XML files found · ${suggestedCount} suggested for import`;
@@ -2701,13 +2772,14 @@
                 const dbMode = data.database?.mode || 'enabled';
                 const supportedDbModes = ['enabled', 'hybrid', 'disabled'];
                 document.getElementById('config_database_mode').value = supportedDbModes.includes(dbMode) ? dbMode : 'enabled';
-                document.getElementById('config_database_path').value = data.database?.path || '/mnt/filestorefs/.transfs_metadata.db';
+                document.getElementById('config_database_path').value = data.database?.path || TRANSFS_PATHS.filestore + '/.transfs_metadata.db';
                 document.getElementById('config_database_auto_sync').checked = data.database?.auto_sync || false;
                 document.getElementById('config_database_sync_on_startup').checked = data.database?.sync_on_startup || false;
                 
                 await loadCacheConfigForConfigTab();
                 await loadAvailableConfigSets();
                 await loadNativeMounts();
+                await loadZaparooClients();
                 
                 showConfigStatus('Settings loaded successfully', 'success');
             } catch (error) {
@@ -3104,6 +3176,115 @@
         }
 
         // =============================================
+        // ZAPAROO CLIENT CONFIGURATION
+        // =============================================
+        function showZaparooClientStatus(message, type) {
+            const el = document.getElementById('zaparoo-clients-status');
+            if (!el) return;
+            el.style.display = 'block';
+            el.style.borderLeftColor = type === 'error' ? '#f44336' : type === 'success' ? '#4CAF50' : '#2196F3';
+            el.style.background = type === 'error' ? '#ffebee' : type === 'success' ? '#e8f5e9' : '#e3f2fd';
+            el.textContent = message;
+        }
+
+        async function loadZaparooClients() {
+            try {
+                const response = await fetch('/api/config?fields=zaparoo');
+                const data = await response.json();
+                zaparooClients = (data.zaparoo?.clients || []).map(c => Object.assign({}, c));
+                renderZaparooClientsTable();
+            } catch (error) {
+                showZaparooClientStatus('Failed to load Zaparoo clients: ' + error.message, 'error');
+            }
+        }
+
+        function renderZaparooClientsTable() {
+            const tbody = document.getElementById('zaparoo-clients-table-body');
+            if (!tbody) return;
+            if (!zaparooClients.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="padding: 0.8em; color: #666;">No Zaparoo clients configured yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = zaparooClients.map((c, i) => `
+                <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 0.5em;">${escapeHtml(c.name || '')}</td>
+                    <td style="padding: 0.5em;">${escapeHtml(c.host || '')}</td>
+                    <td style="padding: 0.5em;">${c.port || ''}</td>
+                    <td style="padding: 0.5em;">${escapeHtml(c.mount_path || '')}</td>
+                    <td style="padding: 0.5em;">${c.enabled !== false ? '✅' : '❌'}</td>
+                    <td style="padding: 0.5em;">
+                        <button type="button" onclick="editZaparooClient(${i})" style="padding: 0.25em 0.6em; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer; margin-right: 0.3em;">Edit</button>
+                        <button type="button" onclick="deleteZaparooClient(${i})" style="padding: 0.25em 0.6em; background: #c62828; color: white; border: none; border-radius: 3px; cursor: pointer;">Delete</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        function editZaparooClient(index) {
+            const c = zaparooClients[index];
+            if (!c) return;
+            document.getElementById('zaparoo-client-edit-index').value = index;
+            document.getElementById('zaparoo-client-name').value = c.name || '';
+            document.getElementById('zaparoo-client-host').value = c.host || '';
+            document.getElementById('zaparoo-client-port').value = c.port || 7497;
+            document.getElementById('zaparoo-client-mount-path').value = c.mount_path || '';
+            document.getElementById('zaparoo-client-enabled').checked = c.enabled !== false;
+        }
+
+        function clearZaparooClientForm() {
+            document.getElementById('zaparoo-client-edit-index').value = '-1';
+            document.getElementById('zaparoo-client-name').value = '';
+            document.getElementById('zaparoo-client-host').value = '';
+            document.getElementById('zaparoo-client-port').value = '7497';
+            document.getElementById('zaparoo-client-mount-path').value = '';
+            document.getElementById('zaparoo-client-enabled').checked = true;
+        }
+
+        async function saveZaparooClient() {
+            const name = document.getElementById('zaparoo-client-name').value.trim();
+            const host = document.getElementById('zaparoo-client-host').value.trim();
+            const port = parseInt(document.getElementById('zaparoo-client-port').value) || 7497;
+            const mount_path = document.getElementById('zaparoo-client-mount-path').value.trim();
+            const enabled = document.getElementById('zaparoo-client-enabled').checked;
+
+            if (!name) { showZaparooClientStatus('Name is required.', 'error'); return; }
+            if (!host) { showZaparooClientStatus('Host is required.', 'error'); return; }
+
+            const editIndex = parseInt(document.getElementById('zaparoo-client-edit-index').value);
+            const entry = { name, host, port, mount_path, enabled };
+
+            if (editIndex >= 0 && editIndex < zaparooClients.length) {
+                zaparooClients[editIndex] = entry;
+            } else {
+                zaparooClients.push(entry);
+            }
+
+            await persistZaparooClients();
+        }
+
+        async function deleteZaparooClient(index) {
+            if (!confirm(`Delete Zaparoo client "${zaparooClients[index]?.name}"?`)) return;
+            zaparooClients.splice(index, 1);
+            await persistZaparooClients();
+        }
+
+        async function persistZaparooClients() {
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ zaparoo: { clients: zaparooClients } })
+                });
+                const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                renderZaparooClientsTable();
+                clearZaparooClientForm();
+                showZaparooClientStatus('Zaparoo clients saved successfully.', 'success');
+            } catch (error) {
+                showZaparooClientStatus('Failed to save: ' + error.message, 'error');
+            }
+        }
+
+        // =============================================
         // CONFIG SET MANAGEMENT
         // =============================================
         async function loadAvailableConfigSets() {
@@ -3365,8 +3546,8 @@
             
             if (!skipHistory) {
                 const basePath = type === 'native' 
-                    ? path.replace('/mnt/filestorefs/Native', '')
-                    : path.replace('/mnt/transfs', '');
+                    ? path.replace(TRANSFS_PATHS.nativePath, '')
+                    : path.replace(TRANSFS_PATHS.mountpoint, '');
                 // URL-encode path segments, but preserve slashes and properly encode # for archive paths
                 const encodedPath = basePath
                     .split('/')
@@ -3405,7 +3586,7 @@
                 }
 
                 const fragment = document.createDocumentFragment();
-                const roots = ['/mnt/filestorefs/Native', '/mnt/transfs'];
+                const roots = [TRANSFS_PATHS.nativePath, TRANSFS_PATHS.mountpoint];
                 
                 // Function to wire up and show buttons lazily for a file item
                 // Returns the metadata panel if created, so caller can attach hover handlers
@@ -3594,10 +3775,10 @@
                                             const sourceFilename = data.source_path.split('/').pop();
                                             const sourceExt = sourceFilename.includes('.') ? sourceFilename.split('.').pop() : '';
                                             
-                                            // Extract native path from source_path by removing /mnt/filestorefs/Native/ prefix
+                                            // Extract native path from source_path by removing nativePath prefix
                                             let nativeBrowserPath = data.source_path;
-                                            if (nativeBrowserPath.includes('/mnt/filestorefs/Native/')) {
-                                                nativeBrowserPath = nativeBrowserPath.replace('/mnt/filestorefs/Native/', '');
+                                            if (nativeBrowserPath.includes(TRANSFS_PATHS.nativePath + '/')) {
+                                                nativeBrowserPath = nativeBrowserPath.replace(TRANSFS_PATHS.nativePath + '/', '');
                                             }
                                             // Navigate to the folder containing the file, not the file itself
                                             const folderPath = nativeBrowserPath.substring(0, nativeBrowserPath.lastIndexOf('/'));
@@ -3882,7 +4063,7 @@
                         }
                     } else {
                         // Regular path
-                        parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? '/mnt/filestorefs/Native' : '/mnt/transfs');
+                        parentPath = path.substring(0, path.lastIndexOf('/')) || (type === 'native' ? TRANSFS_PATHS.nativePath : TRANSFS_PATHS.mountpoint);
                     }
                     addEntry('..', 'directory', parentPath, '', false);
                 }
@@ -4285,7 +4466,7 @@
                         recacheBtn.textContent = '...';
                         try {
                             await fetch(`/api/cache/clear?path=${encodeURIComponent(sourcePath)}`, { method: 'POST' });
-                            const vpath = currentVirtualPath || '/mnt/transfs/MiSTer';
+                            const vpath = currentVirtualPath || TRANSFS_PATHS.mountpoint + '/MiSTer';
                             await loadDirectory(vpath, 'virtual', true);
                             recacheBtn.textContent = '';
                             recacheBtn.style.backgroundColor = '#2196F3';
@@ -4532,8 +4713,8 @@
             const parts = [clientName, systemName, categoryKey].filter(Boolean);
             const inferredName = sanitizeSnapshotName(parts.join('_'));
             const inferredPath = context?.path || (clientName && systemName
-                ? `/mnt/transfs/${clientName}/${systemName}`
-                : '/mnt/transfs');
+                ? `${TRANSFS_PATHS.mountpoint}/${clientName}/${systemName}`
+                : TRANSFS_PATHS.mountpoint);
 
             const nameInput = document.getElementById('snapshot-name-input');
             const pathInput = document.getElementById('snapshot-path-input');
@@ -5445,7 +5626,7 @@
                     .split('/')
                     .map(segment => decodeURIComponent(segment))
                     .join('/');
-                const fullPath = '/mnt/filestorefs/Native' + (decodedPath.startsWith('/') ? decodedPath : '/' + decodedPath);
+                const fullPath = TRANSFS_PATHS.nativePath + (decodedPath.startsWith('/') ? decodedPath : '/' + decodedPath);
                 currentNativePath = fullPath;
                 
                 document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));

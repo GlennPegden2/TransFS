@@ -176,7 +176,7 @@ def is_system_root(path):
     parts = path.strip("/").split("/")
     return len(parts) == 2  # ["MiSTer", "ARCHIE"]
 
-def map_virtual_to_real(config, path, filestore_root="/mnt/filestorefs"):
+def map_virtual_to_real(config, path, filestore_root="/data/retronas"):
     """Map a virtual path to a real path in the filestore."""
     from pathlib import Path
     import os

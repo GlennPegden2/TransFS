@@ -149,7 +149,7 @@ class FilesystemSync:
         
         # Get relative path from root
         rel_path = os.path.relpath(filepath, self.root_path)
-        source_path = str(Path("/mnt/filestorefs") / rel_path)
+        source_path = str(self.root_path / rel_path)
         
         # Calculate virtual path
         virtual_path = self._calculate_virtual_path(source_path)
@@ -359,8 +359,8 @@ class FilesystemSync:
         Simple implementation - just replaces /mnt/filestorefs with /mnt/transfs.
         Future: Use virtual_mappings table for complex mappings.
         """
-        if source_path.startswith("/mnt/filestorefs"):
-            return source_path.replace("/mnt/filestorefs", self.mount_path, 1)
+        if source_path.startswith(str(self.root_path)):
+            return source_path.replace(str(self.root_path), self.mount_path, 1)
         return None
     
     def _is_archive(self, filename: str) -> bool:
@@ -547,7 +547,7 @@ class FilesystemSync:
         return self.initial_scan()
 
 
-def scan_filesystem(root_path: str = "/mnt/filestorefs", mount_path: str = "/mnt/transfs") -> dict:
+def scan_filesystem(root_path: str = "/data/retronas", mount_path: str = "/mnt/transfs") -> dict:
     """
     Convenience function to scan filesystem and populate database.
     

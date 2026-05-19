@@ -239,7 +239,7 @@ def _prepare_native_mount_entry(
         if not username:
             raise ValueError("username is required when guest is false")
         if password is not None:
-            filestore = config.get("filestore", "/mnt/filestorefs")
+            filestore = config.get("filestore", "/data/retronas")
             entry["credentials_file"] = write_credentials_file(filestore, mount_id, username, str(password))
         else:
             entry["credentials_file"] = existing_entry.get("credentials_file", "")
@@ -780,7 +780,10 @@ def api_browse_directory(path: str):
     start_time = time.time()
     
     # Validate path is within allowed directories
-    allowed_prefixes = ["/mnt/filestorefs", "/mnt/transfs"]
+    _app_cfg = read_app_config()
+    _filestore = _app_cfg.get("filestore", "/data/retronas")
+    _mountpoint = _app_cfg.get("mountpoint", "/mnt/transfs")
+    allowed_prefixes = [_filestore, _mountpoint]
     if not any(path.startswith(prefix) for prefix in allowed_prefixes):
         return {"error": "Access denied - path must be within allowed directories"}
     
@@ -1030,8 +1033,9 @@ async def metadata_dat_upload(
 
         service = DatImportService(config_dir="config")
         target_folder = os.path.normpath((folder or "").strip() or service.default_dat_folder())
-        if not target_folder.startswith("/mnt/filestorefs"):
-            return {"error": "Folder must be inside /mnt/filestorefs"}
+        _filestore = read_app_config().get("filestore", "/data/retronas")
+        if not target_folder.startswith(_filestore):
+            return {"error": f"Folder must be inside {_filestore}"}
 
         os.makedirs(target_folder, exist_ok=True)
         filename = _safe_filename(file.filename or "")
@@ -1164,8 +1168,9 @@ def metadata_scan_preview(req: MetadataScanRequest):
     """Scan a folder and preview metadata matches from a selected provider."""
     try:
         folder = os.path.normpath(req.folder)
-        if not folder.startswith("/mnt/filestorefs"):
-            return {"error": "Folder must be inside /mnt/filestorefs"}
+        _filestore = read_app_config().get("filestore", "/data/retronas")
+        if not folder.startswith(_filestore):
+            return {"error": f"Folder must be inside {_filestore}"}
         if not os.path.isdir(folder):
             return {"error": f"Folder does not exist: {folder}"}
 
@@ -1187,8 +1192,9 @@ def metadata_apply(req: MetadataScanRequest):
     """Apply metadata matches from a selected provider to database metadata tables."""
     try:
         folder = os.path.normpath(req.folder)
-        if not folder.startswith("/mnt/filestorefs"):
-            return {"error": "Folder must be inside /mnt/filestorefs"}
+        _filestore = read_app_config().get("filestore", "/data/retronas")
+        if not folder.startswith(_filestore):
+            return {"error": f"Folder must be inside {_filestore}"}
         if not os.path.isdir(folder):
             return {"error": f"Folder does not exist: {folder}"}
 
@@ -1712,8 +1718,8 @@ def cache_status(path: str):
     """Get cache status for a given path."""
     try:
         from dirlisting import get_cached_stat
-        # Translate /mnt/transfs to /mnt/filestorefs for cache lookup
-        cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs')
+        _app_cfg = read_app_config()
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas'))
         cached = get_cached_stat(cache_path, os.path.dirname(cache_path))
         return {"cached": cached is not None, "path": cache_path}
     except Exception as e:  # pylint: disable=broad-except
@@ -1724,8 +1730,8 @@ def cache_clear(path: str | None = None):
     """Clear stat cache for a specific path or all stat cache entries."""
     try:
         from dirlisting import clear_stat_cache_path
-        # Translate /mnt/transfs to /mnt/filestorefs for cache lookup
-        cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs') if path else None
+        _app_cfg = read_app_config()
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas')) if path else None
         if cache_path is None:
             from dirlisting import clear_stat_cache
             return clear_stat_cache()
@@ -1739,7 +1745,8 @@ def cache_status_all(path: str | None = None):
     """Get comprehensive status for the stat cache."""
     try:
         from dirlisting import get_all_cache_status
-        cache_path = path.replace('/mnt/transfs', '/mnt/filestorefs') if path else None
+        _app_cfg = read_app_config()
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas')) if path else None
         return get_all_cache_status(cache_path)
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1868,7 +1875,7 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
         from sync_database import DatabaseSync
         from db.connection import init_database
         
-        filestore_path = config.get("filestore", "/mnt/filestorefs")
+        filestore_path = config.get("filestore", "/data/retronas")
         
         if client and system:
             logger.info(f"Starting database sync for client '{client}', system '{system}'")
@@ -2050,7 +2057,7 @@ def config_get(fields: str | None = None):
             from config import read_app_config
             
             # For ui and web_api, we only need app.yaml
-            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore', 'database', 'native_external_mounts'] for f in field_list):
+            if all(f in ['ui', 'web_api', 'mountpoint', 'filestore', 'database', 'native_external_mounts', 'zaparoo'] for f in field_list):
                 app_config = read_app_config()
                 result = {}
                 for field in field_list:
@@ -2061,34 +2068,37 @@ def config_get(fields: str | None = None):
                     elif field == 'mountpoint':
                         result['mountpoint'] = app_config.get('mountpoint', '/mnt/transfs')
                     elif field == 'filestore':
-                        result['filestore'] = app_config.get('filestore', '/mnt/filestorefs')
+                        result['filestore'] = app_config.get('filestore', '/data/retronas')
                     elif field == 'database':
                         result['database'] = app_config.get('database', {
                             'enabled': True,
                             'mode': 'hybrid',
-                            'path': '/mnt/filestorefs/.transfs_metadata.db',
+                            'path': f"{app_config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
                             'auto_sync': False,
                             'sync_on_startup': False
                         })
                     elif field == 'native_external_mounts':
                         result['native_external_mounts'] = app_config.get('native_external_mounts', [])
+                    elif field == 'zaparoo':
+                        result['zaparoo'] = app_config.get('zaparoo', {'clients': []})
                 return result
         
         # Otherwise, load full config (expensive)
         config = read_config()
         return {
             "mountpoint": config.get("mountpoint", "/mnt/transfs"),
-            "filestore": config.get("filestore", "/mnt/filestorefs"),
+            "filestore": config.get("filestore", "/data/retronas"),
             "web_api": config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
             "ui": config.get("ui", {"advanced_options": False, "show_real_path_tooltips": True}),
             "database": config.get("database", {
                 "enabled": True,
                 "mode": "hybrid",
-                "path": "/mnt/filestorefs/.transfs_metadata.db",
+                "path": f"{config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
                 "auto_sync": False,
                 "sync_on_startup": False
             }),
             "native_external_mounts": config.get("native_external_mounts", []),
+            "zaparoo": config.get("zaparoo", {"clients": []}),
         }
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2102,6 +2112,7 @@ class ConfigUpdate(BaseModel):
     ui: dict | None = None
     database: dict | None = None
     native_external_mounts: list[dict] | None = None
+    zaparoo: dict | None = None
 
 
 class NativeMountRequest(BaseModel):
@@ -2165,6 +2176,8 @@ def config_set(config_update: ConfigUpdate):
             config.setdefault("database", {}).update(config_update.database)
         if config_update.native_external_mounts is not None:
             config["native_external_mounts"] = config_update.native_external_mounts
+        if config_update.zaparoo is not None:
+            config.setdefault("zaparoo", {}).update(config_update.zaparoo)
         
         # Write updated app.yaml (only the top-level config keys that belong there)
         app_config_path = "config/app.yaml"
@@ -2184,6 +2197,8 @@ def config_set(config_update: ConfigUpdate):
             app_config.setdefault("database", {}).update(config_update.database)
         if config_update.native_external_mounts is not None:
             app_config["native_external_mounts"] = config_update.native_external_mounts
+        if config_update.zaparoo is not None:
+            app_config.setdefault("zaparoo", {}).update(config_update.zaparoo)
         
         with open(app_config_path, "w", encoding="utf-8") as f:
             yaml.dump(app_config, f, default_flow_style=False)
@@ -2194,17 +2209,18 @@ def config_set(config_update: ConfigUpdate):
             "updated": True,
             "config": {
                 "mountpoint": app_config.get("mountpoint", "/mnt/transfs"),
-                "filestore": app_config.get("filestore", "/mnt/filestorefs"),
+                "filestore": app_config.get("filestore", "/data/retronas"),
                 "web_api": app_config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
                 "ui": app_config.get("ui", {"advanced_options": False}),
                 "database": app_config.get("database", {
                     "enabled": True,
                     "mode": "hybrid",
-                    "path": "/mnt/filestorefs/.transfs_metadata.db",
+                    "path": f"{app_config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
                     "auto_sync": False,
                     "sync_on_startup": False
                 }),
                 "native_external_mounts": app_config.get("native_external_mounts", []),
+                "zaparoo": app_config.get("zaparoo", {"clients": []}),
             }
         }
     except Exception as e:  # pylint: disable=broad-except
@@ -2433,7 +2449,7 @@ def validate_native_mount(request: NativeMountRequest):
         payload = request.dict()
         entry = _prepare_native_mount_entry(config, payload)
         target = normalize_target_subpath(entry.get("target_subpath", ""))
-        target_path = os.path.join(config.get("filestore", "/mnt/filestorefs"), "Native", target)
+        target_path = os.path.join(config.get("filestore", "/data/retronas"), "Native", target)
         unc_path = build_unc_path(entry)
         probe = probe_entry(config, entry)
         return {
@@ -3750,12 +3766,14 @@ def file_metadata(path: str):
         
         config = read_config()
         
-        # Normalize path
-        if not path.startswith("/mnt/transfs") and not path.startswith("/mnt/filestorefs"):
+        _app_cfg = read_app_config()
+        _filestore = _app_cfg.get("filestore", "/data/retronas")
+        _mountpoint = _app_cfg.get("mountpoint", "/mnt/transfs")
+        if not path.startswith(_mountpoint) and not path.startswith(_filestore):
             return {"error": "Invalid path"}
         
-        # Convert /mnt/transfs paths to /mnt/filestorefs for database lookup
-        db_path_lookup = path.replace("/mnt/transfs", "/mnt/filestorefs")
+        # Convert virtual paths to filestore paths for database lookup
+        db_path_lookup = path.replace(_mountpoint, _filestore)
         
         try:
             # Initialize database connection pool if needed (uses environment variables)

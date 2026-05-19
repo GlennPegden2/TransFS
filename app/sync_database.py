@@ -60,7 +60,7 @@ class DatabaseSync:
             progress_callback: Optional callable to receive progress updates
         """
         self.config = config
-        self.filestore = config.get("filestore", "/mnt/filestorefs")
+        self.filestore = config.get("filestore", "/data/retronas")
         self.mount_path = "/mnt/transfs"
         self.progress_callback = progress_callback
         

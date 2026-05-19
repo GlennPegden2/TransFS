@@ -221,7 +221,7 @@ def lint_app_yaml(filepath: str) -> LintResult:
                      "Remove or rename the duplicate key.")
 
     _require(result, data, "filestore", "app.yaml",
-             "Add: filestore: /mnt/filestorefs")
+             "Add: filestore: /data/retronas")
 
     cs = data.get("config_sets", {}) or {}
     if not isinstance(cs, dict) or not cs.get("active_client_config"):

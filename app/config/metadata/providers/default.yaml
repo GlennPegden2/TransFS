@@ -3,4 +3,4 @@ providers:
     name: "DAT/XML: MAME Atom Cassette Software List"
     kind: dat_xml_lookup
     format: mame_softwarelist
-    xml_path: /mnt/filestorefs/Native/Clients/Mame/mame_cache/atom_cass.xml
+    xml_path: /data/retronas/Native/Clients/Mame/mame_cache/atom_cass.xml

@@ -286,7 +286,7 @@ def list_retronas_support_directory(config: dict[str, Any], root: str, full_path
     if client is None:
         return None
 
-    filestore = config.get("filestore", "/mnt/filestorefs")
+    filestore = config.get("filestore", "/data/retronas")
     projection, entries_by_top = _build_entries(client, filestore)
     if projection is None:
         return None
@@ -339,7 +339,7 @@ def resolve_retronas_support_source_path(
     if client is None:
         return _NOT_RETRONAS_SUPPORT
 
-    filestore = config.get("filestore", "/mnt/filestorefs")
+    filestore = config.get("filestore", "/data/retronas")
     projection, entries_by_top = _build_entries(client, filestore)
     if projection is None:
         return _NOT_RETRONAS_SUPPORT

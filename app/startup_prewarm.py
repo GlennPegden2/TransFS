@@ -141,7 +141,7 @@ def prewarm_subdirectory_cache(config: dict, mount_path: str = "/mnt/transfs") -
     logger.info(f"Subdirectory cache prewarm: complete in {t_total:.2f}s")
 
 
-def prewarm_recursive_indexes(config: dict, filestore_root: str = "/mnt/filestorefs") -> None:
+def prewarm_recursive_indexes(config: dict, filestore_root: str = None) -> None:
     """
     Pre-warm recursive filename index caches for large source directories.
     
@@ -150,8 +150,10 @@ def prewarm_recursive_indexes(config: dict, filestore_root: str = "/mnt/filestor
     
     Args:
         config: Application configuration dict
-        filestore_root: Root path for file storage
+        filestore_root: Root path for file storage (defaults to config["filestore"])
     """
+    if filestore_root is None:
+        filestore_root = config.get("filestore", "/data/retronas")
     prewarm_config = config.get("startup_prewarm", {})
     if not prewarm_config.get("prewarm_recursive_indexes", True):
         logger.info("Recursive index prewarm: disabled")

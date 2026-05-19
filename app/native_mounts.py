@@ -174,14 +174,14 @@ def normalize_target_subpath(target_subpath: str) -> str:
 
 
 def resolve_target_path(config: dict[str, Any], target_subpath: str) -> str:
-    filestore = config.get("filestore", "/mnt/filestorefs")
+    filestore = config.get("filestore", "/data/retronas")
     native_base = os.path.join(filestore, "Native")
     normalized = normalize_target_subpath(target_subpath)
     return _safe_join(native_base, normalized)
 
 
 def _mount_runtime_dir(config: dict[str, Any]) -> str:
-    filestore = config.get("filestore", "/mnt/filestorefs")
+    filestore = config.get("filestore", "/data/retronas")
     runtime_dir = os.path.join(filestore, ".transfs", "native-mounts")
     os.makedirs(runtime_dir, exist_ok=True)
     return runtime_dir

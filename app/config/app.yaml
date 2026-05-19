@@ -75,14 +75,14 @@ native_external_mounts:
   last_error: ''
   last_ok: 1776209424
   last_checked: 1776209424
-  credentials_file: /mnt/filestorefs/.secrets/transfs/native-mounts/3do-nas.cred
-filestore: /mnt/filestorefs
+  credentials_file: /data/retronas/.secrets/transfs/native-mounts/3do-nas.cred
+filestore: /data/retronas
 show_hidden_files: true
 mame:
   hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
   hash_repo_branch: master
   archive_base_url: https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
-  download_root: /mnt/filestorefs/Downloads/MAME
+  download_root: /data/retronas/Downloads/MAME
   verify_checksums: true
   max_concurrent_downloads: 3
   cache_hash_files: true

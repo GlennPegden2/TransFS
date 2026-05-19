@@ -48,6 +48,26 @@
         path: /opt/retronas
       register: transfs_retronas_stat
 
+    - name: Read RetroNAS storage path from retronas_vars.yml
+      ansible.builtin.shell: |
+        grep '^retronas_path:' /opt/retronas/ansible/retronas_vars.yml \
+          | sed 's/.*retronas_path:[[:space:]]*//' \
+          | tr -d '"' | tr -d "'" | tr -d '[:space:]'
+      register: transfs_retronas_path_raw
+      changed_when: false
+      failed_when: false
+      when: transfs_retronas_stat.stat.exists
+
+    - name: Set filestore path from RetroNAS config (or default)
+      ansible.builtin.set_fact:
+        transfs_filestore_path: >-
+          {%- if transfs_retronas_stat.stat.exists
+               and (transfs_retronas_path_raw.stdout | default('')) | length > 0 -%}
+            {{ transfs_retronas_path_raw.stdout | trim }}
+          {%- else -%}
+            /data/retronas
+          {%- endif -%}
+
     - name: Detect Docker runtime (presence of /.dockerenv)
       ansible.builtin.stat:
         path: /.dockerenv
@@ -258,6 +278,7 @@
         TRANSFS_WEB_STRICT_STANDARD_PORT: "{{ transfs_web_strict_standard_port | ternary('true', 'false') }}"
         TRANSFS_ENABLE_PORT_AUTO_CLAIM: "{{ transfs_enable_port_auto_claim | ternary('true', 'false') }}"
         TRANSFS_RUNTIME_PROFILE: "{{ transfs_runtime_profile }}"
+        TRANSFS_FILESTORE_PATH: "{{ transfs_filestore_path }}"
       changed_when: true
       notify: Restart transfs-retronas
 

@@ -4,7 +4,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
-### Fixed
+### Changed
+- **Filestore path aligned with RetroNAS default (`/data/retronas`)**: TransFS now defaults to the same storage path that RetroNAS uses out of the box (`retronas_path: /data/retronas` from `/opt/retronas/ansible/retronas_vars.yml`). Updated `app/config/app.yaml` (filestore, download_root, credentials_file) and `app/config/metadata/providers/default.yaml` (MAME xml_path).
+
+- **Ansible installer now reads RetroNAS storage path at install time**: `3rd-party/retronas/ansible/install_transfs.yml` gains three new tasks that grep `retronas_vars.yml` for the live `retronas_path` value, set a `transfs_filestore_path` fact (falling back to `/data/retronas` if not found), and pass it as `TRANSFS_FILESTORE_PATH` to the configure script. `configure_retronas.sh.j2` accepts the value as a positional argument and writes `filestore:`, `mame.download_root`, and `credentials_file` into `app.yaml` — so the filestore path is always sourced from RetroNAS's own config, not hardcoded in TransFS.
+
+- **All hardcoded filestore path references removed from Python source**: Every occurrence of a hardcoded path string that bypassed `app.yaml` has been replaced with a proper config read:
+  - `transfs.py` — `_normalize_to_virtual_path`, `readdir`, `getattr`, `statfs`, and `__main__` entry point now all derive the filestore via `self.config.get("filestore", ...)` or `read_app_config()` at startup.
+  - `startup_prewarm.py` — `prewarm_recursive_indexes` now derives `filestore_root` from the `config` dict it already receives, rather than using a hardcoded default parameter.
+  - `chd_transform.py` — `DEFAULT_CACHE_DIR` is now computed at module load by calling `read_app_config()`, with `TRANSFS_CHD_CACHE_DIR` env-var override still honoured.
+  - `metadata/dat_importer.py` — removed dead `DEFAULT_DAT_FOLDER` constant (the `DatImportService.default_dat_folder()` method already read from config; the constant was never used).
+  - `metadata/providers.py` — DAT XML candidate search paths built from `read_app_config()` filestore value.
+  - `native_mounts.py`, `mame/manager.py`, `pathutils.py`, `feature_flags.py`, `lint_config.py`, `dirlisting.py`, `db/queries.py`, `db/sync.py`, `sync_database.py`, `retronas_support.py`, `sourcepath.py`, `api.py` — all `.get("filestore", ...)` fallback defaults updated.
+
+
 - **Ansible playbook — SMB auto-detection logic corrected**: `retronas_managed` is now only selected when running inside a RetroNAS environment AND the host is native Linux. On Windows/WSL-hosted containers (even with `/opt/retronas` present) the mode defaults to `transfs_managed`, because Windows holds port 445 and RetroNAS cannot own Samba there. Previous behaviour unconditionally set `retronas_managed` whenever `/opt/retronas` existed.
 
 ### Added

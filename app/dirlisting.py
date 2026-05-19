@@ -135,7 +135,7 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
                 if client:
                     # Check all systems for querymaps with matching category
                     potential_category = rel_parts[-1]  # e.g., "bios" from "RetroBat/bios"
-                    filestore = config.get('filestore', '/mnt/filestorefs')
+                    filestore = config.get('filestore', '/data/retronas')
 
                     # Check client-level maps first
                     client_local_base = client.get('local_base_path', '')
@@ -249,7 +249,16 @@ def _find_file_recursive_indexed(base_dir: str, filename: str) -> str | None:
     return index.get(filename.lower())
 
 # Stat cache file (persistent across container restarts)
-STAT_CACHE_FILE = "/mnt/filestorefs/.transfs_stat_cache.pkl"
+def _get_stat_cache_file() -> str:
+    """Resolve stat cache file path from app config, with a safe default."""
+    try:
+        from config import read_app_config
+        cfg = read_app_config()
+        return os.path.join(cfg.get("filestore", "/data/retronas"), ".transfs_stat_cache.pkl")
+    except Exception:  # pylint: disable=broad-except
+        return "/data/retronas/.transfs_stat_cache.pkl"
+
+STAT_CACHE_FILE = _get_stat_cache_file()
 
 # In-memory cache: {path: (mtime, entries_list)}
 _dir_cache = {}
@@ -804,7 +813,7 @@ def list_maps(config, path: Path, root_parts: tuple) -> list:
             query_cfg = flatten_config['query']
             source_dir = query_cfg.get('source_dir', 'Software')
             local_base = system.get('local_base_path', '')
-            filestore = config.get('filestore', '/mnt/filestorefs')
+            filestore = config.get('filestore', '/data/retronas')
             
             flat_source_path = os.path.join(filestore, 'Native', local_base, source_dir)
             if os.path.isdir(flat_source_path):
@@ -967,7 +976,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
     # For cache key mtime, use source directory if it exists
     check_dir = os.path.join(
-        config.get("filestore", "/mnt/filestorefs"),
+        config.get('filestore', '/data/retronas'),
         "Native",
         system["local_base_path"],
         source_dir,
@@ -1067,7 +1076,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 return sorted(virtual_tree)
             
             base_dir = os.path.join(
-                config.get("filestore", "/mnt/filestorefs"),
+                config.get('filestore', '/data/retronas'),
                 "Native",
                 system["local_base_path"],
                 source_dir,
@@ -1138,7 +1147,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         if not db_entries:
             # FILESYSTEM FALLBACK: Check for files on disk not yet in database
             # This handles files created via FUSE writes that haven't been synced
-            filestore = config.get( 'filestore', '/mnt/filestorefs')
+            filestore = config.get('filestore', '/data/retronas')
             full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir)
             
             # Determine current subpath
@@ -1212,7 +1221,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         
         # FILESYSTEM MERGE: Even if database has results, check for additional files on disk
         # This handles files created via FUSE writes that haven't been synced yet
-        filestore = config.get('filestore', '/mnt/filestorefs')
+        filestore = config.get('filestore', '/data/retronas')
         full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir)
         current_subpath = '/'.join(subpath) if subpath else ''
         scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
@@ -1341,7 +1350,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
         if zip_mode == "flatten" and transform_zip and zip_entries:
             base_dir = os.path.join(
-                config.get("filestore", "/mnt/filestorefs"),
+                config.get('filestore', '/data/retronas'),
                 "Native",
                 system["local_base_path"],
                 source_dir,
@@ -1932,7 +1941,7 @@ def list_regular_map(config, path: Path, root_parts: tuple, system: dict, map_na
     mapdict = map_entry[map_name]
     if "source_dir" in mapdict:
         base = os.path.join(
-            config.get("filestore", "/mnt/filestorefs"),
+            config.get('filestore', '/data/retronas'),
             "Native",
             system['local_base_path'],
             mapdict["source_dir"]

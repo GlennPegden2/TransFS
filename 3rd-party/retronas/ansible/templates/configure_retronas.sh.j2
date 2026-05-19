@@ -21,13 +21,14 @@ WEB_STRICT_STANDARD_PORT="${TRANSFS_WEB_STRICT_STANDARD_PORT:-false}"
 
 ENABLE_PORT_AUTO_CLAIM="${TRANSFS_ENABLE_PORT_AUTO_CLAIM:-true}"
 RUNTIME_PROFILE="${TRANSFS_RUNTIME_PROFILE:-retronas-baremetal}"
+FILESTORE_PATH="${TRANSFS_FILESTORE_PATH:-/data/retronas}"
 
 if [ ! -f "${CONFIG_PATH}" ]; then
     echo "Config not found: ${CONFIG_PATH}" >&2
     exit 1
 fi
 
-python3 - <<'PY' "${CONFIG_PATH}" "${SMB_MODE}" "${SMB_PREFERRED_PORT}" "${SMB_FALLBACK_PORTS}" "${SMB_STRICT_STANDARD_PORT}" "${WEB_HOST}" "${WEB_PREFERRED_PORT}" "${WEB_FALLBACK_PORTS}" "${WEB_STRICT_STANDARD_PORT}" "${ENABLE_PORT_AUTO_CLAIM}" "${RUNTIME_PROFILE}"
+python3 - <<'PY' "${CONFIG_PATH}" "${SMB_MODE}" "${SMB_PREFERRED_PORT}" "${SMB_FALLBACK_PORTS}" "${SMB_STRICT_STANDARD_PORT}" "${WEB_HOST}" "${WEB_PREFERRED_PORT}" "${WEB_FALLBACK_PORTS}" "${WEB_STRICT_STANDARD_PORT}" "${ENABLE_PORT_AUTO_CLAIM}" "${RUNTIME_PROFILE}" "${FILESTORE_PATH}"
 import sys
 import yaml
 
@@ -44,6 +45,7 @@ web_strict = sys.argv[9].strip().lower() == 'true'
 
 auto_claim = sys.argv[10].strip().lower() == 'true'
 runtime_profile = sys.argv[11]
+filestore_path = sys.argv[12] if len(sys.argv) > 12 else '/data/retronas'
 
 with open(cfg_path, 'r', encoding='utf-8') as fh:
     cfg = yaml.safe_load(fh) or {}
@@ -51,6 +53,12 @@ with open(cfg_path, 'r', encoding='utf-8') as fh:
 runtime = cfg.setdefault('runtime', {})
 runtime['profile'] = runtime_profile
 runtime['enable_port_auto_claim'] = auto_claim
+
+cfg['filestore'] = filestore_path
+
+mame = cfg.setdefault('mame', {})
+if not mame.get('download_root') or mame['download_root'].startswith('/mnt/filestorefs'):
+    mame['download_root'] = f"{filestore_path}/Downloads/MAME"
 
 smb = cfg.setdefault('smb', {})
 smb['mode'] = smb_mode
@@ -70,6 +78,7 @@ with open(cfg_path, 'w', encoding='utf-8') as fh:
     yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
 
 print(f"Updated {cfg_path}")
+print(f"  filestore={filestore_path}")
 print(f"  runtime.profile={runtime_profile}")
 print(f"  runtime.enable_port_auto_claim={auto_claim}")
 print(f"  smb.mode={smb_mode}")

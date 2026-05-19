@@ -144,7 +144,12 @@ def query_files_by_system_and_query(
         # Source directory filter
         if source_dir:
             if system_config and system_config.get("local_base_path"):
-                base = f"/mnt/filestorefs/Native/{system_config['local_base_path'].rstrip('/')}/{source_dir.strip('/')}/"
+                try:
+                    from config import read_app_config
+                    _filestore = read_app_config().get("filestore", "/data/retronas")
+                except Exception:  # pylint: disable=broad-except
+                    _filestore = "/data/retronas"
+                base = f"{_filestore}/Native/{system_config['local_base_path'].rstrip('/')}/{source_dir.strip('/')}/"
                 where_clauses.append("f.source_path LIKE %s")
                 params.append(base + "%")
             else:

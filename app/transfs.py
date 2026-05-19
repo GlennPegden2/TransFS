@@ -563,7 +563,7 @@ class TransFS(Passthrough):
                 if source_subdir:
                     source_subdir = _adjust_source_dir_for_layout(source_subdir, system_info)
                     source_dir = os.path.join(
-                        self.config.get("filestore", "/mnt/filestorefs"),
+                        self.config.get("filestore", "/data/retronas"),
                         "Native",
                         system_info['local_base_path'],
                         source_subdir
@@ -773,8 +773,8 @@ class TransFS(Passthrough):
         if path.startswith(self.mount_path):
             return self._collapse_hidden_root_alias_path(path)
         # If it's a real path, convert it back to virtual
-        if path.startswith("/mnt/filestorefs"):
-            rel_path = os.path.relpath(path, "/mnt/filestorefs")
+        if path.startswith(self.config.get("filestore", "/data/retronas")):
+            rel_path = os.path.relpath(path, self.config.get("filestore", "/data/retronas"))
             if rel_path == '.':
                 # If it's the root directory, return mount_path without the '.'
                 return self.mount_path
@@ -1062,7 +1062,7 @@ class TransFS(Passthrough):
                 # their inner files so clients see CUE/BIN/CHD rather than the raw .7z/.zip container.
                 if zip_mode == 'flatten' and query_config and query_config.get('transform_zip', False):
                     from zippath import listdir_with_info as zippath_listdir_with_info, is_supported_archive_name
-                    filestore_fl = self.config.get('filestore', '/mnt/filestorefs')
+                    filestore_fl = self.config.get('filestore', '/data/retronas')
                     local_base_fl = system_info.get('local_base_path', '')
                     src_dir_fl = _adjust_source_dir_for_layout(query_config.get('source_dir', 'Software'), system_info)
                     expanded_files = []
@@ -1100,7 +1100,7 @@ class TransFS(Passthrough):
                 if query_config:
                     source_dir = query_config.get('source_dir', '')
                     if source_dir:
-                        filestore = self.config.get('filestore', '/mnt/filestorefs')
+                        filestore = self.config.get('filestore', '/data/retronas')
                         local_base = system_info.get('local_base_path', '')
                         full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
                         
@@ -1500,7 +1500,7 @@ class TransFS(Passthrough):
                     except ValueError:
                         subpath_fa = filename
                     if subpath_fa:
-                        filestore_fa = self.config.get('filestore', '/mnt/filestorefs')
+                        filestore_fa = self.config.get('filestore', '/data/retronas')
                         local_base_fa = sys_info_fa.get('local_base_path', '')
                         source_path_fa = os.path.join(filestore_fa, 'Native', local_base_fa, src_dir_fa, subpath_fa)
                         from db.queries import query_file_by_source_path
@@ -1620,7 +1620,7 @@ class TransFS(Passthrough):
                     except ValueError:
                         subpath_op = filename
                     if subpath_op:
-                        filestore_op = self.config.get('filestore', '/mnt/filestorefs')
+                        filestore_op = self.config.get('filestore', '/data/retronas')
                         local_base_op = sys_info_op.get('local_base_path', '')
                         source_path_op = os.path.join(filestore_op, 'Native', local_base_op, src_dir_op, subpath_op)
                         from db.queries import query_file_by_source_path
@@ -1929,7 +1929,7 @@ class TransFS(Passthrough):
         elif isinstance(parent_source, str):
             parent_dir = parent_source
         else:
-            parent_dir = xfull_path.replace("/mnt/transfs", "/mnt/filestorefs")
+            parent_dir = xfull_path.replace(self.mount_path, self.config.get("filestore", "/data/retronas"))
 
         logger.info(f"READDIR: xfull_path={xfull_path}, parent_dir={parent_dir}")
 
@@ -2174,7 +2174,8 @@ class TransFS(Passthrough):
                 )
         
         # Optimize for Native paths - skip expensive get_source_path() call
-        is_native_path = parent_dir.startswith("/mnt/filestorefs/Native/")
+        _native_prefix = self.config.get("filestore", "/data/retronas") + "/Native/"
+        is_native_path = parent_dir.startswith(_native_prefix)
         
         # Build system-level transform map for this directory (MAJOR OPTIMIZATION)
         # Instead of calling get_source_path() 400+ times, build the map once
@@ -2339,7 +2340,7 @@ class TransFS(Passthrough):
             if isinstance(fspath, dict):
                 fspath = fspath.get('path')
             
-            filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
+            filestore_root = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
             use_actual_inode = (
                 isinstance(fspath, str)
                 and os.path.exists(fspath)
@@ -2711,7 +2712,7 @@ class TransFS(Passthrough):
         elif isinstance(parent_source, str):
             parent_dir = parent_source
         else:
-            parent_dir = parent_dir_virtual.replace("/mnt/transfs", "/mnt/filestorefs")
+            parent_dir = parent_dir_virtual.replace(self.mount_path, self.config.get("filestore", "/data/retronas"))
         
         cached_stat = get_cached_getattr(xfull_path, parent_dir)
         t_cache_elapsed = time.time() - t_cache_start
@@ -2937,7 +2938,7 @@ class TransFS(Passthrough):
             logger.info(f"GETATTR: calling get_source_path for {xfull_path}")
             t_source_start = time.time()
             # Convert filestore path to mount path for get_source_path() only if needed
-            filestore_root = self.config.get("filestore", "/mnt/filestorefs")
+            filestore_root = self.config.get("filestore", "/data/retronas")
             if xfull_path.startswith(filestore_root):
                 virtual_path = self._filestore_to_mount_path(xfull_path)
             else:
@@ -3945,7 +3946,7 @@ class TransFS(Passthrough):
 
         # Check if it's a real file/dir that exists
         if source_path and isinstance(source_path, str) and os.path.exists(source_path):
-            filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
+            filestore_root = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
             # Avoid inode collisions for virtual client roots that map to filestore root
             if os.path.normpath(source_path) == os.path.normpath(filestore_root):
                 self._add_path(synthetic_inode, path)
@@ -4215,7 +4216,8 @@ class TransFS(Passthrough):
     async def statfs(self, ctx):
         """Return filesystem statistics from the underlying filestore."""
         stat_ = pyfuse3.StatvfsData()
-        statfs = os.statvfs('/mnt/filestorefs')
+        _filestore = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
+        statfs = os.statvfs(_filestore)
 
         for attr in ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail',
                      'f_files', 'f_ffree', 'f_favail', 'f_namemax'):
@@ -4387,4 +4389,9 @@ def main(mount_path: str, root_path: str):
 
 
 if __name__ == '__main__':
-    main(mount_path="/mnt/transfs", root_path="/mnt/filestorefs")
+    from config import read_app_config as _read_cfg
+    _startup_cfg = _read_cfg()
+    main(
+        mount_path=_startup_cfg.get("mountpoint", "/mnt/transfs"),
+        root_path=_startup_cfg.get("filestore", "/data/retronas"),
+    )

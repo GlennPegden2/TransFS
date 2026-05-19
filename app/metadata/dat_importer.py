@@ -14,8 +14,6 @@ from config import read_app_config, reload_config
 from db.connection import get_cursor
 from metadata.catalog_utils import CatalogEntry, build_catalog_entries, build_index_from_entries
 
-DEFAULT_DAT_FOLDER = "/mnt/filestorefs/Native/DATs"
-
 
 @dataclass
 class DatImportRecord:
@@ -91,7 +89,7 @@ class DatImportService:
 
     def default_dat_folder(self) -> str:
         app_cfg = read_app_config(self.config_dir) or {}
-        filestore = (app_cfg.get("filestore") or "/mnt/filestorefs").rstrip("/")
+        filestore = (app_cfg.get("filestore") or "/data/retronas").rstrip("/")
         return os.path.normpath(f"{filestore}/Native/DATs")
 
     def xml_formats(self) -> dict[str, dict[str, Any]]:

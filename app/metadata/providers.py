@@ -225,17 +225,25 @@ class MetadataScanService:
             self._resolved_dat_xml_paths[configured_path] = ""
             return None
 
+        try:
+            from config import read_app_config
+            _app_cfg = read_app_config()
+            _filestore = _app_cfg.get("filestore", "/data/retronas")
+        except Exception:  # pylint: disable=broad-except
+            _filestore = "/data/retronas"
+        _native = _filestore + "/Native"
+
         candidate_paths = [
-            os.path.join("/mnt/filestorefs/Native/Clients/Mame/mame_cache", xml_basename),
-            os.path.join("/mnt/filestorefs/Native/Clients/MAME/mame_cache", xml_basename),
-            os.path.join("/mnt/filestorefs/Native/Clients/RetroBat/bios/mame/hash", xml_basename),
+            os.path.join(_native, "Clients/Mame/mame_cache", xml_basename),
+            os.path.join(_native, "Clients/MAME/mame_cache", xml_basename),
+            os.path.join(_native, "Clients/RetroBat/bios/mame/hash", xml_basename),
         ]
         for candidate in candidate_paths:
             if os.path.exists(candidate):
                 self._resolved_dat_xml_paths[configured_path] = candidate
                 return candidate
 
-        native_root = "/mnt/filestorefs/Native"
+        native_root = _native
         if os.path.isdir(native_root):
             for root, _, filenames in os.walk(native_root):
                 if xml_basename in filenames and "/mame/hash" in root.replace("\\", "/").lower():

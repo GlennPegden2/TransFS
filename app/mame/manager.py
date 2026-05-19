@@ -43,12 +43,12 @@ class MAMEDownloadManager:
         )
         self.download_root = mame_config.get(
             'download_root',
-            '/mnt/filestorefs/Downloads/MAME'
+            '/data/retronas/Downloads/MAME'
         )
         self.verify_checksums = mame_config.get('verify_checksums', True)
         self.max_concurrent = mame_config.get('max_concurrent_downloads', 3)
         self.cache_hash_files = mame_config.get('cache_hash_files', True)
-        filestore_root = config.get('filestore', '/mnt/filestorefs')
+        filestore_root = config.get('filestore', '/data/retronas')
         
         # Initialize components
         self.parser = MAMEHashParser(logger_instance=self.logger)
