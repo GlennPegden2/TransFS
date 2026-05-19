@@ -335,7 +335,7 @@ def generate_client_config(
         "retronas_support": {
             "enabled": True,
             "transport": "smb",
-            "auto_map_system_name": False,
+            "auto_map_system_name": True,
             "canonical_roots": canon_roots_final,
             "top_levels": top_levels_cfg,
             **({"overrides": overrides_cfg} if overrides_cfg else {}),

@@ -198,7 +198,12 @@ def _resolve_source_base(
             source_root=top_level.source_root,
             system_id=canonical.id,
             local_base_path=canonical.local_base_path,
+            filestore=filestore,
         )
+        # If the template rendered to an absolute path (e.g. RetroNAS paths like
+        # /data/retronas/roms/{src}), use it directly without the Native/ prefix.
+        if os.path.isabs(rel):
+            return rel
         rel = _norm_rel(rel)
     else:
         rel = _norm_rel(os.path.join("Canonical", top_level.source_root, canonical.src))
