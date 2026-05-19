@@ -13,5 +13,10 @@ COPY 3rd-party/retronas/ansible/ /opt/retronas/ansible/
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/retronas/docker-entrypoint.sh"]
 CMD ["/opt/retronas/retronas.sh", "-g"]
 
-# Build: docker build -f Dockerfile.retronas-testbed -t retronas-testbed .
-# Run:   docker run -it retronas-testbed
+# Build: docker build -f Dockerfile.retronas-testbed -t retronas:testbed .
+# Run (testbed/dev — stays alive, no dialog menu):
+#   docker run -d --name retronas-testbed --tty --interactive \
+#     --cap-add SYS_ADMIN --device /dev/fuse --security-opt apparmor:unconfined \
+#     retronas:testbed tail -f /dev/null
+# Or via docker-compose:
+#   docker compose --profile retronas-testbed up -d

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **RetroNAS tab in Web UI**: New "RetroNAS" tab detects whether TransFS is running inside a RetroNAS environment by checking for `/opt/retronas/ansible/retronas_vars.yml` on disk (not the `retronas_managed` SMB flag). Shows RetroNAS status, data path, and MiSTer CIFS deployment state. Displays "RetroNAS not detected" when not in a RetroNAS environment.
+
+- **MiSTer CIFS config import from Web UI**: The RetroNAS tab includes an "Import MiSTer CIFS Config" button that calls the new `/api/retronas/import-mister-cifs` endpoint to generate a `config/clients/retronas/mister.yaml` from the live RetroNAS system map. Re-import is supported to refresh after RetroNAS changes.
+
+- **`/api/retronas/status` endpoint**: Returns RetroNAS detection state, data path, and whether the MiSTer CIFS playbook and directory structure are present.
+
+- **`/api/retronas/import-mister-cifs` endpoint**: Invokes the import utility to read `/opt/retronas/ansible/retronas_systems.yml` and `install_mister_cifs.yml`, generating a `retronas` config-set `mister.yaml` with all MiSTer-mapped systems.
+
+- **`tools/import_mister_cifs.py`**: Standalone utility script that reads RetroNAS's `retronas_systems.yml` (127 system entries) and `install_mister_cifs.yml` (top-level paths, save overrides) and generates a `mister.yaml` in a new `retronas` client config set. Usable directly from the CLI or via the API. Supports `--dry-run`, `--verbose`, `--retronas-root`, and `--output` flags.
+
 ### Changed
 - **Filestore path aligned with RetroNAS default (`/data/retronas`)**: TransFS now defaults to the same storage path that RetroNAS uses out of the box (`retronas_path: /data/retronas` from `/opt/retronas/ansible/retronas_vars.yml`). Updated `app/config/app.yaml` (filestore, download_root, credentials_file) and `app/config/metadata/providers/default.yaml` (MAME xml_path).
 

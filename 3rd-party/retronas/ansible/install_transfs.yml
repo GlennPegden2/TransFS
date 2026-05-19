@@ -226,6 +226,14 @@
         extra_args: "--no-deps"
         virtualenv: "{{ transfs_venv_path }}"
 
+    - name: Ensure pycryptodome is installed (required by mega.py)
+      # py7zr pulls in pycryptodomex which pip may treat as satisfying the
+      # pycryptodome requirement, but mega.py imports from Crypto (pycryptodome)
+      # not Cryptodome (pycryptodomex).  Install explicitly to guarantee both.
+      ansible.builtin.pip:
+        name: pycryptodome
+        virtualenv: "{{ transfs_venv_path }}"
+
     - name: Ensure platform/retronas directory exists
       ansible.builtin.file:
         path: "{{ transfs_install_root }}/platform/retronas"

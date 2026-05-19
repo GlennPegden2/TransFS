@@ -2637,6 +2637,148 @@ def reload_client_mappings():
 
 
 # ============================================================================
+# RETRONAS INTEGRATION ENDPOINTS
+# ============================================================================
+
+_RETRONAS_ROOT = "/opt/retronas"
+_RETRONAS_VARS_FILE = os.path.join(_RETRONAS_ROOT, "ansible/retronas_vars.yml")
+_RETRONAS_SYSTEMS_FILE = os.path.join(_RETRONAS_ROOT, "ansible/retronas_systems.yml")
+_RETRONAS_MISTER_CIFS_PLAYBOOK = os.path.join(_RETRONAS_ROOT, "ansible/install_mister_cifs.yml")
+_IMPORT_MISTER_CIFS_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "tools", "import_mister_cifs.py")
+_RETRONAS_CONFIG_SET = "retronas"
+
+
+def _detect_retronas() -> dict:
+    """
+    Detect whether this instance is running inside a RetroNAS environment.
+    Detection is based on filesystem presence of the RetroNAS installation,
+    NOT on the smb_config retronas_managed flag (which is a TransFS-internal
+    concept that may be set regardless of the hosting environment).
+    """
+    installed = os.path.isfile(_RETRONAS_VARS_FILE)
+    mister_cifs_available = os.path.isfile(_RETRONAS_MISTER_CIFS_PLAYBOOK)
+
+    # Read retronas_path and other vars if installed
+    retronas_path = "/data/retronas"
+    retronas_user = "retronas"
+    if installed:
+        try:
+            with open(_RETRONAS_VARS_FILE, "r", encoding="utf-8") as fh:
+                rn_vars = yaml.safe_load(fh) or {}
+            retronas_path = str(rn_vars.get("retronas_path") or retronas_path)
+            retronas_user = str(rn_vars.get("retronas_user") or retronas_user)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    # Check whether mister dir actually exists in the filestore (playbook has been run)
+    mister_cifs_deployed = os.path.isdir(os.path.join(retronas_path, "mister"))
+
+    return {
+        "retronas_detected": installed,
+        "retronas_root": _RETRONAS_ROOT if installed else None,
+        "retronas_path": retronas_path if installed else None,
+        "retronas_user": retronas_user if installed else None,
+        "mister_cifs_available": mister_cifs_available,
+        "mister_cifs_deployed": mister_cifs_deployed,
+    }
+
+
+@app.get("/retronas/status", tags=["RetroNAS"])
+def get_retronas_status():
+    """Detect whether TransFS is running inside a RetroNAS environment.
+
+    Detection is based on the presence of the RetroNAS installation on disk
+    (specifically /opt/retronas/ansible/retronas_vars.yml), NOT on the
+    smb_config retronas_managed flag.
+
+    Returns:
+        - retronas_detected: True if RetroNAS is installed on this host
+        - retronas_root: Path to the RetroNAS installation
+        - retronas_path: The configured RetroNAS data path
+        - mister_cifs_available: True if the mister_cifs Ansible playbook exists
+        - mister_cifs_deployed: True if the mister directory structure has been created
+        - config_set_exists: True if the 'retronas' TransFS config set already exists
+    """
+    status = _detect_retronas()
+
+    # Check whether a 'retronas' client config set already exists
+    retronas_config_dir = os.path.join("config", "clients", _RETRONAS_CONFIG_SET)
+    mister_yaml_path = os.path.join(retronas_config_dir, "mister.yaml")
+    status["config_set_exists"] = os.path.isdir(retronas_config_dir)
+    status["mister_yaml_exists"] = os.path.isfile(mister_yaml_path)
+
+    return status
+
+
+@app.post("/retronas/import-mister-cifs", tags=["RetroNAS"])
+def import_retronas_mister_cifs():
+    """Generate a mister.yaml in the 'retronas' config set from RetroNAS mister_cifs data.
+
+    Reads the RetroNAS system map and mister_cifs Ansible playbook to build a
+    TransFS client config that reflects the MiSTer CIFS directory structure.
+    The result is written to config/clients/retronas/mister.yaml.
+
+    Returns:
+        - success: True on success
+        - systems_count: Number of MiSTer systems found
+        - output_path: Where the file was written
+        - error: Error message on failure
+    """
+    status = _detect_retronas()
+    if not status["retronas_detected"]:
+        return {"success": False, "error": "RetroNAS is not installed on this host."}
+
+    if not status["mister_cifs_available"]:
+        return {"success": False, "error": "RetroNAS mister_cifs playbook not found."}
+
+    script_path = os.path.normpath(_IMPORT_MISTER_CIFS_SCRIPT)
+    if not os.path.isfile(script_path):
+        return {"success": False, "error": f"Import script not found: {script_path}"}
+
+    output_dir = os.path.join("config", "clients", _RETRONAS_CONFIG_SET)
+    output_path = os.path.join(output_dir, "mister.yaml")
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                script_path,
+                "--retronas-root", _RETRONAS_ROOT,
+                "--output", output_path,
+                "--verbose",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "unknown error").strip()
+            return {"success": False, "error": err}
+
+        # Count systems in the generated file
+        systems_count = 0
+        try:
+            with open(output_path, "r", encoding="utf-8") as fh:
+                generated = yaml.safe_load(fh) or {}
+            systems_count = len(generated.get("systems") or [])
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        return {
+            "success": True,
+            "systems_count": systems_count,
+            "output_path": output_path,
+            "config_set": _RETRONAS_CONFIG_SET,
+            "stdout": result.stdout.strip(),
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Import script timed out after 60 seconds."}
+    except Exception as e:  # pylint: disable=broad-except
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
 # TEST ENDPOINTS
 # ============================================================================
 
