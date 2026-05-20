@@ -747,18 +747,19 @@
                 </div>
             </div>
 
-            <!-- MiSTer CIFS import panel — only shown when RetroNAS is detected -->
+            <!-- RetroNAS CIFS import panel — only shown when RetroNAS is detected -->
             <div id="retronas-mister-panel" style="display:none;">
-                <h3 style="margin-top:0; margin-bottom:0.6em;">MiSTer CIFS Config Import</h3>
+                <h3 style="margin-top:0; margin-bottom:0.6em;">RetroNAS CIFS Config Import</h3>
                 <p style="color:#555; font-size:0.92em; line-height:1.5; margin-bottom:1em;">
-                    Import the RetroNAS MiSTer CIFS system map into a <strong>retronas</strong> client config set.
-                    This generates <code>config/clients/retronas/mister.yaml</code> based on the systems defined
-                    in RetroNAS, mapping each MiSTer system name to its canonical source path.
+                    Import all RetroNAS <strong>install_*_cifs.yml</strong> playbooks into the
+                    <strong>retronas</strong> client config set.
+                    This generates <code>config/clients/retronas/*.yaml</code> so each supported
+                    RetroNAS client gets a matching TransFS config.
                 </p>
                 <div style="display:flex; gap:0.7em; align-items:center; flex-wrap:wrap; margin-bottom:1em;">
                     <button type="button" id="retronas-import-btn" onclick="importRetronasMisterCifs()"
                         style="padding:0.6em 1.3em; background:#1565c0; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:0.97em; font-weight:500;">
-                        Import MiSTer CIFS Config
+                        Import RetroNAS CIFS Configs
                     </button>
                     <span id="retronas-import-status" style="font-size:0.9em; color:#666;"></span>
                 </div>
@@ -1077,7 +1078,7 @@
                     ['MiSTer CIFS playbook', data.mister_cifs_available ? 'Available' : 'Not found'],
                     ['MiSTer directory deployed', data.mister_cifs_deployed ? 'Yes' : 'Not yet'],
                     ['RetroNAS config set', data.config_set_exists ? 'Exists' : 'Not created yet'],
-                    ['mister.yaml', data.mister_yaml_exists ? 'Generated' : 'Not generated yet'],
+                    ['Generated client configs', `${data.generated_client_config_count || 0}${data.generated_client_configs?.length ? ' (' + data.generated_client_configs.join(', ') + ')' : ''}`],
                 ];
                 if (detailsEl) {
                     detailsEl.innerHTML = rows.map(([k, v]) =>
@@ -1088,9 +1089,9 @@
                 if (data.mister_cifs_available && misterPanel) {
                     misterPanel.style.display = '';
                     const btn = document.getElementById('retronas-import-btn');
-                    if (btn) btn.textContent = data.mister_yaml_exists
-                        ? 'Re-import MiSTer CIFS Config'
-                        : 'Import MiSTer CIFS Config';
+                    if (btn) btn.textContent = data.generated_client_config_count > 0
+                        ? 'Re-import RetroNAS CIFS Configs'
+                        : 'Import RetroNAS CIFS Configs';
                 }
 
             } catch (err) {
@@ -1117,8 +1118,12 @@
                         resultEl.style.background = '#e8f5e9';
                         resultEl.style.border = '1px solid #a5d6a7';
                         resultEl.style.color = '#1b5e20';
+                        const generatedList = Array.isArray(data.generated_configs)
+                            ? data.generated_configs.map(cfg => `${cfg.name}.yaml (${cfg.systems_count} systems)`).join(', ')
+                            : '';
                         resultEl.innerHTML =
-                            `<strong>Import successful.</strong> ${data.systems_count} systems written to <code>${data.output_path}</code>.` +
+                            `<strong>Import successful.</strong> ${data.generated_config_count || 0} configs and ${data.systems_count || 0} systems written to <code>${data.output_path}</code>.` +
+                            (generatedList ? `<div style="margin-top:0.45em;">${generatedList}</div>` : '') +
                             (data.stdout ? `<pre style="margin:0.6em 0 0 0;font-size:0.85em;background:#f1f8e9;padding:0.5em;border-radius:4px;overflow:auto;">${data.stdout}</pre>` : '');
                     }
                     if (statusEl) statusEl.textContent = '';

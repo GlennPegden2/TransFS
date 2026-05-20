@@ -2702,28 +2702,28 @@ def get_retronas_status():
     """
     status = _detect_retronas()
 
-    # Check whether a 'retronas' client config set already exists
     retronas_config_dir = os.path.join("config", "clients", _RETRONAS_CONFIG_SET)
-    mister_yaml_path = os.path.join(retronas_config_dir, "mister.yaml")
+    generated_configs = []
+    if os.path.isdir(retronas_config_dir):
+        for yaml_path in sorted(Path(retronas_config_dir).glob("*.yaml")):
+            generated_configs.append(yaml_path.name)
+
     status["config_set_exists"] = os.path.isdir(retronas_config_dir)
-    status["mister_yaml_exists"] = os.path.isfile(mister_yaml_path)
+    status["mister_yaml_exists"] = "mister.yaml" in generated_configs
+    status["generated_client_configs"] = generated_configs
+    status["generated_client_config_count"] = len(generated_configs)
 
     return status
 
 
 @app.post("/retronas/import-mister-cifs", tags=["RetroNAS"])
 def import_retronas_mister_cifs():
-    """Generate a mister.yaml in the 'retronas' config set from RetroNAS mister_cifs data.
+    """Generate RetroNAS client configs from all available *_cifs playbooks.
 
-    Reads the RetroNAS system map and mister_cifs Ansible playbook to build a
-    TransFS client config that reflects the MiSTer CIFS directory structure.
-    The result is written to config/clients/retronas/mister.yaml.
-
-    Returns:
-        - success: True on success
-        - systems_count: Number of MiSTer systems found
-        - output_path: Where the file was written
-        - error: Error message on failure
+    This endpoint keeps its original MiSTer-focused route for backward
+    compatibility, but now invokes the importer in --all mode so every
+    RetroNAS install_*_cifs.yml playbook produces a corresponding
+    config/clients/retronas/<platform>.yaml file.
     """
     status = _detect_retronas()
     if not status["retronas_detected"]:
@@ -2737,7 +2737,6 @@ def import_retronas_mister_cifs():
         return {"success": False, "error": f"Import script not found: {script_path}"}
 
     output_dir = os.path.join("config", "clients", _RETRONAS_CONFIG_SET)
-    output_path = os.path.join(output_dir, "mister.yaml")
 
     try:
         result = subprocess.run(
@@ -2745,7 +2744,8 @@ def import_retronas_mister_cifs():
                 sys.executable,
                 script_path,
                 "--retronas-root", _RETRONAS_ROOT,
-                "--output", output_path,
+                "--all",
+                "--output-dir", output_dir,
                 "--verbose",
             ],
             capture_output=True,
@@ -2756,19 +2756,30 @@ def import_retronas_mister_cifs():
             err = (result.stderr or result.stdout or "unknown error").strip()
             return {"success": False, "error": err}
 
-        # Count systems in the generated file
-        systems_count = 0
-        try:
-            with open(output_path, "r", encoding="utf-8") as fh:
-                generated = yaml.safe_load(fh) or {}
-            systems_count = len(generated.get("systems") or [])
-        except Exception:  # pylint: disable=broad-except
-            pass
+        generated_configs = []
+        total_systems = 0
+        for yaml_path in sorted(Path(output_dir).glob("*.yaml")):
+            systems_count = 0
+            try:
+                with open(yaml_path, "r", encoding="utf-8") as fh:
+                    generated = yaml.safe_load(fh) or {}
+                systems_count = len(generated.get("systems") or [])
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+            generated_configs.append({
+                "name": yaml_path.stem,
+                "output_path": str(yaml_path),
+                "systems_count": systems_count,
+            })
+            total_systems += systems_count
 
         return {
             "success": True,
-            "systems_count": systems_count,
-            "output_path": output_path,
+            "generated_config_count": len(generated_configs),
+            "generated_configs": generated_configs,
+            "systems_count": total_systems,
+            "output_path": output_dir,
             "config_set": _RETRONAS_CONFIG_SET,
             "stdout": result.stdout.strip(),
         }
