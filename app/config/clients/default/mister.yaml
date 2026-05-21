@@ -739,3 +739,421 @@ systems:
               - C10
             transform_zip: false
             supports_zaparoo: false
+
+  # --- Acetronic ---
+  - name: VC4000
+    display_name: "Acetronic MPU 1000"
+    manufacturer: Acetronic
+    system_mapping_name: VC4000
+    local_base_path: Acetronic/VC4000
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- BBC ---
+  - name: BBCBridgeCompanion
+    display_name: "BBC Bridge Companion"
+    manufacturer: BBC
+    system_mapping_name: BBCBridgeCompanion
+    local_base_path: BBC/BBCBridgeCompanion
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Bally ---
+  - name: Astrocade
+    display_name: "Bally Astrocade"
+    manufacturer: Bally
+    system_mapping_name: Astrocade
+    local_base_path: Bally/Astrocade
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Bandai ---
+  - name: SuperVision8000
+    display_name: "Bandai Super Vision 8000"
+    manufacturer: Bandai
+    system_mapping_name: SuperVision8000
+    local_base_path: Bandai/SuperVision8000
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  - name: WonderSwan
+    display_name: "Bandai WonderSwan"
+    manufacturer: Bandai
+    system_mapping_name: WonderSwan
+    local_base_path: Bandai/WonderSwan
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - PC2
+              - WS
+              - WSC
+            transform_zip: false
+            supports_zaparoo: true
+  - name: WonderSwanColor
+    display_name: "Bandai WonderSwan Color"
+    manufacturer: Bandai
+    system_mapping_name: WonderSwanColor
+    local_base_path: Bandai/WonderSwanColor
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - PC2
+              - WS
+              - WSC
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Benesse ---
+  - name: PocketChallengeV2
+    display_name: "Benesse Pocket Challenge V2"
+    manufacturer: Benesse
+    system_mapping_name: PocketChallengeV2
+    local_base_path: Benesse/PocketChallengeV2
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - PC2
+              - WS
+              - WSC
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Bit ---
+  - name: Gamate
+    display_name: "Bit Corporation - Gamate"
+    manufacturer: Bit
+    system_mapping_name: Gamate
+    local_base_path: Bit/Gamate
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - GBP
+              - SGB
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Casio ---
+  - name: Casio_PV-1000
+    display_name: "Casio PV-1000"
+    manufacturer: Casio
+    system_mapping_name: Casio_PV-1000
+    local_base_path: Casio/Casio_PV-1000
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Entex ---
+  - name: AVision
+    display_name: "Entex Adventure Vision"
+    manufacturer: Entex
+    system_mapping_name: AVision
+    local_base_path: Entex/AVision
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Epoch ---
+  - name: SCV
+    display_name: "Epoch Co Super Cassette Vision"
+    manufacturer: Epoch
+    system_mapping_name: SCV
+    local_base_path: Epoch/SCV
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - 0
+              - 1
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Fairchild ---
+  - name: ChannelF
+    display_name: "Fairchild Channel F"
+    manufacturer: Fairchild
+    system_mapping_name: ChannelF
+    local_base_path: Fairchild/ChannelF
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Magnavox ---
+  - name: Odyssey2
+    display_name: "Magnavox Odyssey 2"
+    manufacturer: Magnavox
+    system_mapping_name: Odyssey2
+    local_base_path: Magnavox/Odyssey2
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - CHR
+            transform_zip: false
+            supports_zaparoo: true
+  # --- NEC ---
+  - name: TGFX16-CD
+    display_name: "NEC CD-ROM² - Super CD-ROM²"
+    manufacturer: NEC
+    system_mapping_name: TGFX16-CD
+    local_base_path: NEC/TGFX16-CD
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Nichibutsu ---
+  - name: MyVision
+    display_name: "Nichibutsu My Vision"
+    manufacturer: Nichibutsu
+    system_mapping_name: MyVision
+    local_base_path: Nichibutsu/MyVision
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - ROM
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Nintendo ---
+  - name: GameNWatch
+    display_name: "Nintendo Game & Watch"
+    manufacturer: Nintendo
+    system_mapping_name: GameNWatch
+    local_base_path: Nintendo/GameNWatch
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  - name: N64
+    display_name: "Nintendo 64"
+    manufacturer: Nintendo
+    system_mapping_name: N64
+    local_base_path: Nintendo/N64
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - N64
+              - V64
+              - Z64
+            transform_zip: false
+            supports_zaparoo: true
+  - name: PokemonMini
+    display_name: "Nintendo Pokemon Mini"
+    manufacturer: Nintendo
+    system_mapping_name: PokemonMini
+    local_base_path: Nintendo/PokemonMini
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - MIN
+            transform_zip: false
+            supports_zaparoo: true
+  - name: SGB
+    display_name: "Nintendo Super Game Boy (GB original)"
+    manufacturer: Nintendo
+    system_mapping_name: SGB
+    local_base_path: Nintendo/SGB
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - GB
+              - SFC
+              - GBC
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Philips ---
+  - name: CD-i
+    display_name: "Philips Compact Disc-Interactive"
+    manufacturer: Philips
+    system_mapping_name: CD-i
+    local_base_path: Philips/CD-i
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- SNK ---
+  - name: NeoGeo-CD
+    display_name: "SNK Neo Geo CD"
+    manufacturer: SNK
+    system_mapping_name: NeoGeo-CD
+    local_base_path: SNK/NeoGeo-CD
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  - name: NeoGeoPocket
+    display_name: "SNK Neo Geo Pocket"
+    manufacturer: SNK
+    system_mapping_name: NeoGeoPocket
+    local_base_path: SNK/NeoGeoPocket
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - NGP
+              - NGC
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Sega ---
+  - name: MegaCD
+    display_name: "Sega CD"
+    manufacturer: Sega
+    system_mapping_name: MegaCD
+    local_base_path: Sega/MegaCD
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  - name: S32x
+    display_name: "Sega 32X"
+    manufacturer: Sega
+    system_mapping_name: S32x
+    local_base_path: Sega/S32x
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - 32X
+            transform_zip: false
+            supports_zaparoo: true
+  - name: Saturn
+    display_name: "Sega Saturn"
+    manufacturer: Sega
+    system_mapping_name: Saturn
+    local_base_path: Sega/Saturn
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Sony ---
+  - name: PSX
+    display_name: "Sony PlayStation"
+    manufacturer: Sony
+    system_mapping_name: PSX
+    local_base_path: Sony/PSX
+    maps:
+      - CDs:
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- VTech ---
+  - name: CreatiVision
+    display_name: "VTech CreatiVision - Dick Smith Wizzard"
+    manufacturer: VTech
+    system_mapping_name: CreatiVision
+    local_base_path: VTech/CreatiVision
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BAS
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+  # --- Watara ---
+  - name: SuperVision
+    display_name: "Watara SuperVision"
+    manufacturer: Watara
+    system_mapping_name: SuperVision
+    local_base_path: Watara/SuperVision
+    maps:
+      - ROMs:
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - GBP
+              - SGB
+              - SV
+            transform_zip: false
+            supports_zaparoo: true
