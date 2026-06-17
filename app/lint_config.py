@@ -277,10 +277,28 @@ def lint_app_yaml(filepath: str) -> LintResult:
         for f in ("id", "target_subpath"):
             if not mount.get(f):
                 result.error(f"{ctx}.{f}", f"Mandatory mount field '{f}' is missing.")
-        if mount.get("smb_host") and not mount.get("credentials_file") and not mount.get("guest"):
-            result.warn(f"{ctx}.credentials_file",
-                        "SMB mount has no credentials_file and guest is not true.",
-                        "Add: credentials_file: /path/to/.cred  or set  guest: true")
+        mount_type = str(mount.get("mount_type", "cifs") or "cifs").strip().lower()
+        if mount_type in {"smb", "cifs"}:
+            if not mount.get("smb_host"):
+                result.error(f"{ctx}.smb_host", "Mandatory cifs mount field 'smb_host' is missing.")
+            if not mount.get("smb_share"):
+                result.error(f"{ctx}.smb_share", "Mandatory cifs mount field 'smb_share' is missing.")
+            if mount.get("smb_host") and not mount.get("credentials_file") and not mount.get("guest"):
+                result.warn(f"{ctx}.credentials_file",
+                            "SMB mount has no credentials_file and guest is not true.",
+                            "Add: credentials_file: /path/to/.cred  or set  guest: true")
+        elif mount_type == "nfs":
+            if not mount.get("nfs_server"):
+                result.error(f"{ctx}.nfs_server", "Mandatory nfs mount field 'nfs_server' is missing.")
+            if not mount.get("nfs_export"):
+                result.error(f"{ctx}.nfs_export", "Mandatory nfs mount field 'nfs_export' is missing.")
+        elif mount_type == "bind":
+            if not mount.get("bind_source"):
+                result.error(f"{ctx}.bind_source", "Mandatory bind mount field 'bind_source' is missing.")
+        else:
+            result.error(f"{ctx}.mount_type",
+                         f"Unsupported mount_type '{mount_type}'.",
+                         "Valid values: cifs, nfs, bind")
 
     return result
 

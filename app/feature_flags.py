@@ -25,7 +25,8 @@ class FeatureFlagManager:
         # Feature flags
         self.database_enabled = self.db_config.get('enabled', False)
         self.database_mode = self.db_config.get('mode', 'disabled')
-        self.database_path = self.db_config.get('path', '/data/retronas/.transfs_metadata.db')
+        filestore_root = config.get('filestore', '/mnt/filestorefs')
+        self.database_path = self.db_config.get('path') or f"{filestore_root.rstrip('/')}/.transfs_metadata.db"
         self.auto_sync = self.db_config.get('auto_sync', False)
         self.sync_on_startup = self.db_config.get('sync_on_startup', False)
         

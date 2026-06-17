@@ -1,0 +1,1 @@
+# Virtual filesystem resolution package

@@ -31,8 +31,8 @@ startup_prewarm:
   recursive_index_paths:
   - Native/Systems/Acorn/Atom/Software/Sources
 config_sets:
-  active_client_config: default
-  active_source_config: Testing
+  active_client_config: retronas
+  active_source_config: default
 database:
   auto_sync: false
   enabled: true
@@ -46,43 +46,49 @@ database:
   pool_size: 20
   max_overflow: 10
 smb:
-  # mode controls how TransFS interacts with Samba:
-  #   transfs_managed  - TransFS installs Samba and owns /etc/samba/smb.conf (default)
-  #   retronas_managed - RetroNAS owns Samba; TransFS injects its share only
-  #   custom           - Like transfs_managed but uses a user-specified smb.conf path;
-  #                      set conf_path below when using this mode
-  #   disabled         - No SMB configuration; web API still functions
   mode: transfs_managed
-  # conf_path: /etc/samba/smb.conf   # only used when mode is 'custom'
   username: root
   password: '1'
   allow_guest: false
+  preferred_port: 445
+  fallback_ports:
+  - 3445
+  - 1445
+  - 2445
+  strict_standard_port: false
+  auto_allocate_port: true
 native_external_mounts:
 - id: 3do-nas
   display_name: 3DO on nas
+  mount_type: cifs
   enabled: true
   target_subpath: Systems/3DO/3DO/Software/Collections/RetroRom-Collection
   smb_host: 192.168.95.19
   smb_share: software
   smb_subpath: 3do/RetroRom-Collection
   smb_port: null
+  nfs_server: ''
+  nfs_export: ''
+  nfs_subpath: ''
+  nfs_version: '4.1'
+  bind_source: ''
   guest: false
   read_only: false
   vers: '3.0'
   auto_reconnect: true
   extra_options: []
-  username: .\glenn
+  username: glenn
   last_error: ''
-  last_ok: 1776209424
-  last_checked: 1776209424
-  credentials_file: /data/retronas/.secrets/transfs/native-mounts/3do-nas.cred
-filestore: /data/retronas
+  last_ok: 1781733789
+  last_checked: 1781733789
+  credentials_file: /mnt/filestorefs/.secrets/transfs/native-mounts/3do-nas.cred
+filestore: /mnt/filestorefs
 show_hidden_files: true
 mame:
   hash_repo_url: https://raw.githubusercontent.com/mamedev/mame/master/hash
   hash_repo_branch: master
   archive_base_url: https://archive.org/download/MAME_0.228_Software_List_ROMs_merged/MAME_0.228_Software_List_ROMs_merged.zip
-  download_root: /data/retronas/Downloads/MAME
+  download_root: /mnt/filestorefs/Downloads/MAME
   verify_checksums: true
   max_concurrent_downloads: 3
   cache_hash_files: true
@@ -94,8 +100,15 @@ ui:
   advanced_options: true
   show_real_path_tooltips: true
 web_api:
-  host: ''
+  host: 0.0.0.0
   port: 8000
+  preferred_port: 8000
+  fallback_ports:
+  - 8001
+  - 8080
+  - 18000
+  strict_standard_port: false
+  auto_allocate_port: true
 zaparoo:
   clients:
   - enabled: true
@@ -103,3 +116,6 @@ zaparoo:
     mount_path: /media/fat/cifs
     name: MiSTer
     port: 7497
+runtime:
+  profile: retronas-baremetal
+  enable_port_auto_claim: true

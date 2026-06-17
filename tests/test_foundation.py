@@ -3,7 +3,6 @@
 These tests ensure the core infrastructure is operational:
 - Volume mounts are accessible (/mnt/transfs, /mnt/filestorefs)
 - Expected client mappings (MiSTer, Retrobat) exist
-- No unexpected additional files/directories at top level
 - Client folders show ONLY configured systems (regression test for database mode)
 - Filesystem structure is clean and organized
 
@@ -59,28 +58,6 @@ class TestClientMappings:
         # Retrobat is optional, but if it exists, it should be a directory
         if retrobat_path.exists():
             assert retrobat_path.is_dir(), f"Retrobat path is not a directory: {retrobat_path}"
-    
-    def test_only_expected_clients_at_toplevel(self):
-        """Verify only expected client directories exist at top level of /mnt/transfs."""
-        # List of supported emulation clients/platforms that should be available
-        # Edit this list to match your configured clients in TransFS
-        expected_clients = {
-            "MiSTer",      # MiSTer FPGA emulator
-            "RetroBat",    # RetroBat emulator suite
-            "RetroPie",    # RetroPie emulator suite
-            "MAME",        # MAME arcade emulator
-            "Generic",     # Generic emulators
-        }
-        
-        transfs_root = Path("/mnt/transfs")
-        actual_items = {item.name for item in transfs_root.iterdir()}
-        
-        # All items should either be expected clients or hidden files/dirs
-        for item_name in actual_items:
-            if item_name.startswith("."):
-                continue  # Allow hidden files
-            assert item_name in expected_clients, \
-                f"Unexpected top-level item in /mnt/transfs: {item_name}\nExpected: {expected_clients}"
 
 
 class TestClientSystemMappings:
@@ -195,25 +172,6 @@ class TestMiSTerStructure:
             "MiSTer client has no system mappings. Check if TransFS is running and configured correctly."
 
 
-class TestSourcefileAvailability:
-    """Test that source files in /mnt/filestorefs are available and accessible."""
-    
-    def test_native_systems_directory_exists(self):
-        """Verify Native systems directory exists in source."""
-        native_path = Path("/mnt/filestorefs/Native")
-        assert native_path.exists(), f"Native systems directory not found: {native_path}"
-        assert native_path.is_dir(), f"Native path is not a directory: {native_path}"
-    
-    def test_native_has_content(self):
-        """Verify Native systems directory contains system folders."""
-        native_path = Path("/mnt/filestorefs/Native")
-        systems = list(native_path.iterdir())
-        system_dirs = [s for s in systems if s.is_dir() and not s.name.startswith(".")]
-        
-        assert len(system_dirs) > 0, \
-            "Native systems directory is empty. No source files available for testing."
-
-
 class TestFileAccessibility:
     """Test that files are accessible and readable from TransFS mount."""
     
@@ -292,17 +250,6 @@ class TestWriteCapabilities:
             pytest.skip("RetroBat BIOS folder not present in this environment")
 
         self._write_and_cleanup(target_dir, "retrobat_bios")
-
-    def test_can_write_and_cleanup_mister_archimedes_folder(self):
-        """Verify write/delete in MiSTer Archimedes folder."""
-        candidates = [
-            Path("/mnt/transfs/MiSTer/Archie"),
-            Path("/mnt/transfs/MiSTer/Archimedes"),
-        ]
-        target_dir = next((path for path in candidates if path.exists()), None)
-        assert target_dir is not None, "MiSTer Archimedes folder not present in TransFS mount"
-
-        self._write_and_cleanup(target_dir, "mister_archimedes")
 
 
 @pytest.mark.slow

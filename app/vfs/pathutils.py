@@ -253,6 +253,32 @@ def get_map_extension_map(map_config: Optional[dict]) -> dict:
         return query_cfg.get("extension_map") or {}
     return {}
 
+
+def derive_query_map_relative_dir(relative_path: Optional[str], map_source_dir: Optional[str]) -> str:
+    """
+    Derive preserve-structure relative directory for query-map sync entries.
+
+    If map_source_dir is provided, the relative directory is computed within that anchor.
+    If map_source_dir is omitted, the full relative path (from system base) is used.
+    """
+    if not relative_path:
+        return ""
+
+    rel_norm = relative_path.replace('\\', '/').strip('/')
+    if not rel_norm:
+        return ""
+
+    if map_source_dir:
+        src_norm = map_source_dir.replace('\\', '/').rstrip('/')
+        if src_norm and rel_norm.startswith(src_norm + '/'):
+            within_source = rel_norm[len(src_norm) + 1:]
+            derived = os.path.dirname(within_source).replace('\\', '/').strip('.')
+            return "" if derived == '/' else derived
+        return ""
+
+    derived = os.path.dirname(rel_norm).replace('\\', '/').strip('.')
+    return "" if derived == '/' else derived
+
 def resolve_system_name(client: dict, potential_name: str) -> Optional[str]:
     """
     Resolve a display name back to the actual system name.

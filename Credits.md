@@ -1,0 +1,2 @@
+Thanks for @sairuk for helping with the RetroNAS support
+Thanks to Cosmic Katamari for letting me crib some the the mister config from Game-Popular https://github.com/cosmickatamari/game-populator saving me hours of research

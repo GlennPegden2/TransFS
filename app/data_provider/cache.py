@@ -6,7 +6,7 @@ Used when database mode is disabled.
 """
 import logging
 from typing import Optional, List
-from data_provider import DataProvider, FileInfo, DirectoryListing
+from . import DataProvider, FileInfo, DirectoryListing
 
 logger = logging.getLogger(__name__)
 

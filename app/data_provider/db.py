@@ -9,7 +9,7 @@ import threading
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from data_provider import DataProvider, FileInfo, DirectoryListing
+from . import DataProvider, FileInfo, DirectoryListing
 from db.connection import init_database, get_cursor
 from query.translator import QueryBuilder
 

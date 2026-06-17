@@ -19,18 +19,18 @@ import trio
 import pyfuse3
 from pyfuse3 import FUSEError, InodeT, FileHandleT
 
-from passthroughfs import Passthrough
-from dirlisting import parse_trans_path, get_cached_stat, cache_stat
+from fuse.passthrough import Passthrough
+from vfs.dirlisting import parse_trans_path, get_cached_stat, cache_stat, _extract_relative_path
 
 # Backwards-compatible aliases for older getattr naming in this module
 get_cached_getattr = get_cached_stat
 cache_getattr = cache_stat
-from pathutils import full_path, is_virtual_path, map_virtual_to_real
-from sourcepath import get_source_path, get_source_path_for_write
-from zippath import is_supported_archive_name, open_file as zippath_open_file, listdir as zippath_listdir
+from vfs.pathutils import full_path, is_virtual_path, map_virtual_to_real
+from vfs.sourcepath import get_source_path, get_source_path_for_write
+from archive.zippath import is_supported_archive_name, open_file as zippath_open_file, listdir as zippath_listdir
 from logging_setup import setup_logging
-from data_provider_init import initialize_data_provider, get_data_provider_manager
-from fuse_adapter import FUSEOperationAdapter
+from data_provider.init import initialize_data_provider, get_data_provider_manager
+from fuse.adapter import FUSEOperationAdapter
 
 setup_logging(logging.INFO)
 logger = logging.getLogger("transfs")
@@ -73,6 +73,42 @@ def _find_sample_file_recursive(source_dir: str, ext: str, extension_filters: di
             if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
                 return candidate
     return None
+
+
+def _query_record_virtual_name(file_record: dict, extension_map: dict[str, str]) -> str:
+    """Derive the virtual display filename for a DB query-map record."""
+    filename = file_record.get('filename', '') if isinstance(file_record, dict) else ''
+    db_ext = file_record.get('extension') if isinstance(file_record, dict) else None
+    if not filename:
+        return ''
+
+    if db_ext:
+        ext = str(db_ext).upper()
+        if not filename.lower().endswith(f".{str(db_ext).lower()}"):
+            full_filename = f"{filename}.{str(db_ext).lower()}"
+        else:
+            full_filename = filename
+    else:
+        full_filename = filename
+        _, ext_with_dot = os.path.splitext(filename)
+        ext = ext_with_dot[1:].upper() if ext_with_dot else ''
+
+    if ext and ext in extension_map:
+        virt_ext = extension_map[ext]
+        name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+        return f"{name}.{virt_ext.lower()}"
+
+    return full_filename if db_ext else filename
+
+
+def _query_record_relative_dir(file_record: dict, source_dir: str | None, local_base_path: str | None) -> str:
+    """Derive preserve-structure relative directory for a DB query-map record."""
+    source_path = file_record.get('source_path', '') if isinstance(file_record, dict) else ''
+    if not source_path:
+        return ''
+    if '#ZIP#' in source_path:
+        source_path = source_path.split('#ZIP#', 1)[0]
+    return _extract_relative_path(source_path, source_dir, local_base_path or '').strip('/')
 
 
 class TransFS(Passthrough):
@@ -127,7 +163,7 @@ class TransFS(Passthrough):
             logger.warning(f"Failed to initialize database connection: {e}")
         
         try:
-            from dirlisting import set_cache_config
+            from vfs.dirlisting import set_cache_config
             cache_config = self.config.get("cache", {})
             if cache_config:
                 set_cache_config(cache_config)
@@ -351,7 +387,7 @@ class TransFS(Passthrough):
         Extract zip_mode configuration for the given path.
         Returns 'hierarchical' (default), 'flatten', or 'file'.
         """
-        from pathutils import (
+        from vfs.pathutils import (
             get_client,
             get_system_info,
             find_software_archive_entry,
@@ -512,9 +548,16 @@ class TransFS(Passthrough):
         
         Returns a dict like {"DSK": pipeline, "2MG": pipeline} or empty dict if not applicable.
         """
-        from pathutils import get_client, get_system_info, find_map_entry, get_map_config, get_map_transforms
-        from filetypes import get_filetype_transforms
-        from sourcepath import find_software_archive_entry, get_transform_pipeline_for_file
+        from vfs.pathutils import (
+            get_client,
+            get_system_info,
+            find_map_entry,
+            get_map_config,
+            get_map_transforms,
+            get_query_config,
+        )
+        from vfs.filetypes import get_filetype_transforms
+        from vfs.sourcepath import find_software_archive_entry, get_transform_pipeline_for_file
         from pathlib import Path
         
         try:
@@ -551,118 +594,49 @@ class TransFS(Passthrough):
             if not transform_map:
                 return {}
             
-            # Build transform pipeline for each extension that has transforms
-            pipeline_map = {}
-            cache_config = self.config.get("cache", {})
-            
-            # Get the actual source directory to find real files for detection
-            source_dir = None
-            if map_config and isinstance(map_config, dict):
-                query_cfg = map_config.get("query", {})
-                source_subdir = query_cfg.get("source_dir") if isinstance(query_cfg, dict) else None
-                if source_subdir:
-                    source_subdir = _adjust_source_dir_for_layout(source_subdir, system_info)
-                    source_dir = os.path.join(
-                        self.config.get("filestore", "/data/retronas"),
-                        "Native",
-                        system_info['local_base_path'],
-                        source_subdir
-                    )
-            if not source_dir:
-                sa_entry = find_software_archive_entry(system_info)
-                if sa_entry:
-                    if 'source_paths' in sa_entry and sa_entry['source_paths']:
-                        source_dir = sa_entry['source_paths'][0]  # Use first source path
-            
-            for ext in transform_map.keys():
-                # Try to find a real file with this extension for accurate detection
-                sample_file = None
-                
-                # Get extension filters from query config to help select appropriate sample file
-                extension_filters = {}
-                if map_config and isinstance(map_config, dict):
-                    query_cfg = map_config.get("query", {})
-                    if isinstance(query_cfg, dict):
-                        extension_filters = query_cfg.get("extension_filters", {})
-                
-                if source_dir and os.path.isdir(source_dir):
-                    # Check for extension-specific subdirectory first
-                    ext_subdir = os.path.join(source_dir, ext.upper())
-                    if os.path.isdir(ext_subdir):
-                        try:
-                            candidates = []
-                            for entry in os.scandir(ext_subdir):
-                                if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
-                                    candidates.append(entry.path)
-                            
-                            # If extension has size filters, find a file matching this map's filter
-                            if candidates and ext.upper() in extension_filters:
-                                filters = extension_filters[ext.upper()]
-                                min_size = filters.get('min_size')
-                                max_size = filters.get('max_size')
-                                
-                                # Find first file matching size constraint
-                                for candidate in candidates:
-                                    try:
-                                        size = os.path.getsize(candidate)
-                                        if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
-                                            sample_file = candidate
-                                            break
-                                    except OSError:
-                                        pass
-                            else:
-                                # No size filter, just use first file
-                                sample_file = candidates[0] if candidates else None
-                        except OSError:
-                            pass
-                    
-                    # If not found in subdir, check main directory
-                    if not sample_file:
-                        try:
-                            candidates = []
-                            for entry in os.scandir(source_dir):
-                                if entry.is_file() and entry.name.upper().endswith(f'.{ext.upper()}'):
-                                    candidates.append(entry.path)
-                            
-                            # If extension has size filters, find a file matching this map's filter
-                            if candidates and ext.upper() in extension_filters:
-                                filters = extension_filters[ext.upper()]
-                                min_size = filters.get('min_size')
-                                max_size = filters.get('max_size')
-                                
-                                # Find first file matching size constraint
-                                for candidate in candidates:
-                                    try:
-                                        size = os.path.getsize(candidate)
-                                        if (min_size is None or size >= min_size) and (max_size is None or size <= max_size):
-                                            sample_file = candidate
-                                            break
-                                    except OSError:
-                                        pass
-                            else:
-                                # No size filter, just use first file
-                                sample_file = candidates[0] if candidates else None
-                        except OSError:
-                            pass
+            # Build transform pipeline for each extension that has transforms.
+            pipeline_map: dict[str, Optional[Any]] = {}
 
-                    if not sample_file:
-                        sample_file = _find_sample_file_recursive(source_dir, ext, extension_filters)
-                
-                # Use sample file if found, otherwise fallback to dummy
-                filename_for_detection = sample_file if sample_file else f"test.{ext.lower()}"
-                
+            # Use query.source_dir when configured; otherwise search entire system base.
+            local_base_path = system_info.get('local_base_path', '')
+            source_dir = os.path.join(self.filestore, "Native", local_base_path)
+            query_cfg = get_query_config(map_config) if isinstance(map_config, dict) else {}
+            source_subdir = query_cfg.get("source_dir") if isinstance(query_cfg, dict) else None
+            if source_subdir:
+                source_subdir = _adjust_source_dir_for_layout(source_subdir, system_info)
+                source_dir = os.path.join(source_dir, source_subdir)
+
+            cache_config = self.config.get("cache", {}) if isinstance(self.config, dict) else {}
+
+            def _find_sample_file_recursive(search_root: str, extension: str) -> Optional[str]:
+                if not os.path.isdir(search_root):
+                    return None
+                target_ext = f".{extension.lower()}"
+                for root, _, files in os.walk(search_root):
+                    for name in sorted(files):
+                        if name.lower().endswith(target_ext):
+                            return os.path.join(root, name)
+                return None
+
+            for ext in sorted(transform_map.keys()):
+                ext_upper = str(ext).upper()
+                sample_file = _find_sample_file_recursive(source_dir, ext_upper)
+                filename_for_detection = sample_file if sample_file else f"test.{str(ext).lower()}"
+
                 pipeline = get_transform_pipeline_for_file(
-                    logger, 
-                    system_info, 
-                    filename_for_detection, 
+                    logger,
+                    system_info,
+                    filename_for_detection,
                     virtual_folder,
                     cache_config,
-                    full_path=sample_file  # Pass actual file path for format detection
+                    full_path=sample_file,
                 )
                 if pipeline:
-                    pipeline_map[ext.upper()] = pipeline
+                    pipeline_map[ext_upper] = pipeline
                     if sample_file:
-                        logger.info(f"TRANSFORM MAP: Built pipeline for {ext} using sample file: {os.path.basename(sample_file)}")
+                        logger.info(
+                            f"TRANSFORM MAP: Built pipeline for {ext_upper} using sample file: {os.path.basename(sample_file)}"
+                        )
             
             logger.info(f"TRANSFORM MAP for {virtual_folder}: {len(pipeline_map)} extensions")
             return pipeline_map
@@ -773,8 +747,8 @@ class TransFS(Passthrough):
         if path.startswith(self.mount_path):
             return self._collapse_hidden_root_alias_path(path)
         # If it's a real path, convert it back to virtual
-        if path.startswith(self.config.get("filestore", "/data/retronas")):
-            rel_path = os.path.relpath(path, self.config.get("filestore", "/data/retronas"))
+        if path.startswith(self.config.get("filestore", "/mnt/filestorefs")):
+            rel_path = os.path.relpath(path, self.config.get("filestore", "/mnt/filestorefs"))
             if rel_path == '.':
                 # If it's the root directory, return mount_path without the '.'
                 return self.mount_path
@@ -874,7 +848,7 @@ class TransFS(Passthrough):
             # Resolve system segment for both non-category and category paths.
             # Non-category: /<client>/<system>/<map>
             # Category: /<client>/<category>/<system>/<map>
-            from pathutils import resolve_system_name
+            from vfs.pathutils import resolve_system_name
             system_idx = None
             system_name = None
             for idx, part in enumerate(rel_parts[1:], start=1):
@@ -946,7 +920,7 @@ class TransFS(Passthrough):
         
         try:
             # Get map configuration to find allowed extensions
-            from pathutils import find_map_entry, get_map_config
+            from vfs.pathutils import find_map_entry, get_map_config
             client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if not client_config:
                 logger.warning(f"READDIR_DB_ONLY: client {client_name} not found")
@@ -968,7 +942,7 @@ class TransFS(Passthrough):
                 return True
             
             # Extract allowed extensions from map config (inside query key)
-            from pathutils import get_query_config
+            from vfs.pathutils import get_query_config
             query_config = get_query_config(map_config)
             allowed_extensions = [str(ext).upper() for ext in query_config.get('extensions', []) if ext]
             if query_config.get('transform_zip', False):
@@ -1014,13 +988,17 @@ class TransFS(Passthrough):
 
             if db_files is None:
                 from db.queries import query_files_by_system_and_query
-                from pathutils import get_system_identifier
+                from vfs.pathutils import get_system_identifier
 
                 query_db = dict(query_config)
-                query_db["source_dir"] = _adjust_source_dir_for_layout(
-                    query_config.get("source_dir", "Software"),
-                    system_info,
-                )
+                source_dir_cfg = query_config.get("source_dir")
+                if source_dir_cfg:
+                    query_db["source_dir"] = _adjust_source_dir_for_layout(
+                        source_dir_cfg,
+                        system_info,
+                    )
+                else:
+                    query_db.pop("source_dir", None)
 
                 system_candidates = []
 
@@ -1061,8 +1039,8 @@ class TransFS(Passthrough):
                 # FLATTEN EXPANSION: when zip_mode == 'flatten', expand archive entries into
                 # their inner files so clients see CUE/BIN/CHD rather than the raw .7z/.zip container.
                 if zip_mode == 'flatten' and query_config and query_config.get('transform_zip', False):
-                    from zippath import listdir_with_info as zippath_listdir_with_info, is_supported_archive_name
-                    filestore_fl = self.config.get('filestore', '/data/retronas')
+                    from archive.zippath import listdir_with_info as zippath_listdir_with_info, is_supported_archive_name
+                    filestore_fl = self.config.get('filestore', '/mnt/filestorefs')
                     local_base_fl = system_info.get('local_base_path', '')
                     src_dir_fl = _adjust_source_dir_for_layout(query_config.get('source_dir', 'Software'), system_info)
                     expanded_files = []
@@ -1100,7 +1078,7 @@ class TransFS(Passthrough):
                 if query_config:
                     source_dir = query_config.get('source_dir', '')
                     if source_dir:
-                        filestore = self.config.get('filestore', '/data/retronas')
+                        filestore = self.config.get('filestore', '/mnt/filestorefs')
                         local_base = system_info.get('local_base_path', '')
                         full_source_dir = os.path.join(filestore, 'Native', local_base, source_dir)
                         
@@ -1386,7 +1364,7 @@ class TransFS(Passthrough):
         
         try:
             # Handle virtual directories for preserve_structure query maps
-            from pathutils import find_map_entry, get_map_config, get_query_config
+            from vfs.pathutils import find_map_entry, get_map_config, get_query_config
             client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             if client_config:
                 system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
@@ -1396,7 +1374,8 @@ class TransFS(Passthrough):
                         map_config = get_map_config(map_entry)
                         query_config = get_query_config(map_config)
                         if query_config and query_config.get('preserve_structure', False):
-                            source_dir = query_config.get('source_dir', 'Software')
+                            source_dir_cfg = query_config.get('source_dir')
+                            source_dir = _adjust_source_dir_for_layout(source_dir_cfg, system_info) if source_dir_cfg else None
                             rel_parts = Path(path).parts[len(Path(self.mount_path).parts):]
                             try:
                                 map_idx = rel_parts.index(map_name)
@@ -1439,12 +1418,16 @@ class TransFS(Passthrough):
 
                             if db_files is None:
                                 from db.queries import query_files_by_system_and_query
-                                from pathutils import get_system_identifier
+                                from vfs.pathutils import get_system_identifier
                                 query_db = dict(query_config)
-                                query_db["source_dir"] = _adjust_source_dir_for_layout(
-                                    query_config.get("source_dir", "Software"),
-                                    system_info,
-                                )
+                                source_dir_cfg = query_config.get("source_dir")
+                                if source_dir_cfg:
+                                    query_db["source_dir"] = _adjust_source_dir_for_layout(
+                                        source_dir_cfg,
+                                        system_info,
+                                    )
+                                else:
+                                    query_db.pop("source_dir", None)
                                 system_candidates = []
                                 def _add_sc(value):
                                     c = str(value or "").strip()
@@ -1467,69 +1450,112 @@ class TransFS(Passthrough):
                                 self._db_readdir_cache[map_root_path] = (time.time(), db_files)
 
                             for file_record in db_files or []:
-                                source_path = file_record.get('source_path', '')
-                                rel_dir = ''
-                                if source_path:
-                                    normalized_source = source_path.replace('\\', '/')
-                                    normalized_source_dir = (source_dir or '').replace('\\', '/').strip('/')
-                                    marker = f"/{normalized_source_dir}/"
-                                    if marker in normalized_source:
-                                        relative_after_source_dir = normalized_source.split(marker, 1)[1]
-                                        rel_dir = os.path.dirname(relative_after_source_dir).replace('\\', '/').strip('/')
-
+                                rel_dir = _query_record_relative_dir(
+                                    file_record,
+                                    source_dir,
+                                    system_info.get('local_base_path', ''),
+                                )
                                 if rel_dir == subpath or rel_dir.startswith(subpath + '/'):
                                     return build_dir_stat()
 
-            # Query database for this specific file using config-driven source path reconstruction.
-            # Build the expected source path from virtual path components + config, then do an
-            # exact point lookup on the indexed source_path column (no file_client_maps join).
+            # Resolve file from query-map candidate rows, not config-reconstructed source paths.
             file_record = None
             client_cfg = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             sys_info_fa = next((s for s in client_cfg.get('systems', []) if s['name'] == system_name), None) if client_cfg else None
             if sys_info_fa:
-                from pathutils import find_map_entry, get_map_config, get_query_config
+                from vfs.pathutils import find_map_entry, get_map_config, get_query_config, get_system_identifier
                 me_fa = find_map_entry(sys_info_fa, map_name)
                 mc_fa = get_map_config(me_fa)
                 qc_fa = get_query_config(mc_fa)
                 if qc_fa:
-                    src_dir_fa = _adjust_source_dir_for_layout(qc_fa.get('source_dir', 'Software'), sys_info_fa)
                     rel_parts_fa = Path(path).parts[len(Path(self.mount_path).parts):]
                     try:
                         map_idx_fa = list(rel_parts_fa).index(map_name)
                         subpath_fa = '/'.join(rel_parts_fa[map_idx_fa + 1:])
                     except ValueError:
                         subpath_fa = filename
-                    if subpath_fa:
-                        filestore_fa = self.config.get('filestore', '/data/retronas')
-                        local_base_fa = sys_info_fa.get('local_base_path', '')
-                        source_path_fa = os.path.join(filestore_fa, 'Native', local_base_fa, src_dir_fa, subpath_fa)
-                        from db.queries import query_file_by_source_path
-                        file_record = query_file_by_source_path(source_path_fa)
+                    source_dir_cfg = qc_fa.get('source_dir')
+                    source_dir_fa = _adjust_source_dir_for_layout(source_dir_cfg, sys_info_fa) if source_dir_cfg else None
+                    extension_map_fa = qc_fa.get('extension_map', {}) or {}
+                    extension_map_fa = {str(k).upper(): str(v).upper() for k, v in extension_map_fa.items()}
+                    preserve_structure_fa = bool(qc_fa.get('preserve_structure', False))
+
+                    try:
+                        map_root_fa = os.path.join(self.mount_path, *rel_parts_fa[:map_idx_fa + 1])
+                    except Exception:
+                        map_root_fa = os.path.join(self.mount_path, client_name, system_name, map_name)
+
+                    cache_entry_fa = self._db_readdir_cache.get(map_root_fa)
+                    if cache_entry_fa:
+                        cached_at_fa, cached_files_fa = cache_entry_fa
+                        if (time.time() - cached_at_fa) <= self._db_readdir_cache_ttl:
+                            db_files_fa = cached_files_fa
+                        else:
+                            self._db_readdir_cache.pop(map_root_fa, None)
+                            db_files_fa = None
+                    else:
+                        db_files_fa = None
+
+                    if db_files_fa is None:
+                        from db.queries import query_files_by_system_and_query
+
+                        query_db_fa = dict(qc_fa)
+                        if source_dir_fa:
+                            query_db_fa['source_dir'] = source_dir_fa
+                        else:
+                            query_db_fa.pop('source_dir', None)
+
+                        system_candidates_fa = []
+
+                        def _add_sc_fa(value):
+                            candidate = str(value or '').strip()
+                            if candidate and candidate not in system_candidates_fa:
+                                system_candidates_fa.append(candidate)
+
+                        _add_sc_fa(get_system_identifier(sys_info_fa))
+                        _add_sc_fa(sys_info_fa.get('name'))
+                        _add_sc_fa(sys_info_fa.get('system_mapping_name'))
+                        _add_sc_fa(sys_info_fa.get('cananonical_system_name'))
+                        _add_sc_fa(str(sys_info_fa.get('name') or '').lower())
+                        _add_sc_fa(str(sys_info_fa.get('system_mapping_name') or '').lower())
+                        _add_sc_fa(str(sys_info_fa.get('cananonical_system_name') or '').lower())
+
+                        entries_map_fa = {}
+                        for system_key in system_candidates_fa:
+                            for entry in query_files_by_system_and_query(
+                                system=system_key,
+                                query=query_db_fa,
+                                system_config=sys_info_fa,
+                                limit=10000,
+                            ):
+                                entry_name = entry.get('filename', '') if isinstance(entry, dict) else str(entry)
+                                if entry_name and entry_name not in entries_map_fa:
+                                    entries_map_fa[entry_name] = entry
+
+                        db_files_fa = list(entries_map_fa.values())
+                        self._db_readdir_cache[map_root_fa] = (time.time(), db_files_fa)
+
+                    requested_rel_fa = (subpath_fa or filename).strip('/')
+                    for rec in (db_files_fa or []):
+                        display_name = _query_record_virtual_name(rec, extension_map_fa)
+                        if not display_name:
+                            continue
+                        if preserve_structure_fa:
+                            rel_dir = _query_record_relative_dir(
+                                rec,
+                                source_dir_fa,
+                                sys_info_fa.get('local_base_path', ''),
+                            )
+                            candidate_rel = f"{rel_dir}/{display_name}" if rel_dir else display_name
+                            if candidate_rel.strip('/').lower() == requested_rel_fa.lower():
+                                file_record = rec
+                                break
+                        elif display_name.lower() == filename.lower():
+                            file_record = rec
+                            break
 
             if not file_record:
-                logger.debug(f"GETATTR_DB_ONLY: file {filename} not found in database")
-
-            # FLATTEN FALLBACK: inner files of flattened archives won't have a direct DB entry.
-            # Search the readdir cache (populated by _readdir_database_only flatten expansion).
-            if not file_record and sys_info_fa:
-                from pathutils import find_map_entry, get_map_config, get_query_config
-                me_fl2 = find_map_entry(sys_info_fa, map_name) if sys_info_fa else None
-                mc_fl2 = get_map_config(me_fl2) if me_fl2 else None
-                qc_fl2 = get_query_config(mc_fl2) if mc_fl2 else None
-                if qc_fl2 and qc_fl2.get('zip_mode') == 'flatten':
-                    try:
-                        map_idx_fl2 = list(Path(path).parts[len(Path(self.mount_path).parts):]).index(map_name)
-                        map_root_fl2 = os.path.join(self.mount_path, *Path(path).parts[len(Path(self.mount_path).parts):map_idx_fl2 + len(Path(self.mount_path).parts) + 1])
-                    except (ValueError, Exception):
-                        map_root_fl2 = os.path.join(self.mount_path, client_name, system_name, map_name)
-                    cache_entry_fl2 = self._db_readdir_cache.get(map_root_fl2)
-                    if cache_entry_fl2:
-                        _, cached_fl2 = cache_entry_fl2
-                        for rec in (cached_fl2 or []):
-                            if isinstance(rec, dict) and rec.get('filename') == filename:
-                                file_record = rec
-                                logger.info(f"GETATTR_DB_ONLY: found {filename} in flatten cache from {map_root_fl2}")
-                                break
+                logger.debug(f"GETATTR_DB_ONLY: file {filename} not found in query-map candidates")
             if not file_record:
                 return None  # Fall back to filesystem
             
@@ -1545,7 +1571,7 @@ class TransFS(Passthrough):
             if _stat_check_path and os.path.exists(_stat_check_path):
                 try:
                     # Get transform pipeline for this file
-                    from pathutils import find_map_entry, get_map_config
+                    from vfs.pathutils import find_map_entry, get_map_config
                     client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
                     if client_config:
                         system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
@@ -1607,20 +1633,21 @@ class TransFS(Passthrough):
             client_cfg_op = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
             sys_info_op = next((s for s in client_cfg_op.get('systems', []) if s['name'] == system_name), None) if client_cfg_op else None
             if sys_info_op:
-                from pathutils import find_map_entry, get_map_config, get_query_config
+                from vfs.pathutils import find_map_entry, get_map_config, get_query_config
                 me_op = find_map_entry(sys_info_op, map_name)
                 mc_op = get_map_config(me_op)
                 qc_op = get_query_config(mc_op)
                 if qc_op:
-                    src_dir_op = _adjust_source_dir_for_layout(qc_op.get('source_dir', 'Software'), sys_info_op)
+                    src_dir_cfg_op = qc_op.get('source_dir')
+                    src_dir_op = _adjust_source_dir_for_layout(src_dir_cfg_op, sys_info_op) if src_dir_cfg_op else None
                     rel_parts_op = Path(path).parts[len(Path(self.mount_path).parts):]
                     try:
                         map_idx_op = list(rel_parts_op).index(map_name)
                         subpath_op = '/'.join(rel_parts_op[map_idx_op + 1:])
                     except ValueError:
                         subpath_op = filename
-                    if subpath_op:
-                        filestore_op = self.config.get('filestore', '/data/retronas')
+                    if subpath_op and src_dir_op:
+                        filestore_op = self.config.get('filestore', '/mnt/filestorefs')
                         local_base_op = sys_info_op.get('local_base_path', '')
                         source_path_op = os.path.join(filestore_op, 'Native', local_base_op, src_dir_op, subpath_op)
                         from db.queries import query_file_by_source_path
@@ -1629,7 +1656,7 @@ class TransFS(Passthrough):
             # FLATTEN FALLBACK: inner files of flattened archives won't have a direct DB entry.
             # Search the readdir cache (populated by _readdir_database_only flatten expansion).
             if not file_record and sys_info_op:
-                from pathutils import find_map_entry, get_map_config, get_query_config
+                from vfs.pathutils import find_map_entry, get_map_config, get_query_config
                 me_fl3 = find_map_entry(sys_info_op, map_name) if sys_info_op else None
                 mc_fl3 = get_map_config(me_fl3) if me_fl3 else None
                 qc_fl3 = get_query_config(mc_fl3) if mc_fl3 else None
@@ -1671,7 +1698,7 @@ class TransFS(Passthrough):
             
             # Check if this file needs transformation
             try:
-                from sourcepath import get_transform_pipeline_for_file
+                from vfs.sourcepath import get_transform_pipeline_for_file
                 client_config = next((c for c in self.config.get('clients', []) if c['name'] == client_name), None)
                 if client_config:
                     system_info = next((s for s in client_config.get('systems', []) if s['name'] == system_name), None)
@@ -1929,7 +1956,7 @@ class TransFS(Passthrough):
         elif isinstance(parent_source, str):
             parent_dir = parent_source
         else:
-            parent_dir = xfull_path.replace(self.mount_path, self.config.get("filestore", "/data/retronas"))
+            parent_dir = xfull_path.replace(self.mount_path, self.config.get("filestore", "/mnt/filestorefs"))
 
         logger.info(f"READDIR: xfull_path={xfull_path}, parent_dir={parent_dir}")
 
@@ -1945,7 +1972,7 @@ class TransFS(Passthrough):
         is_nested_file_map_dir = False
         is_unzipped_file_map_dir = False
         try:
-            from pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map
+            from vfs.pathutils import get_client, get_system_info, find_map_entry, get_map_config, is_query_map
             rel_parts = Path(xfull_path).parts[len(Path(self.root).parts):]
             if len(rel_parts) >= 3:
                 client = get_client(self.config, rel_parts)
@@ -2174,7 +2201,7 @@ class TransFS(Passthrough):
                 )
         
         # Optimize for Native paths - skip expensive get_source_path() call
-        _native_prefix = self.config.get("filestore", "/data/retronas") + "/Native/"
+        _native_prefix = self.config.get("filestore", "/mnt/filestorefs") + "/Native/"
         is_native_path = parent_dir.startswith(_native_prefix)
         
         # Build system-level transform map for this directory (MAJOR OPTIMIZATION)
@@ -2340,7 +2367,7 @@ class TransFS(Passthrough):
             if isinstance(fspath, dict):
                 fspath = fspath.get('path')
             
-            filestore_root = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
+            filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
             use_actual_inode = (
                 isinstance(fspath, str)
                 and os.path.exists(fspath)
@@ -2712,7 +2739,7 @@ class TransFS(Passthrough):
         elif isinstance(parent_source, str):
             parent_dir = parent_source
         else:
-            parent_dir = parent_dir_virtual.replace(self.mount_path, self.config.get("filestore", "/data/retronas"))
+            parent_dir = parent_dir_virtual.replace(self.mount_path, self.config.get("filestore", "/mnt/filestorefs"))
         
         cached_stat = get_cached_getattr(xfull_path, parent_dir)
         t_cache_elapsed = time.time() - t_cache_start
@@ -2821,7 +2848,7 @@ class TransFS(Passthrough):
         
         # Check for nested file map virtual directories BEFORE calling get_source_path
         # This handles both system-level (e.g., /RetroBat/AcornAtom/bios) and client-level (e.g., /RetroBat/bios)
-        from pathutils import find_map_entry, is_query_map, get_map_config
+        from vfs.pathutils import find_map_entry, is_query_map, get_map_config
         path_parts = Path(xfull_path).parts
         mount_parts = Path(self.mount_path).parts
         rel_parts = path_parts[len(mount_parts):]
@@ -2938,7 +2965,7 @@ class TransFS(Passthrough):
             logger.info(f"GETATTR: calling get_source_path for {xfull_path}")
             t_source_start = time.time()
             # Convert filestore path to mount path for get_source_path() only if needed
-            filestore_root = self.config.get("filestore", "/data/retronas")
+            filestore_root = self.config.get("filestore", "/mnt/filestorefs")
             if xfull_path.startswith(filestore_root):
                 virtual_path = self._filestore_to_mount_path(xfull_path)
             else:
@@ -3085,7 +3112,7 @@ class TransFS(Passthrough):
                     return self._dict_to_entry_attributes(result, inode)
                 
                 # Check if it's a query map directory or virtual directory for nested maps
-                from pathutils import find_map_entry, is_query_map, get_map_config
+                from vfs.pathutils import find_map_entry, is_query_map, get_map_config
                 path_parts = Path(xfull_path).parts
                 mount_parts = Path(self.mount_path).parts
                 rel_parts = path_parts[len(mount_parts):]
@@ -3227,7 +3254,7 @@ class TransFS(Passthrough):
         # Before giving up, check if this is a query map directory (virtual, no physical backing)
         # This handles cases where get_source_path returns a path that doesn't exist
         if isinstance(fspath, str) and not os.path.exists(fspath):
-            from pathutils import find_map_entry, is_query_map, get_map_config
+            from vfs.pathutils import find_map_entry, is_query_map, get_map_config
             
             rel_path = os.path.relpath(xfull_path, self.mount_path)
             rel_parts = [p for p in rel_path.split('/') if p and p != '.']
@@ -3946,7 +3973,7 @@ class TransFS(Passthrough):
 
         # Check if it's a real file/dir that exists
         if source_path and isinstance(source_path, str) and os.path.exists(source_path):
-            filestore_root = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
+            filestore_root = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
             # Avoid inode collisions for virtual client roots that map to filestore root
             if os.path.normpath(source_path) == os.path.normpath(filestore_root):
                 self._add_path(synthetic_inode, path)
@@ -4136,7 +4163,7 @@ class TransFS(Passthrough):
             # Invalidate subdirectory query cache for parent directory
             # This ensures next READDIR sees the updated file count
             try:
-                from dirlisting import _subdir_query_cache, _empty_subdir_cache
+                from vfs.dirlisting import _subdir_query_cache, _empty_subdir_cache
                 # Convert parent path to virtual path format for cache key
                 if parent_path.startswith(self.mount_path):
                     cache_key = parent_path[len(self.mount_path):].strip('/').replace('\\', '/')
@@ -4178,7 +4205,7 @@ class TransFS(Passthrough):
             
             # Invalidate subdirectory query cache for parent directory
             try:
-                from dirlisting import _subdir_query_cache, _empty_subdir_cache
+                from vfs.dirlisting import _subdir_query_cache, _empty_subdir_cache
                 if parent_path.startswith(self.mount_path):
                     cache_key = parent_path[len(self.mount_path):].strip('/').replace('\\', '/')
                     if cache_key in _subdir_query_cache:
@@ -4216,7 +4243,7 @@ class TransFS(Passthrough):
     async def statfs(self, ctx):
         """Return filesystem statistics from the underlying filestore."""
         stat_ = pyfuse3.StatvfsData()
-        _filestore = self.config.get("filestore", "/data/retronas") if isinstance(self.config, dict) else "/data/retronas"
+        _filestore = self.config.get("filestore", "/mnt/filestorefs") if isinstance(self.config, dict) else "/mnt/filestorefs"
         statfs = os.statvfs(_filestore)
 
         for attr in ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail',
@@ -4232,9 +4259,9 @@ async def main_async(mount_path: str, root_path: str):
     
     import signal
     from config import read_app_config
-    from cache_warmer import CacheWarmer
-    from dirlisting import set_cache_config
-    from startup_prewarm import prewarm_hotpaths, prewarm_subdirectory_cache, prewarm_recursive_indexes
+    from fuse.cache_warmer import CacheWarmer
+    from vfs.dirlisting import set_cache_config
+    from fuse.prewarm import prewarm_hotpaths, prewarm_subdirectory_cache, prewarm_recursive_indexes
 
     # Initialize cache configuration from app.yaml
     app_config = read_app_config()
@@ -4393,5 +4420,5 @@ if __name__ == '__main__':
     _startup_cfg = _read_cfg()
     main(
         mount_path=_startup_cfg.get("mountpoint", "/mnt/transfs"),
-        root_path=_startup_cfg.get("filestore", "/data/retronas"),
+        root_path=_startup_cfg.get("filestore", "/mnt/filestorefs"),
     )

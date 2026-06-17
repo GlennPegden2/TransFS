@@ -3,7 +3,7 @@
 Client logos are displayed next to client names in the Download tab UI, similar to manufacturer and system logos.
 
 ## Location
-`app/static/logos/clients/`
+`app/webui/static/logos/clients/`
 
 ## Format
 - **PNG** with transparency
@@ -26,7 +26,7 @@ To add official or custom logos:
 
 1. Obtain the official logo (check project websites/GitHub)
 2. Ensure it's 128x128px or larger PNG with transparency
-3. Save as `clientname.png` in `app/static/logos/clients/`
+3. Save as `clientname.png` in `app/webui/static/logos/clients/`
 4. Refresh your browser to see the changes
 
 ## Resources for Official Logos
@@ -36,7 +36,7 @@ To add official or custom logos:
 - **RetroBat**: https://www.retrobat.org/
 
 ## CSS Styling
-Client logos use the `.client-logo` class defined in `app/static/style.css`:
+Client logos use the `.client-logo` class defined in `app/webui/static/style.css`:
 ```css
 .client-logo {
     width: 32px;

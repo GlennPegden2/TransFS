@@ -7,9 +7,9 @@ Used when database mode is hybrid.
 import logging
 from typing import Optional, Dict, Any
 
-from data_provider import DataProvider, FileInfo, DirectoryListing
-from data_provider_db import DatabaseDataProvider
-from data_provider_cache import CacheDataProvider
+from . import DataProvider, FileInfo, DirectoryListing
+from .db import DatabaseDataProvider
+from .cache import CacheDataProvider
 
 logger = logging.getLogger(__name__)
 

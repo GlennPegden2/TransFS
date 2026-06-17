@@ -7,7 +7,7 @@ Integrates with transfs.py without disrupting existing functionality.
 import logging
 from typing import Dict, Any, Optional
 
-from data_provider import DataProviderFactory
+from . import DataProviderFactory
 from feature_flags import FeatureFlagManager
 
 logger = logging.getLogger(__name__)

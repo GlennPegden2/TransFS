@@ -11,7 +11,7 @@ Whilst the aim is to make it as simple and easy for new users to obtain and use 
 
 ---
 
-## 🔍 Key Features
+## Key Features
 
 - **FUSE-powered virtual filesystem** – Display your content to emulators in the paths/formats it expects. Accessible as an SMB share with a folder per supported emulator
 - **Web Based Content Downloader** - Helps you pull the right files from the right places with minimal effort
@@ -22,7 +22,7 @@ Whilst the aim is to make it as simple and easy for new users to obtain and use 
 
 
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Requirements
 
@@ -46,7 +46,7 @@ Docker
 ### Quick Start (Dockerised SMB Mode)
 
 ```bash
-git clone https://github.com/your-org/transfs.git
+git clone https://github.com/GlennPegden2/TransFS.git
 cd transfs
 docker-compose up -d
 ```
@@ -58,7 +58,7 @@ Then point your web browser to localhost (or wherever your docker host is) port 
 2. Access your content via SMB at `\\<servername>@3445\<system>` (e.g. `\\localhost@3445\mister`)
 3. Configure your emulator to use the SMB share
 
-### � Two Access Paths: Virtual vs Direct Native
+### Two Access Paths: Virtual vs Direct Native
 
 TransFS provides **two complementary access patterns** in a single SMB share:
 
@@ -89,7 +89,7 @@ TransFS provides **two complementary access patterns** in a single SMB share:
 
 📖 **See [Native Bypass Architecture](docs/NATIVE_BYPASS_ARCHITECTURE.md) and [Quick Start Guide](docs/NATIVE_BYPASS_QUICK_START.md) for details.**
 
-### �📌 Notes on SMB Port Configuration
+###  Notes on SMB Port Configuration
 
 > **Default Port:** TransFS runs on port **3445** (not standard 445) to avoid conflicts with Windows.
 >
@@ -106,7 +106,7 @@ TransFS provides **two complementary access patterns** in a single SMB share:
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 TransFS is designed to work out of the box with minimal configuration.
 
@@ -117,7 +117,7 @@ TransFS is designed to work out of the box with minimal configuration.
 
 ---
 
-## 🧪 Testing
+## Testing
 
 TransFS includes validation and regression testing. Tests must be run inside the Docker container to access the FUSE mount.
 
@@ -135,7 +135,7 @@ For detailed testing documentation, see [tests/TESTING_GUIDE.md](tests/TESTING_G
 
 ---
 
-## 🎮 System Compatibility
+## System Compatibility
 
 For the full system compatibility table including supported formats and emulator platforms, see [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -143,7 +143,7 @@ For the full system compatibility table including supported formats and emulator
 
 ---
 
-## 🚀 What's Next?
+## What's Next?
 
 Once you have TransFS running:
 

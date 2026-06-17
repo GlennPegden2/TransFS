@@ -5,45 +5,12 @@ name: MiSTer
 download_layout: folder_based
 default_target_path: "{name}/{system_name}/{maps}"
 
-retronas_support:
-  enabled: false
-  transport: smb
-  auto_map_system_name: true
-  canonical_roots:
-    roms: "Canonical/roms/{src}"
-    saves: "Canonical/saves/{src}"
-    savestates: "Canonical/savestates/{src}"
-    bios: "Canonical/bios/{src}"
-  top_levels:
-    - name: games
-      source_root: roms
-      per_system: true
-    - name: saves
-      source_root: saves
-      per_system: true
-    - name: savestates
-      source_root: savestates
-      per_system: true
-    - name: BIOS
-      source_root: bios
-      per_system: true
-  overrides:
-    - top_level: games
-      client_name: PSX
-      src: sony/playstation1
-    - top_level: saves
-      client_name: PSX
-      src: sony/playstation1
-    - top_level: savestates
-      client_name: PSX
-      src: sony/playstation1
-    - top_level: BIOS
-      client_name: PSX
-      src: sony/playstation1
-    - top_level: games
-      client_name: PlayStation
-      src: sony/playstation1
-
+category_paths:
+  roms: "MiSTer/games/{system_name}"
+  bios: "MiSTer/BIOS/{system_name}"
+  saves: "MiSTer/saves/{system_name}"
+  savestates: "MiSTer/savestates/{system_name}"
+  
 systems:
  # --- 3DO Company ---
   - name: 3do
@@ -52,24 +19,28 @@ systems:
     local_base_path: Systems/3DO/3DO
     maps:
       - boot.rom:
+          category: bios
           file:
             path: BIOS/3do.zip
             zip_internal_file: panafz1.bin 
             unzip: true
             supports_zaparoo: false
       - cd_bios.rom:
+          category: bios
           file:
             path: BIOS/3do.zip
             zip_internal_file: panafz1.bin 
             unzip: true
             supports_zaparoo: false
       - panafz10.bin:
+          category: bios
           file:
             path: BIOS/3do.zip
             zip_internal_file: panafz1.bin 
             unzip: true
             supports_zaparoo: false
       - CDs:
+          category: roms
           query:
             source_dir: Software/Collections/
             extensions:
@@ -81,6 +52,7 @@ systems:
             zip_mode: flatten
             supports_zaparoo: true
       - BIOS:
+          category: bios
           query:
             source_dir: BIOS
             extensions:
@@ -99,6 +71,7 @@ systems:
             path: Software/VHD/hoglet67.vhd
             supports_zaparoo: true
       - HDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -111,12 +84,15 @@ systems:
     local_base_path: Acorn/Archimedes
     maps:
       - riscos.rom:
+          category: bios
           file:
             path: BIOS/riscos.rom
       - riscos3_71.rom:
+          category: bios
           file:
             path: BIOS/riscos3_71.rom
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -124,6 +100,7 @@ systems:
             transform_zip: false
             supports_zaparoo: false
       - HDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -142,6 +119,7 @@ systems:
             zip_internal_file: BEEB.MMB
             supports_zaparoo: true
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -153,6 +131,7 @@ systems:
             supports_zaparoo: true
             zip_mode: flatten
       - HDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -164,6 +143,7 @@ systems:
             supports_zaparoo: true
             zip_mode: flatten
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -172,6 +152,7 @@ systems:
             supports_zaparoo: true
             zip_mode: flatten
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -190,6 +171,7 @@ systems:
             unzip: true
             zip_internal_file: BEEB.MMB
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -199,6 +181,7 @@ systems:
             supports_zaparoo: true
             zip_mode: flatten
       - HDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -216,6 +199,7 @@ systems:
     local_base_path: Amstrad/PCW
     maps:
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -228,12 +212,15 @@ systems:
     local_base_path: Amstrad/CPC/
     maps:
       - boot.rom:
+          category: bios
           file:
             path: BIOS/boot.rom
       - boot2.rom:
+          category: bios
           file:
             path: BIOS/boot.rom
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -242,6 +229,7 @@ systems:
             supports_zaparoo: true
             zip_mode: file
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -257,6 +245,7 @@ systems:
     local_base_path: Apple/AppleI
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -270,6 +259,7 @@ systems:
     local_base_path: Apple/AppleII
     maps:
       - FDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -286,6 +276,7 @@ systems:
             2MG:
               - type: two_mg
       - HDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -309,6 +300,7 @@ systems:
     local_base_path: Atari/2600
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -321,6 +313,7 @@ systems:
     local_base_path: Atari/5200
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -330,6 +323,7 @@ systems:
             transform_zip: false
             supports_zaparoo: true
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -342,6 +336,7 @@ systems:
     local_base_path: Atari/7800
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -354,6 +349,7 @@ systems:
     local_base_path: Atari/800
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -361,6 +357,7 @@ systems:
             transform_zip: false
             supports_zaparoo: true
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -374,6 +371,7 @@ systems:
     local_base_path: Atari/Lynx
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -387,6 +385,7 @@ systems:
     local_base_path: Coleco/ColecoVision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -400,14 +399,17 @@ systems:
     local_base_path: Commodore/Amiga
     maps:
       - KICK.ROM:
+          category: bios
           file:
             path: BIOS/kick.rom
       - HDs:
+          category: roms
           query:
             source_dir: HDDs
             extensions:
               - "*"
       - FDs:
+          category: roms
           query:
             source_dir: FDs
             extensions:
@@ -418,6 +420,7 @@ systems:
     local_base_path: Commodore/C128
     maps:
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -432,6 +435,7 @@ systems:
     local_base_path: Commodore/C64
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -439,6 +443,7 @@ systems:
             transform_zip: false
             supports_zaparoo: false
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -452,6 +457,7 @@ systems:
     local_base_path: Commodore/PET
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -459,6 +465,7 @@ systems:
             transform_zip: false
             supports_zaparoo: false
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -471,6 +478,7 @@ systems:
     local_base_path: Commodore/Plus4
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -478,6 +486,7 @@ systems:
             transform_zip: false
             supports_zaparoo: false
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -491,6 +500,7 @@ systems:
     local_base_path: Emerson/Arcadia 2001
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -506,6 +516,7 @@ systems:
     local_base_path: GCE/Vectrex
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -519,6 +530,7 @@ systems:
     local_base_path: Mattel/Intellivision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -532,6 +544,7 @@ systems:
     local_base_path: Microsoft/MSX
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -539,6 +552,7 @@ systems:
             transform_zip: false
             supports_zaparoo: true
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -552,6 +566,7 @@ systems:
     local_base_path: MITS/Altair8800
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -570,6 +585,7 @@ systems:
     local_base_path: NEC/PCE
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -582,6 +598,7 @@ systems:
     local_base_path: NEC/TurboGrafx16
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -595,6 +612,7 @@ systems:
     local_base_path: Nintendo/GameBoy
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -607,6 +625,7 @@ systems:
     local_base_path: Nintendo/GBA
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -619,6 +638,7 @@ systems:
     local_base_path: Nintendo/GBC
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -631,6 +651,7 @@ systems:
     local_base_path: Nintendo/NES
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -643,6 +664,7 @@ systems:
     local_base_path: Nintendo/SNES
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -659,6 +681,7 @@ systems:
     local_base_path: Sega/GameGear
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -671,6 +694,7 @@ systems:
     local_base_path: Sega/Genesis
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -685,6 +709,7 @@ systems:
     local_base_path: Sega/MasterSystem
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -698,6 +723,7 @@ systems:
     local_base_path: Sinclair/Spectrum
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -706,6 +732,7 @@ systems:
             transform_zip: false
             supports_zaparoo: false
       - Disks:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -720,6 +747,7 @@ systems:
     local_base_path: SNK/NeoGeo
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -733,6 +761,7 @@ systems:
     local_base_path: Tandy/MC-10
     maps:
       - Tapes:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -748,6 +777,7 @@ systems:
     local_base_path: Acetronic/VC4000
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -762,6 +792,7 @@ systems:
     local_base_path: BBC/BBCBridgeCompanion
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -776,6 +807,7 @@ systems:
     local_base_path: Bally/Astrocade
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -790,6 +822,7 @@ systems:
     local_base_path: Bandai/SuperVision8000
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -803,6 +836,7 @@ systems:
     local_base_path: Bandai/WonderSwan
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -818,6 +852,7 @@ systems:
     local_base_path: Bandai/WonderSwanColor
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -834,6 +869,7 @@ systems:
     local_base_path: Benesse/PocketChallengeV2
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -850,6 +886,7 @@ systems:
     local_base_path: Bit/Gamate
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -866,6 +903,7 @@ systems:
     local_base_path: Casio/Casio_PV-1000
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -880,6 +918,7 @@ systems:
     local_base_path: Entex/AVision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -894,6 +933,7 @@ systems:
     local_base_path: Epoch/SCV
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -910,6 +950,7 @@ systems:
     local_base_path: Fairchild/ChannelF
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -924,6 +965,7 @@ systems:
     local_base_path: Magnavox/Odyssey2
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -939,6 +981,7 @@ systems:
     local_base_path: NEC/TGFX16-CD
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -955,6 +998,7 @@ systems:
     local_base_path: Nichibutsu/MyVision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -970,6 +1014,7 @@ systems:
     local_base_path: Nintendo/GameNWatch
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -983,6 +1028,7 @@ systems:
     local_base_path: Nintendo/N64
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -998,6 +1044,7 @@ systems:
     local_base_path: Nintendo/PokemonMini
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1011,6 +1058,7 @@ systems:
     local_base_path: Nintendo/SGB
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1027,6 +1075,7 @@ systems:
     local_base_path: Philips/CD-i
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1043,6 +1092,7 @@ systems:
     local_base_path: SNK/NeoGeo-CD
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1058,6 +1108,7 @@ systems:
     local_base_path: SNK/NeoGeoPocket
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1073,6 +1124,7 @@ systems:
     local_base_path: Sega/MegaCD
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1088,6 +1140,7 @@ systems:
     local_base_path: Sega/S32x
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1101,6 +1154,7 @@ systems:
     local_base_path: Sega/Saturn
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1117,6 +1171,7 @@ systems:
     local_base_path: Sony/PSX
     maps:
       - CDs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1133,6 +1188,7 @@ systems:
     local_base_path: VTech/CreatiVision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:
@@ -1148,6 +1204,7 @@ systems:
     local_base_path: Watara/SuperVision
     maps:
       - ROMs:
+          category: roms
           query:
             source_dir: Software
             extensions:

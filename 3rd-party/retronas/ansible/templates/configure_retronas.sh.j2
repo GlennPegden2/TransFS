@@ -21,7 +21,7 @@ WEB_STRICT_STANDARD_PORT="${TRANSFS_WEB_STRICT_STANDARD_PORT:-false}"
 
 ENABLE_PORT_AUTO_CLAIM="${TRANSFS_ENABLE_PORT_AUTO_CLAIM:-true}"
 RUNTIME_PROFILE="${TRANSFS_RUNTIME_PROFILE:-retronas-baremetal}"
-FILESTORE_PATH="${TRANSFS_FILESTORE_PATH:-/data/retronas}"
+FILESTORE_PATH="${TRANSFS_FILESTORE_PATH:-/mnt/filestorefs}"
 
 if [ ! -f "${CONFIG_PATH}" ]; then
     echo "Config not found: ${CONFIG_PATH}" >&2
@@ -45,7 +45,7 @@ web_strict = sys.argv[9].strip().lower() == 'true'
 
 auto_claim = sys.argv[10].strip().lower() == 'true'
 runtime_profile = sys.argv[11]
-filestore_path = sys.argv[12] if len(sys.argv) > 12 else '/data/retronas'
+filestore_path = sys.argv[12] if len(sys.argv) > 12 else '/mnt/filestorefs'
 
 with open(cfg_path, 'r', encoding='utf-8') as fh:
     cfg = yaml.safe_load(fh) or {}

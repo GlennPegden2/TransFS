@@ -31,12 +31,12 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import read_config
-from pathutils import (
+from vfs.pathutils import (
     get_client, get_system_info, find_map_entry, get_map_config, 
     is_query_map, is_flatten_map, get_query_config, resolve_virtual_base_path, 
-    format_virtual_base_path
+    format_virtual_base_path, derive_query_map_relative_dir
 )
-from zippath import SUPPORTED_ARCHIVE_EXTENSIONS, getinfo as archive_getinfo
+from archive.zippath import SUPPORTED_ARCHIVE_EXTENSIONS, getinfo as archive_getinfo
 from transforms import build_transform_pipeline
 from metadata import enrich_file_metadata, PackContext
 from db.connection import get_connection, return_connection
@@ -411,12 +411,15 @@ class DatabaseSync:
             elif is_query_map(map_config):
                 query_cfg = get_query_config(map_config)
                 if query_cfg:
+                    source_dir = query_cfg.get("source_dir")
+                    if source_dir:
+                        source_dir = self._resolve_source_dir_for_layout(source_dir, system_config)
                     query_map_configs.append({
                         'name': map_name,
                         'config': map_config,
                         'query': query_cfg,
                         'extensions': [e.upper() for e in query_cfg.get("extensions", [])],
-                        'source_dir': query_cfg.get("source_dir", "Software"),
+                        'source_dir': source_dir,
                         'extension_map': query_cfg.get("extension_map", {}),
                         'transforms': map_config.get("transforms", {}),
                         'preserve_structure': query_cfg.get("preserve_structure", False),
@@ -778,15 +781,19 @@ class DatabaseSync:
                         if not extension_matches and not archive_container:
                             continue
 
-                        # Check if file is under the map's source_dir
-                        source_dir = map_info['source_dir']
-                        # Normalize paths for comparison (handle both forward and back slashes)
+                        # When configured, source_dir narrows assignment. If omitted, map is
+                        # layout-agnostic and applies across the system base.
+                        source_dir = map_info.get('source_dir')
                         rel_path_normalized = relative_path.replace('\\', '/')
-                        source_dir_normalized = source_dir.replace('\\', '/').rstrip('/')
-
-                        # File must be under the source_dir to belong to this map
-                        if not rel_path_normalized.startswith(source_dir_normalized + '/'):
-                            continue  # File not in this map's directory, try next map
+                        source_dir_normalized = ""
+                        if source_dir:
+                            source_dir_normalized = source_dir.replace('\\', '/').rstrip('/')
+                            # File must be under configured source_dir to belong to this map.
+                            if source_dir_normalized and not (
+                                rel_path_normalized == source_dir_normalized
+                                or rel_path_normalized.startswith(source_dir_normalized + '/')
+                            ):
+                                continue
 
                         if archive_container:
                             if map_info.get('zip_mode', 'none') == 'flatten':
@@ -1165,14 +1172,8 @@ class DatabaseSync:
             # Preserve source subdirectory structure when requested
             # Example: source_dir=Software/BIOS/retrobat-bios-main, file=.../mame/ini/mame.ini
             # becomes relative_dir=mame/ini
-            if preserve_structure and relative_path and map_source_dir:
-                rel_norm = relative_path.replace('\\', '/').strip('/')
-                src_norm = map_source_dir.replace('\\', '/').rstrip('/')
-                if rel_norm.startswith(src_norm + '/'):
-                    within_source = rel_norm[len(src_norm) + 1:]
-                    relative_dir = os.path.dirname(within_source).replace('\\', '/').strip('.')
-                    if relative_dir == '/':
-                        relative_dir = ""
+            if preserve_structure and relative_path:
+                relative_dir = derive_query_map_relative_dir(relative_path, map_source_dir)
             
             # Determine virtual extension (may be mapped)
             virtual_ext = extension_map.get(extension, extension)

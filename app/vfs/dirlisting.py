@@ -3,10 +3,10 @@ import time
 import pickle
 import threading
 from pathlib import Path
-from filetypes import get_filetype_maps
-from retronas_support import list_retronas_support_directory
-from pathutils import find_software_archive_entry
-from zippath import is_supported_archive_name, listdir as zippath_listdir, exists as zippath_exists, isfile as zippath_isfile
+from .filetypes import get_filetype_maps
+from retronas import list_retronas_support_directory
+from .pathutils import find_software_archive_entry
+from archive.zippath import is_supported_archive_name, listdir as zippath_listdir, exists as zippath_exists, isfile as zippath_isfile
 import logging
 
 logger = logging.getLogger("transfs")
@@ -120,7 +120,7 @@ def _get_subdirectories_from_db(mount_path: str, virtual_prefix: str) -> list:
         # FILESYSTEM FALLBACK: Check for files/dirs on disk not yet in database
         # This handles files created via FUSE writes that haven't been synced
         try:
-            from pathutils import get_client
+            from .pathutils import get_client
             from config import read_config
             
             config = read_config()
@@ -471,7 +471,7 @@ def get_cache_info() -> dict:
 
     # Get ZIP index cache stats from zippath module
     try:
-        from zippath import get_zip_cache_stats
+        from archive.zippath import get_zip_cache_stats
         zip_stats = get_zip_cache_stats()
     except Exception:
         zip_stats = {"entries": 0, "error": "Failed to load ZIP cache stats"}
@@ -512,7 +512,7 @@ def parse_trans_path(config,root,full_path: str) -> list:
     Supports dynamic expansion of ...SoftwareArchives... maps, including subfolders and zip logic.
     Handles variable-depth hierarchies with category paths.
     """
-    from pathutils import get_system_info
+    from .pathutils import get_system_info
     
     # Check if hidden files should be shown (default True for standard filesystem behavior)
     show_hidden = config.get('show_hidden_files', True)
@@ -694,7 +694,7 @@ def list_systems(config, path: Path, root_parts: tuple) -> list:
 
 def list_maps(config, path: Path, root_parts: tuple) -> list:
     """List all maps and dynamic SoftwareArchives for a system."""
-    from pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name, get_system_info
+    from .pathutils import resolve_system_name, is_flatten_map, is_parent_level_map, normalize_map_name, get_system_info
     
     show_hidden = config.get('show_hidden_files', True)
     client_name = path.parts[len(root_parts)]
@@ -890,7 +890,7 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     # Examples:
     # - /RetroBat/AcornAtom/FDs
     # - /RetroBat/ROMS/3DO/CDs
-    from pathutils import resolve_system_name, get_system_info
+    from .pathutils import resolve_system_name, get_system_info
     system = get_system_info(client, list(rel_parts))
     if not system:
         return []
@@ -916,7 +916,7 @@ def list_dynamic_or_regular(config, path: Path, root_parts: tuple) -> list:
     if nested:
         return nested
     
-    from pathutils import find_map_entry, get_map_config, is_query_map
+    from .pathutils import find_map_entry, get_map_config, is_query_map
     map_entry = find_map_entry(system, map_name)
     map_config = get_map_config(map_entry)
 
@@ -963,10 +963,8 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     extensions = query_cfg.get("extensions", [])
     extension_map = query_cfg.get("extension_map", {}) or {}
     extension_map = {str(k).upper(): str(v).upper() for k, v in extension_map.items()}
-    source_dir = _adjust_source_dir_for_layout(
-        query_cfg.get("source_dir", "Software"),
-        system,
-    )
+    source_dir_raw = query_cfg.get("source_dir")
+    source_dir = _adjust_source_dir_for_layout(source_dir_raw, system) if source_dir_raw else None
     transform_zip = query_cfg.get("transform_zip", True)
     zip_mode = query_cfg.get("zip_mode", "hierarchical")
     preserve_structure = query_cfg.get("preserve_structure", False)  # New: preserve source directory structure
@@ -974,13 +972,14 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
     cache_key = str(path)
     cache_enabled = False  # Directory listing cache is disabled
 
-    # For cache key mtime, use source directory if it exists
+    # For cache key mtime, prefer source directory when configured; otherwise use system root.
     check_dir = os.path.join(
         config.get('filestore', '/data/retronas'),
         "Native",
-        system["local_base_path"],
-        source_dir,
+        system.get("local_base_path", ""),
     )
+    if source_dir:
+        check_dir = os.path.join(check_dir, source_dir)
 
     try:
         current_mtime = os.path.getmtime(check_dir) if os.path.isdir(check_dir) else 0
@@ -1010,7 +1009,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
 
     try:
         from db.queries import query_files_by_system_and_query
-        from pathutils import get_system_identifier
+        from .pathutils import get_system_identifier
 
         system_id = get_system_identifier(system)
         system_name = system.get("name") if isinstance(system, dict) else None
@@ -1041,82 +1040,55 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
             logger.warning(f"Query map requested but no system identifier found for {system.get('name')}")
             return []
 
-        # If navigating within a subpath, fall back to filesystem/zip handling
+        # If navigating within a subpath, use filesystem/zip handling only when
+        # source_dir is explicitly configured and preserve_structure is disabled.
         if subpath:
-            # If preserve_structure is enabled, filter database results instead of filesystem
-            if preserve_structure:
-                subpath_prefix = '/'.join(subpath)
-                logger.info(f"Preserve_structure subpath navigation: {subpath_prefix}")
-                
-                filtered_entries: set[str] = set()
-                for entry in entries:
-                    # Check if this entry is under the requested subpath
-                    if entry.startswith(subpath_prefix + '/'):
-                        # Extract the relative path after the subpath
-                        remainder = entry[len(subpath_prefix) + 1:]
-                        filtered_entries.add(remainder)
-                    elif entry.startswith(subpath_prefix) and '/' in entry[len(subpath_prefix):]:
-                        # Handle partial matches (e.g., subpath_prefix is part of a deeper path)
-                        remainder = entry[len(subpath_prefix):].lstrip('/')
-                        filtered_entries.add(remainder)
-                
-                if not filtered_entries:
+            if source_dir and not preserve_structure:
+                base_dir = os.path.join(
+                    config.get('filestore', '/data/retronas'),
+                    "Native",
+                    system.get("local_base_path", ""),
+                    source_dir,
+                )
+                # Check for archive navigation
+                zip_idx = next((i for i, part in enumerate(subpath) if is_supported_archive_name(part)), None)
+                if zip_idx is not None and transform_zip and zip_mode != "file":
+                    zip_name = subpath[zip_idx]
+                    inner_parts = subpath[zip_idx + 1:]
+                    zip_path = os.path.join(base_dir, zip_name)
+                    if not os.path.isfile(zip_path):
+                        zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                    if not os.path.isfile(zip_path):
+                        zip_path = _find_file_recursive_indexed(base_dir, zip_name)
+                    if zip_path and os.path.isfile(zip_path):
+                        target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
+                        try:
+                            internal = zippath_listdir(target)
+                            return sorted(set(internal))
+                        except Exception:
+                            return []
+                # Regular directory listing
+                dir_path = os.path.join(base_dir, *subpath)
+                if not os.path.isdir(dir_path):
                     return []
-                
-                # Rebuild virtual tree for this subpath
-                virtual_tree: set[str] = set()
-                for entry in filtered_entries:
-                    parts = entry.split('/')
-                    if len(parts) > 1:
-                        for i in range(len(parts)):
-                            virtual_tree.add('/'.join(parts[:i+1]))
+                sub_entries = set()
+                for entry in os.listdir(dir_path):
+                    if not show_hidden and entry.startswith('.'):
+                        continue
+                    name, ext = os.path.splitext(entry)
+                    ext = ext[1:].upper() if ext else ""
+                    if ext and ext in extension_map:
+                        virt_ext = extension_map[ext]
+                        sub_entries.add(f"{name}.{virt_ext.lower()}")
                     else:
-                        virtual_tree.add(entry)
-                
-                return sorted(virtual_tree)
-            
-            base_dir = os.path.join(
-                config.get('filestore', '/data/retronas'),
-                "Native",
-                system["local_base_path"],
-                source_dir,
-            )
-            # Check for archive navigation
-            zip_idx = next((i for i, part in enumerate(subpath) if is_supported_archive_name(part)), None)
-            if zip_idx is not None and transform_zip and zip_mode != "file":
-                zip_name = subpath[zip_idx]
-                inner_parts = subpath[zip_idx + 1:]
-                zip_path = os.path.join(base_dir, zip_name)
-                if not os.path.isfile(zip_path):
-                    zip_path = os.path.join(base_dir, "ZIP", zip_name)
-                if not os.path.isfile(zip_path):
-                    zip_path = _find_file_recursive_indexed(base_dir, zip_name)
-                if zip_path and os.path.isfile(zip_path):
-                    target = zip_path if not inner_parts else f"{zip_path}/" + "/".join(inner_parts)
-                    try:
-                        internal = zippath_listdir(target)
-                        return sorted(set(internal))
-                    except Exception:
-                        return []
-            # Regular directory listing
-            dir_path = os.path.join(base_dir, *subpath)
-            if not os.path.isdir(dir_path):
-                return []
-            entries = set()
-            for entry in os.listdir(dir_path):
-                if not show_hidden and entry.startswith('.'):
-                    continue
-                name, ext = os.path.splitext(entry)
-                ext = ext[1:].upper() if ext else ""
-                if ext and ext in extension_map:
-                    virt_ext = extension_map[ext]
-                    entries.add(f"{name}.{virt_ext.lower()}")
-                else:
-                    entries.add(entry)
-            return sorted(entries)
+                        sub_entries.add(entry)
+                return sorted(sub_entries)
 
         query_db = dict(query_cfg)
-        query_db["source_dir"] = source_dir
+        if source_dir:
+            query_db["source_dir"] = source_dir
+        else:
+            query_db.pop("source_dir", None)
 
         # Collect from all system candidates and deduplicate by filename.
         # Do NOT break on first non-empty match: the same system may have been
@@ -1144,7 +1116,7 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                         db_entries_by_filename[fname] = entry
         db_entries = list(db_entries_by_filename.values())
 
-        if not db_entries:
+        if not db_entries and source_dir:
             # FILESYSTEM FALLBACK: Check for files on disk not yet in database
             # This handles files created via FUSE writes that haven't been synced
             filestore = config.get('filestore', '/data/retronas')
@@ -1222,11 +1194,11 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         # FILESYSTEM MERGE: Even if database has results, check for additional files on disk
         # This handles files created via FUSE writes that haven't been synced yet
         filestore = config.get('filestore', '/data/retronas')
-        full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir)
+        full_source_dir = os.path.join(filestore, 'Native', system.get('local_base_path', ''), source_dir) if source_dir else None
         current_subpath = '/'.join(subpath) if subpath else ''
-        scan_dir = os.path.join(full_source_dir, current_subpath) if current_subpath else full_source_dir
-        
-        if os.path.exists(scan_dir) and os.path.isdir(scan_dir):
+        scan_dir = os.path.join(full_source_dir, current_subpath) if full_source_dir and current_subpath else full_source_dir
+
+        if scan_dir and os.path.exists(scan_dir) and os.path.isdir(scan_dir):
             # Get existing database filenames
             db_filenames = {entry.get('filename', '') if isinstance(entry, dict) else str(entry) for entry in db_entries}
             allowed_exts = {str(ext).upper() for ext in extensions if ext and str(ext) != '*'}
@@ -1296,6 +1268,57 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         entries: set[str] = set()
         zip_entries: list[str] = []
         logger.debug(f"Processing {len(db_entries)} database entries with preserve_structure={preserve_structure}")
+
+        if subpath:
+            subpath_prefix = '/'.join(subpath).strip('/')
+            subpath_entries: set[str] = set()
+            for entry in db_entries:
+                filename = entry.get("filename") if isinstance(entry, dict) else None
+                db_ext = entry.get("extension") if isinstance(entry, dict) else None
+                source_path = entry.get("source_path") if isinstance(entry, dict) else None
+                if not filename:
+                    filename = entry[0] if isinstance(entry, (tuple, list)) else str(entry)
+
+                if db_ext:
+                    ext = db_ext.upper() if db_ext else ""
+                    if not filename.lower().endswith(f".{db_ext.lower()}"):
+                        full_filename = f"{filename}.{db_ext.lower()}"
+                    else:
+                        full_filename = filename
+                else:
+                    name, ext = os.path.splitext(filename)
+                    ext = ext[1:].upper() if ext else ""
+                    full_filename = filename
+
+                if ext and ext in extension_map:
+                    virt_ext = extension_map[ext]
+                    name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                    final_entry = f"{name}.{virt_ext.lower()}"
+                else:
+                    final_entry = full_filename if db_ext else filename
+
+                if preserve_structure and source_path:
+                    relative_path = _extract_relative_path(source_path, source_dir, system.get("local_base_path"))
+                    combined_path = f"{relative_path}/{final_entry}" if relative_path else final_entry
+                else:
+                    combined_path = final_entry
+
+                normalized = combined_path.strip('/')
+                if not normalized:
+                    continue
+                if normalized == subpath_prefix:
+                    continue
+                if not normalized.startswith(subpath_prefix + '/'):
+                    continue
+                remainder = normalized[len(subpath_prefix) + 1:]
+                if not remainder:
+                    continue
+                child = remainder.split('/')[0]
+                if child:
+                    subpath_entries.add(child)
+
+            return sorted(subpath_entries)
+
         for entry in db_entries:
             filename = entry.get("filename") if isinstance(entry, dict) else None
             db_ext = entry.get("extension") if isinstance(entry, dict) else None
@@ -1349,21 +1372,33 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
                 entries.add(final_entry)
 
         if zip_mode == "flatten" and transform_zip and zip_entries:
-            base_dir = os.path.join(
-                config.get('filestore', '/data/retronas'),
-                "Native",
-                system["local_base_path"],
-                source_dir,
-            )
-            for zip_name in zip_entries:
-                zip_path = os.path.join(base_dir, zip_name)
-                if not os.path.isfile(zip_path):
-                    zip_path = os.path.join(base_dir, "ZIP", zip_name)
-                if not os.path.isfile(zip_path):
-                    zip_path = _find_file_recursive_indexed(base_dir, zip_name)
-                if zip_path and os.path.isfile(zip_path):
+            if source_dir:
+                base_dir = os.path.join(
+                    config.get('filestore', '/data/retronas'),
+                    "Native",
+                    system.get("local_base_path", ""),
+                    source_dir,
+                )
+                for zip_name in zip_entries:
+                    zip_path = os.path.join(base_dir, zip_name)
+                    if not os.path.isfile(zip_path):
+                        zip_path = os.path.join(base_dir, "ZIP", zip_name)
+                    if not os.path.isfile(zip_path):
+                        zip_path = _find_file_recursive_indexed(base_dir, zip_name)
+                    if zip_path and os.path.isfile(zip_path):
+                        try:
+                            internal = zippath_listdir(zip_path)
+                            for child in internal:
+                                entries.add(child)
+                        except Exception:
+                            continue
+            else:
+                for entry in db_entries:
+                    source_path = entry.get("source_path") if isinstance(entry, dict) else None
+                    if not source_path:
+                        continue
                     try:
-                        internal = zippath_listdir(zip_path)
+                        internal = zippath_listdir(source_path)
                         for child in internal:
                             entries.add(child)
                     except Exception:
@@ -1402,15 +1437,18 @@ def list_query_map(config, path: Path, root_parts: tuple, system: dict, map_name
         logger.error(f"Query map failed: {e}", exc_info=True)
         return []
 
-def _extract_relative_path(source_path: str, source_dir: str, local_base_path: str) -> str:
+def _extract_relative_path(source_path: str, source_dir: str | None, local_base_path: str) -> str:
     """
     Extract the relative directory path from a full source path.
     
     For example:
       source_path: "/mnt/filestorefs/Native/Acorn/Atom/Software/Sources/hoglet67/AA/GALAXIAN"
-      source_dir: "Software"
+            source_dir: "Software" (optional)
       local_base_path: "Acorn/Atom"
     Returns: "Sources/hoglet67/AA"
+
+        When source_dir is not configured, fallback extraction is based on the
+        /Native/{local_base_path}/ anchor and returns the remaining directory path.
     """
     if not source_path:
         return ""
@@ -1418,21 +1456,30 @@ def _extract_relative_path(source_path: str, source_dir: str, local_base_path: s
     try:
         # Normalize paths
         source_path = source_path.replace("\\", "/")
-        source_dir = source_dir.strip("/").lower()
+        source_dir = (source_dir or "").strip("/").lower()
         local_base_path = (local_base_path or "").strip("/").lower()
-        
-        # Find the source_dir in the path
-        source_dir_idx = source_path.lower().find(f"/{source_dir}/")
-        if source_dir_idx == -1:
-            source_dir_idx = source_path.lower().find(f"/{source_dir.lower()}/")
-        
-        if source_dir_idx == -1:
-            logger.debug(f"Source dir '{source_dir}' not found in path '{source_path}'")
+
+        remainder = ""
+        if source_dir:
+            # Find the source_dir in the path
+            source_dir_idx = source_path.lower().find(f"/{source_dir}/")
+            if source_dir_idx == -1:
+                source_dir_idx = source_path.lower().find(f"/{source_dir.lower()}/")
+
+            if source_dir_idx != -1:
+                # Extract everything after source_dir/
+                start_idx = source_dir_idx + len(source_dir) + 2  # +2 for the slashes
+                remainder = source_path[start_idx:]
+
+        if not remainder and local_base_path:
+            native_anchor = f"/native/{local_base_path}/"
+            anchor_idx = source_path.lower().find(native_anchor)
+            if anchor_idx != -1:
+                remainder = source_path[anchor_idx + len(native_anchor):]
+
+        if not remainder:
+            logger.debug(f"Unable to extract relative path for source_path '{source_path}'")
             return ""
-        
-        # Extract everything after source_dir/
-        start_idx = source_dir_idx + len(source_dir) + 2  # +2 for the slashes
-        remainder = source_path[start_idx:]
         
         # Get the directory part (everything except the filename)
         dir_part = remainder.rsplit("/", 1)[0] if "/" in remainder else ""
@@ -1541,7 +1588,7 @@ def list_dynamic_map(
         """Query database for files instead of scanning folders."""
         try:
             from db.queries import query_files_by_system_and_extensions
-            from pathutils import get_system_identifier
+            from .pathutils import get_system_identifier
             
             # Get system identifier for database lookup
             system_info = get_system_identifier(system)

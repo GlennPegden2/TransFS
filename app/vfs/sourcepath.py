@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, Union
 import zipfile
-from pathutils import (
+from .pathutils import (
     get_client,
     get_system_info,
     find_software_archive_entry,
@@ -17,11 +17,11 @@ from pathutils import (
     resolve_virtual_base_path,
     format_virtual_base_path,
 )
-from filetypes import get_filetype_maps, get_filetype_transforms
-from ziptutils import get_zip_mapping
-from zippath import is_supported_archive_name, exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
+from .filetypes import get_filetype_maps, get_filetype_transforms
+from archive.utils import get_zip_mapping
+from archive.zippath import is_supported_archive_name, exists as zippath_exists, isfile as zippath_isfile, listdir as zippath_listdir
 from transforms import build_transform_pipeline, TransformPipeline
-from retronas_support import resolve_retronas_support_source_path, retronas_support_not_applicable
+from retronas import resolve_retronas_support_source_path, retronas_support_not_applicable
 
 logger = logging.getLogger(__name__)
 
@@ -589,7 +589,7 @@ def get_source_path(logger, config, root, translated_path: str) -> Optional[Any]
 
     # Handle parent-level maps (../) - shared resources accessible from systems
     if len(rel_parts) >= 3:
-        from pathutils import is_parent_level_map, normalize_map_name
+        from .pathutils import is_parent_level_map, normalize_map_name
         map_path_parts = rel_parts[2:]
         # Try progressively longer paths to find a matching parent-level map
         for i in range(len(map_path_parts), 0, -1):
@@ -792,7 +792,7 @@ def get_dynamic_source_path(logger, config, system_info: dict, rel_parts: tuple)
                 if os.path.exists(candidate):
                     logger.info(f"REVERSE MAPPING: found {candidate} for requested {last}")
                     # Build transform pipeline for this file
-                    from pathutils import get_client, get_system_info
+                    from .pathutils import get_client, get_system_info
                     cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
                     pipeline = get_transform_pipeline_for_file(
                         logger,

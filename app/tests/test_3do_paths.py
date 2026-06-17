@@ -6,7 +6,7 @@ sys.path.insert(0, '/app')
 
 import yaml
 config = yaml.safe_load(open('/app/transfs.yaml'))
-from dirlisting import parse_trans_path
+from vfs.dirlisting import parse_trans_path
 
 root = '/mnt/transfs'
 

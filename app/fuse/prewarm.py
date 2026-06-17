@@ -66,7 +66,7 @@ def prewarm_hotpaths(
             logger.info(f"Startup prewarm: loading {full_path}")
             
             # Pre-warm config parse cache (parse_trans_path results)
-            from dirlisting import parse_trans_path
+            from vfs.dirlisting import parse_trans_path
             t_parse_start = time.time()
             config_entries = list(parse_trans_path(config, root_path, full_path))
             t_parse = time.time() - t_parse_start
@@ -126,7 +126,7 @@ def prewarm_subdirectory_cache(config: dict, mount_path: str = "/mnt/transfs") -
     t_start = time.time()
     logger.info(f"Subdirectory cache prewarm: warming {len(subdir_paths)} paths...")
     
-    from dirlisting import _get_subdirectories_from_db
+    from vfs.dirlisting import _get_subdirectories_from_db
     
     for virtual_rel_path in subdir_paths:
         try:
@@ -168,7 +168,7 @@ def prewarm_recursive_indexes(config: dict, filestore_root: str = None) -> None:
     t_start = time.time()
     logger.info(f"Recursive index prewarm: warming {len(index_paths)} directory indexes...")
     
-    from sourcepath import _find_file_recursive_indexed
+    from vfs.sourcepath import _find_file_recursive_indexed
     
     for relative_path in index_paths:
         try:

@@ -127,20 +127,20 @@ class DataProviderFactory:
         
         if not enabled or mode == 'disabled':
             logger.info("Using cache-based provider (database disabled)")
-            from data_provider_cache import CacheDataProvider
+            from .cache import CacheDataProvider
             return CacheDataProvider(existing_provider)
         
         elif mode == 'enabled':
             logger.info("Using database-based provider")
-            from data_provider_db import DatabaseDataProvider
+            from .db import DatabaseDataProvider
             return DatabaseDataProvider(config)
         
         elif mode == 'hybrid':
             logger.info("Using hybrid provider (database with cache fallback)")
-            from data_provider_hybrid import HybridDataProvider
+            from .hybrid import HybridDataProvider
             return HybridDataProvider(existing_provider, config)
         
         else:
             logger.warning(f"Unknown database mode: {mode}, using cache")
-            from data_provider_cache import CacheDataProvider
+            from .cache import CacheDataProvider
             return CacheDataProvider(existing_provider)

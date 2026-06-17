@@ -21,6 +21,7 @@ trap cleanup TERM INT
 
 mkdir -p /mnt/filestorefs
 mkdir -p /mnt/filestorefs/.transfs_logs
+mkdir -p /mnt/filestore
 
 SMB_MODE=$(python3 -c "import yaml; cfg=yaml.safe_load(open('/app/config/app.yaml')) or {}; print((cfg.get('smb', {}) or {}).get('mode', 'transfs_managed'))" 2>/dev/null || echo "transfs_managed")
 if [ "$SMB_MODE" != "transfs_managed" ]; then

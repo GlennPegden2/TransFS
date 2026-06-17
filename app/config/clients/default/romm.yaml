@@ -1,0 +1,1140 @@
+# RomM Client Configuration
+# Defines system mappings for RomM ROM manager (https://github.com/rommapp/romm)
+#
+# RomM expects "Structure A" folder layout:
+#   roms/{platform_slug}/   <- game files
+#   bios/{platform_slug}/   <- BIOS files (optional)
+#
+# Platform slugs are case-sensitive RomM identifiers (e.g. "psx", "n64", "gba").
+# See: https://docs.romm.app/latest/Platforms-and-Players/Supported-Platforms/
+#
+# Usage:
+#   Mount the TransFS virtual path "RomM/" as the RomM library root.
+#   RomM will auto-detect platforms by folder name under roms/.
+
+name: RomM
+download_layout: folder_based
+default_target_path: "{name}/{system_name}/{maps}"
+
+# Category-based path templates
+# roms/{slug}/  = game files   (mount RomM/ as library root)
+# bios/{slug}/  = BIOS files   (optional, for platforms that need them)
+category_paths:
+  roms: "{name}/roms/{system_name}"
+  bios: "{name}/bios/{system_name}"
+
+systems:
+
+  # ---------------------------------------------------------------------------
+  # 3DO Company
+  # ---------------------------------------------------------------------------
+  - name: 3do
+    display_name: "3DO Interactive Multiplayer"
+    manufacturer: 3DO
+    system_mapping_name: 3DO
+    local_base_path: Systems/3DO/3DO
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software/Collections
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+              - ISO
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Acorn
+  # ---------------------------------------------------------------------------
+  - name: atom
+    display_name: "Acorn Atom"
+    manufacturer: Acorn
+    system_mapping_name: Atom
+    local_base_path: Acorn/Atom
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - VHD
+              - ATM
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: acorn-archimedes
+    display_name: "Acorn Archimedes"
+    manufacturer: Acorn
+    system_mapping_name: Archimedes
+    local_base_path: Acorn/Archimedes
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ADF
+              - HDF
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: acorn-electron
+    display_name: "Acorn Electron"
+    manufacturer: Acorn
+    system_mapping_name: Electron
+    local_base_path: Acorn/Electron
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ADF
+              - DFS
+              - HFE
+              - SSD
+              - UEF
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: false
+
+  - name: bbcmicro
+    display_name: "BBC Microcomputer System"
+    manufacturer: Acorn
+    system_mapping_name: BBC Micro
+    local_base_path: Acorn/BBC_B
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - SSD
+              - DSD
+              - MMB
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Acetronic
+  # ---------------------------------------------------------------------------
+  - name: vc-4000
+    display_name: "VC 4000 / Acetronic MPU-1000"
+    manufacturer: Acetronic
+    system_mapping_name: VC4000
+    local_base_path: Acetronic/VC4000
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Amstrad
+  # ---------------------------------------------------------------------------
+  - name: acpc
+    display_name: "Amstrad CPC"
+    manufacturer: Amstrad
+    system_mapping_name: CPC
+    local_base_path: Amstrad/CPC
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - DSK
+              - CDT
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: false
+
+  - name: amstrad-pcw
+    display_name: "Amstrad PCW"
+    manufacturer: Amstrad
+    system_mapping_name: PCW
+    local_base_path: Amstrad/PCW
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - DSK
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Apple
+  # ---------------------------------------------------------------------------
+  - name: apple
+    display_name: "Apple I"
+    manufacturer: Apple
+    system_mapping_name: AppleI
+    local_base_path: Apple/AppleI
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CAS
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: appleii
+    display_name: "Apple II"
+    manufacturer: Apple
+    system_mapping_name: AppleII
+    local_base_path: Apple/AppleII
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - DSK
+              - DO
+              - PO
+              - HDV
+              - 2MG
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Atari
+  # ---------------------------------------------------------------------------
+  - name: atari2600
+    display_name: "Atari 2600"
+    manufacturer: Atari
+    system_mapping_name: Atari2600
+    local_base_path: Atari/2600
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - A26
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: atari5200
+    display_name: "Atari 5200"
+    manufacturer: Atari
+    system_mapping_name: Atari5200
+    local_base_path: Atari/5200
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - A52
+              - BIN
+              - ROM
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: atari7800
+    display_name: "Atari 7800"
+    manufacturer: Atari
+    system_mapping_name: Atari7800
+    local_base_path: Atari/7800
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - A78
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: atari8bit
+    display_name: "Atari 8-bit"
+    manufacturer: Atari
+    system_mapping_name: Atari800
+    local_base_path: Atari/800
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ROM
+              - ATR
+              - XFD
+              - CAS
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: lynx
+    display_name: "Atari Lynx"
+    manufacturer: Atari
+    system_mapping_name: Lynx
+    local_base_path: Atari/Lynx
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - LNX
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Bally
+  # ---------------------------------------------------------------------------
+  - name: astrocade
+    display_name: "Bally Astrocade"
+    manufacturer: Bally
+    system_mapping_name: Astrocade
+    local_base_path: Bally/Astrocade
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Bandai
+  # ---------------------------------------------------------------------------
+  - name: super-vision-8000
+    display_name: "Bandai Super Vision 8000"
+    manufacturer: Bandai
+    system_mapping_name: SuperVision8000
+    local_base_path: Bandai/SuperVision8000
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: wonderswan
+    display_name: "WonderSwan"
+    manufacturer: Bandai
+    system_mapping_name: WonderSwan
+    local_base_path: Bandai/WonderSwan
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - WS
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: wonderswan-color
+    display_name: "WonderSwan Color"
+    manufacturer: Bandai
+    system_mapping_name: WonderSwanColor
+    local_base_path: Bandai/WonderSwanColor
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - WSC
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Benesse
+  # ---------------------------------------------------------------------------
+  - name: pocket-challenge-v2
+    display_name: "Benesse Pocket Challenge V2"
+    manufacturer: Benesse
+    system_mapping_name: PocketChallengeV2
+    local_base_path: Benesse/PocketChallengeV2
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - PC2
+              - WS
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Bit Corporation
+  # ---------------------------------------------------------------------------
+  - name: gamate
+    display_name: "Gamate"
+    manufacturer: Bit
+    system_mapping_name: Gamate
+    local_base_path: Bit/Gamate
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Casio
+  # ---------------------------------------------------------------------------
+  - name: casio-pv-1000
+    display_name: "Casio PV-1000"
+    manufacturer: Casio
+    system_mapping_name: Casio_PV-1000
+    local_base_path: Casio/Casio_PV-1000
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Coleco
+  # ---------------------------------------------------------------------------
+  - name: colecovision
+    display_name: "ColecoVision"
+    manufacturer: Coleco
+    system_mapping_name: ColecoVision
+    local_base_path: Coleco/ColecoVision
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - COL
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Commodore
+  # ---------------------------------------------------------------------------
+  - name: amiga
+    display_name: "Amiga"
+    manufacturer: Commodore
+    system_mapping_name: Amiga
+    local_base_path: Commodore/Amiga
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: FDs
+            extensions:
+              - ADF
+              - LHA
+              - WHD
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: c128
+    display_name: "Commodore 128"
+    manufacturer: Commodore
+    system_mapping_name: C128
+    local_base_path: Commodore/C128
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - D64
+              - D71
+              - D81
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: c64
+    display_name: "Commodore 64"
+    manufacturer: Commodore
+    system_mapping_name: C64
+    local_base_path: Commodore/C64
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - D64
+              - G64
+              - TAP
+              - PRG
+              - T64
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: cpet
+    display_name: "Commodore PET"
+    manufacturer: Commodore
+    system_mapping_name: PET
+    local_base_path: Commodore/PET
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - D64
+              - TAP
+              - PRG
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: c-plus-4
+    display_name: "Commodore Plus/4"
+    manufacturer: Commodore
+    system_mapping_name: Plus4
+    local_base_path: Commodore/Plus4
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - D64
+              - TAP
+              - PRG
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Emerson
+  # ---------------------------------------------------------------------------
+  - name: arcadia-2001
+    display_name: "Arcadia 2001"
+    manufacturer: Emerson
+    system_mapping_name: Arcadia 2001
+    local_base_path: Emerson/Arcadia 2001
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Entex
+  # ---------------------------------------------------------------------------
+  - name: adventure-vision
+    display_name: "Adventure Vision"
+    manufacturer: Entex
+    system_mapping_name: AVision
+    local_base_path: Entex/AVision
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Epoch
+  # ---------------------------------------------------------------------------
+  - name: epoch-super-cassette-vision
+    display_name: "Epoch Super Cassette Vision"
+    manufacturer: Epoch
+    system_mapping_name: SCV
+    local_base_path: Epoch/SCV
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Fairchild
+  # ---------------------------------------------------------------------------
+  - name: fairchild-channel-f
+    display_name: "Fairchild Channel F"
+    manufacturer: Fairchild
+    system_mapping_name: ChannelF
+    local_base_path: Fairchild/ChannelF
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # GCE
+  # ---------------------------------------------------------------------------
+  - name: vectrex
+    display_name: "Vectrex"
+    manufacturer: GCE
+    system_mapping_name: Vectrex
+    local_base_path: GCE/Vectrex
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - VEC
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Magnavox
+  # ---------------------------------------------------------------------------
+  - name: odyssey-2
+    display_name: "Odyssey 2 / Videopac G7000"
+    manufacturer: Magnavox
+    system_mapping_name: Odyssey2
+    local_base_path: Magnavox/Odyssey2
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - CHR
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Mattel
+  # ---------------------------------------------------------------------------
+  - name: intellivision
+    display_name: "Intellivision"
+    manufacturer: Mattel
+    system_mapping_name: Intellivision
+    local_base_path: Mattel/Intellivision
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - INT
+              - ROM
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Microsoft
+  # ---------------------------------------------------------------------------
+  - name: msx
+    display_name: "MSX"
+    manufacturer: Microsoft
+    system_mapping_name: MSX
+    local_base_path: Microsoft/MSX
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ROM
+              - DSK
+              - CAS
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # MITS
+  # ---------------------------------------------------------------------------
+  - name: altair-8800
+    display_name: "Altair 8800"
+    manufacturer: MITS
+    system_mapping_name: Altair8800
+    local_base_path: MITS/Altair8800
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ROM
+              - BIN
+              - HEX
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # NEC
+  # ---------------------------------------------------------------------------
+  - name: tg16
+    display_name: "TurboGrafx-16 / PC Engine"
+    manufacturer: NEC
+    system_mapping_name: TurboGrafx16
+    local_base_path: NEC/TurboGrafx16
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - PCE
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: turbografx-cd
+    display_name: "TurboGrafx-CD / PC Engine CD"
+    manufacturer: NEC
+    system_mapping_name: TGFX16-CD
+    local_base_path: NEC/TGFX16-CD
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Nintendo
+  # ---------------------------------------------------------------------------
+  - name: gb
+    display_name: "Game Boy"
+    manufacturer: Nintendo
+    system_mapping_name: GameBoy
+    local_base_path: Nintendo/GameBoy
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - GB
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: gba
+    display_name: "Game Boy Advance"
+    manufacturer: Nintendo
+    system_mapping_name: GBA
+    local_base_path: Nintendo/GBA
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - GBA
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: gbc
+    display_name: "Game Boy Color"
+    manufacturer: Nintendo
+    system_mapping_name: GBC
+    local_base_path: Nintendo/GBC
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - GBC
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: g-and-w
+    display_name: "Game & Watch"
+    manufacturer: Nintendo
+    system_mapping_name: GameNWatch
+    local_base_path: Nintendo/GameNWatch
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: n64
+    display_name: "Nintendo 64"
+    manufacturer: Nintendo
+    system_mapping_name: N64
+    local_base_path: Nintendo/N64
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - Z64
+              - N64
+              - V64
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: nes
+    display_name: "Nintendo Entertainment System"
+    manufacturer: Nintendo
+    system_mapping_name: NES
+    local_base_path: Nintendo/NES
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - NES
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: pokemon-mini
+    display_name: "Pokémon mini"
+    manufacturer: Nintendo
+    system_mapping_name: PokemonMini
+    local_base_path: Nintendo/PokemonMini
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - MIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  - name: snes
+    display_name: "Super Nintendo Entertainment System"
+    manufacturer: Nintendo
+    system_mapping_name: SNES
+    local_base_path: Nintendo/SNES
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - SFC
+              - SMC
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Philips
+  # ---------------------------------------------------------------------------
+  - name: philips-cd-i
+    display_name: "Philips CD-i"
+    manufacturer: Philips
+    system_mapping_name: CD-i
+    local_base_path: Philips/CD-i
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Sega
+  # ---------------------------------------------------------------------------
+  - name: gamegear
+    display_name: "Sega Game Gear"
+    manufacturer: Sega
+    system_mapping_name: GameGear
+    local_base_path: Sega/GameGear
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - GG
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: genesis
+    display_name: "Sega Mega Drive / Genesis"
+    manufacturer: Sega
+    system_mapping_name: Genesis
+    local_base_path: Sega/Genesis
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - GEN
+              - MD
+              - SMD
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: sms
+    display_name: "Sega Master System"
+    manufacturer: Sega
+    system_mapping_name: MasterSystem
+    local_base_path: Sega/MasterSystem
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - SMS
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: segacd
+    display_name: "Sega CD / Mega CD"
+    manufacturer: Sega
+    system_mapping_name: MegaCD
+    local_base_path: Sega/MegaCD
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: sega32
+    display_name: "Sega 32X"
+    manufacturer: Sega
+    system_mapping_name: S32x
+    local_base_path: Sega/S32x
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - 32X
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: saturn
+    display_name: "Sega Saturn"
+    manufacturer: Sega
+    system_mapping_name: Saturn
+    local_base_path: Sega/Saturn
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Sinclair
+  # ---------------------------------------------------------------------------
+  - name: zxs
+    display_name: "ZX Spectrum"
+    manufacturer: Sinclair
+    system_mapping_name: Spectrum
+    local_base_path: Sinclair/Spectrum
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - TAP
+              - TZX
+              - TRD
+              - SCL
+              - Z80
+            transform_zip: true
+            zip_mode: flatten
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # SNK
+  # ---------------------------------------------------------------------------
+  - name: neogeoaes
+    display_name: "Neo Geo AES"
+    manufacturer: SNK
+    system_mapping_name: NeoGeo
+    local_base_path: SNK/NeoGeo
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - ZIP
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: neo-geo-cd
+    display_name: "Neo Geo CD"
+    manufacturer: SNK
+    system_mapping_name: NeoGeo-CD
+    local_base_path: SNK/NeoGeo-CD
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: neo-geo-pocket
+    display_name: "Neo Geo Pocket"
+    manufacturer: SNK
+    system_mapping_name: NeoGeoPocket
+    local_base_path: SNK/NeoGeoPocket
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - NGP
+            transform_zip: false
+            supports_zaparoo: true
+
+  - name: neo-geo-pocket-color
+    display_name: "Neo Geo Pocket Color"
+    manufacturer: SNK
+    system_mapping_name: NeoGeoPocketColor
+    local_base_path: SNK/NeoGeoPocket
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - NGC
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Sony
+  # ---------------------------------------------------------------------------
+  - name: psx
+    display_name: "PlayStation"
+    manufacturer: Sony
+    system_mapping_name: PSX
+    local_base_path: Sony/PSX
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - CHD
+              - CUE
+              - BIN
+            transform_zip: false
+            supports_zaparoo: true
+
+  # ---------------------------------------------------------------------------
+  # Tandy
+  # ---------------------------------------------------------------------------
+  - name: trs-80-mc-10
+    display_name: "TRS-80 MC-10 / Alice MC-10"
+    manufacturer: Tandy
+    system_mapping_name: MC-10
+    local_base_path: Tandy/MC-10
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - C10
+              - CAS
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # VTech
+  # ---------------------------------------------------------------------------
+  - name: creativision
+    display_name: "CreatiVision"
+    manufacturer: VTech
+    system_mapping_name: CreatiVision
+    local_base_path: VTech/CreatiVision
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - BIN
+              - BAS
+            transform_zip: false
+            supports_zaparoo: false
+
+  # ---------------------------------------------------------------------------
+  # Watara
+  # ---------------------------------------------------------------------------
+  - name: supervision
+    display_name: "Watara SuperVision"
+    manufacturer: Watara
+    system_mapping_name: SuperVision
+    local_base_path: Watara/SuperVision
+    maps:
+      - .:
+          category: roms
+          query:
+            source_dir: Software
+            extensions:
+              - SV
+              - BIN
+            transform_zip: false
+            supports_zaparoo: false

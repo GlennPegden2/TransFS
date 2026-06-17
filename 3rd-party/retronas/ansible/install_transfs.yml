@@ -193,6 +193,11 @@
         group: "{{ transfs_group }}"
         mode: "0755"
 
+    - name: Check whether TransFS source tree already exists
+      ansible.builtin.stat:
+        path: "{{ transfs_install_root }}/app/main.py"
+      register: transfs_source_tree_stat
+
     - name: Checkout TransFS repository
       ansible.builtin.git:
         repo: "{{ transfs_repo_url }}"
@@ -200,6 +205,20 @@
         version: "{{ transfs_repo_version }}"
         update: true
         force: true
+      when: not transfs_source_tree_stat.stat.exists
+
+    - name: Check for TransFS requirements file
+      ansible.builtin.stat:
+        path: "{{ transfs_install_root }}/requirements.txt"
+      register: transfs_requirements_stat
+
+    - name: Fail when requirements file is missing
+      ansible.builtin.fail:
+        msg: >-
+          Missing {{ transfs_install_root }}/requirements.txt. Ensure the full
+          TransFS source tree is present (or bind-mount requirements.txt in
+          containerized testbed runs) before running installer.
+      when: not transfs_requirements_stat.stat.exists
 
     - name: Build filtered requirements (exclude mega.py, add modern tenacity)
       # mega.py 1.0.8 metadata pins tenacity<6.0.0 but only uses the sync API
@@ -218,6 +237,11 @@
         virtualenv: "{{ transfs_venv_path }}"
         virtualenv_command: python3 -m venv
 
+    - name: Ensure PyYAML is installed explicitly in the runtime venv
+      ansible.builtin.pip:
+        name: pyyaml
+        virtualenv: "{{ transfs_venv_path }}"
+
     - name: Install mega.py without dependency resolution
       # Skips pip's constraint enforcement so tenacity>=8.0 is retained.
       # mega.py works correctly at runtime with any tenacity version.
@@ -233,6 +257,14 @@
       ansible.builtin.pip:
         name: pycryptodome
         virtualenv: "{{ transfs_venv_path }}"
+
+    - name: Verify Crypto import from TransFS runtime venv
+      ansible.builtin.command:
+        argv:
+          - "{{ transfs_python_bin }}"
+          - -c
+          - "from Crypto.Cipher import AES; print('pycryptodome ok')"
+      changed_when: false
 
     - name: Ensure platform/retronas directory exists
       ansible.builtin.file:
@@ -290,6 +322,37 @@
       changed_when: true
       notify: Restart transfs-retronas
 
+    - name: Check for RetroNAS CIFS importer script
+      ansible.builtin.stat:
+        path: "{{ transfs_install_root }}/tools/import_mister_cifs.py"
+      register: transfs_import_script_stat
+
+    - name: Generate RetroNAS client configs from CIFS playbooks
+      ansible.builtin.command:
+        argv:
+          - "{{ transfs_python_bin }}"
+          - tools/import_mister_cifs.py
+          - --retronas-root
+          - /opt/retronas
+          - --all
+          - --output-dir
+          - "{{ transfs_install_root }}/app/config/clients/retronas"
+      args:
+        chdir: "{{ transfs_install_root }}"
+      register: transfs_retronas_client_import
+      changed_when: "'Done.' in transfs_retronas_client_import.stdout"
+      notify: Restart transfs-retronas
+      when: transfs_import_script_stat.stat.exists
+
+    - name: Skip RetroNAS client config generation when importer is absent
+      ansible.builtin.debug:
+        msg: >-
+          {{ transfs_install_root }}/tools/import_mister_cifs.py is not present,
+          so RetroNAS client config regeneration was skipped. This is expected
+          when running from a source tree mount that does not include the tools/
+          directory.
+      when: not transfs_import_script_stat.stat.exists
+
     - name: Check for systemctl availability
       ansible.builtin.command: systemctl --version
       register: transfs_systemctl_check
@@ -311,10 +374,18 @@
       when: transfs_smb_mode == 'transfs_managed'
       notify: Reload Samba for TransFS
 
-    - name: Register TransFS shares in smb.conf global include (transfs_managed)
+    - name: Remove misplaced TransFS Samba include (transfs_managed)
       ansible.builtin.lineinfile:
         path: "{{ transfs_smb_conf_path }}"
-        insertafter: '^\s*\[global\]'
+        line: "   include = {{ transfs_smb_share_conf }}"
+        state: absent
+      when: transfs_smb_mode == 'transfs_managed'
+      notify: Reload Samba for TransFS
+
+    - name: Register TransFS shares in smb.conf include list (transfs_managed)
+      ansible.builtin.lineinfile:
+        path: "{{ transfs_smb_conf_path }}"
+        insertbefore: EOF
         line: "   include = {{ transfs_smb_share_conf }}"
         regexp: "include = {{ transfs_smb_share_conf | regex_escape() }}"
       when: transfs_smb_mode == 'transfs_managed'
@@ -373,12 +444,20 @@
       when: transfs_smb_mode == 'retronas_managed' and (transfs_smbd_available.rc | default(1)) == 0
       notify: Reload Samba for TransFS
 
-    - name: Register TransFS share in smb.conf (retronas_managed)
-      ansible.builtin.ini_file:
+    - name: Remove misplaced TransFS Samba include (retronas_managed)
+      ansible.builtin.lineinfile:
         path: "{{ transfs_smb_conf_path }}"
-        section: TransFS
-        option: include
-        value: "{{ transfs_smb_share_conf }}"
+        line: "   include = {{ transfs_smb_share_conf }}"
+        state: absent
+      when: transfs_smb_mode == 'retronas_managed' and (transfs_smbd_available.rc | default(1)) == 0
+      notify: Reload Samba for TransFS
+
+    - name: Register TransFS share include in smb.conf (retronas_managed)
+      ansible.builtin.lineinfile:
+        path: "{{ transfs_smb_conf_path }}"
+        insertbefore: EOF
+        line: "   include = {{ transfs_smb_share_conf }}"
+        regexp: "include = {{ transfs_smb_share_conf | regex_escape() }}"
       when: transfs_smb_mode == 'retronas_managed' and (transfs_smbd_available.rc | default(1)) == 0
       notify: Reload Samba for TransFS
     # ---------------------------------------------------------------------------
