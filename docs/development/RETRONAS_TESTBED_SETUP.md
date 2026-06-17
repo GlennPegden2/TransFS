@@ -2,6 +2,38 @@
 
 This document describes how to set up a local Docker-based RetroNAS testbed for testing TransFS installation.
 
+## Current in-repo workflow
+
+If you are working directly from the TransFS repository, the fastest current path is the built-in `retronas-testbed` Compose profile in this repo:
+
+```bash
+cd /path/to/TransFS
+docker compose --profile retronas-testbed -f docker-compose.yml up -d --build
+```
+
+This workflow now:
+- builds `retronas:testbed` from `Dockerfile.retronas-testbed`
+- pre-renders the RetroNAS runtime scripts into the image
+- starts `/opt/transfs/platform/retronas/start_transfs_retronas.sh` automatically
+- creates the RetroNAS Native bridge symlink when applicable (`/mnt/filestorefs/Native -> /data/retronas/Native`)
+- launches FUSE, Samba, and the Web API inside the testbed container
+
+For this workflow, useful verification commands are:
+
+```bash
+docker logs retronas-testbed --tail 120
+curl -fsS http://127.0.0.1:8000/api/runtime/ports
+curl -fsS "http://127.0.0.1:8000/api/browse?path=/mnt/filestorefs/Native/Systems"
+```
+
+Native mount credentials written through TransFS are persisted under:
+
+```text
+/mnt/filestorefs/.secrets/transfs/native-mounts/
+```
+
+The rest of this document describes the older artifact-copy workflow using a separate `retronas-docker` clone.
+
 ## Purpose
 
 A testbed combines:
@@ -150,6 +182,16 @@ If install succeeds but TransFS does not run:
 2. Check `/dev/fuse` is present in the container (`ls -l /dev/fuse`).
 3. Check postgres is healthy (`docker ps` and `docker logs retronas-testbed-postgres`).
 4. Check TransFS launcher logs (`/var/log/transfs/launcher.log`, `transfs.log`, `web.log`).
+
+### Native mount diagnostics in Browse Native
+
+If a folder in `Browse Native` should be backed by a configured native external mount:
+
+1. Open `Browse Native` and navigate to the ancestor folder.
+2. Look for `🔗` for a live symlink or mount-backed folder, or `⚠` for a configured mount that failed.
+3. Hover the icon to inspect the live mount source or the failure reason.
+
+This is especially useful in the RetroNAS testbed because bridge-backed folders under `/mnt/filestorefs/Native/...` may reflect configured native mount targets that physically mount elsewhere under the filestore root.
 
 ### Persistent testing
 

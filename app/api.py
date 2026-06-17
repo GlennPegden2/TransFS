@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import glob
 import shutil
 import signal
 import subprocess
@@ -26,7 +27,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 from urllib.parse import unquote, urlparse
 
 import internetarchive
@@ -37,8 +38,14 @@ import requests
 import yaml
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from mega import Mega
 from pydantic import BaseModel
+
+try:
+    from mega import Mega
+    MEGA_IMPORT_ERROR = None
+except Exception as exc:  # pylint: disable=broad-except
+    Mega = None
+    MEGA_IMPORT_ERROR = exc
 from config import (
     get_clients,
     get_systems_for_client,
@@ -51,13 +58,14 @@ from config import (
     _normalize_source_base_path,
 )
 from native_mounts import (
-    build_unc_path,
+    build_source_path,
     get_mount_status,
     mount_entry,
     probe_entry,
     reconcile_mounts,
     unmount_entry,
     write_credentials_file,
+    normalize_mount_type,
     normalize_target_subpath,
 )
 from post_process import PostProcessor
@@ -167,7 +175,7 @@ def _public_native_mount_entry(config: dict, entry: dict) -> dict:
     status["id"] = entry.get("id")
     status["display_name"] = entry.get("display_name") or entry.get("id")
     status["extra_options"] = entry.get("extra_options") or []
-    status["unc_path"] = build_unc_path(entry)
+    status["source_path"] = build_source_path(entry)
     return status
 
 
@@ -179,6 +187,7 @@ def _prepare_native_mount_entry(
     existing_entry = existing_entry or {}
 
     mount_id = _normalize_mount_id(payload.get("id") or existing_entry.get("id"))
+    mount_type = normalize_mount_type(payload.get("mount_type", existing_entry.get("mount_type", "cifs")))
     enabled = bool(payload.get("enabled", existing_entry.get("enabled", True)))
     guest = bool(payload.get("guest", existing_entry.get("guest", False)))
     read_only = bool(payload.get("read_only", existing_entry.get("read_only", False)))
@@ -191,6 +200,13 @@ def _prepare_native_mount_entry(
     smb_subpath = _ensure_safe_relpath(
         payload.get("smb_subpath", existing_entry.get("smb_subpath", "")) or ""
     )
+    nfs_server = (payload.get("nfs_server", existing_entry.get("nfs_server", "")) or "").strip()
+    nfs_export = (payload.get("nfs_export", existing_entry.get("nfs_export", "")) or "").strip().replace("\\", "/")
+    nfs_subpath = _ensure_safe_relpath(
+        payload.get("nfs_subpath", existing_entry.get("nfs_subpath", "")) or ""
+    )
+    nfs_version = str(payload.get("nfs_version", existing_entry.get("nfs_version", "4.1")) or "4.1").strip()
+    bind_source = (payload.get("bind_source", existing_entry.get("bind_source", "")) or "").strip()
     vers = str(payload.get("vers", existing_entry.get("vers", "3.0")) or "3.0").strip()
     display_name = (payload.get("display_name", existing_entry.get("display_name", "")) or "").strip()
     username = (payload.get("username", existing_entry.get("username", "")) or "").strip()
@@ -208,20 +224,37 @@ def _prepare_native_mount_entry(
         raise ValueError("extra_options must be a list")
     extra_options = [str(opt).strip() for opt in extra_options if str(opt).strip()]
 
-    if not smb_host:
-        raise ValueError("smb_host is required")
-    if not smb_share:
-        raise ValueError("smb_share is required")
+    if mount_type == "cifs":
+        if not smb_host:
+            raise ValueError("smb_host is required for cifs mounts")
+        if not smb_share:
+            raise ValueError("smb_share is required for cifs mounts")
+    elif mount_type == "nfs":
+        if not nfs_server:
+            raise ValueError("nfs_server is required for nfs mounts")
+        if not nfs_export:
+            raise ValueError("nfs_export is required for nfs mounts")
+    elif mount_type == "bind":
+        if not bind_source:
+            raise ValueError("bind_source is required for bind mounts")
+        if not os.path.isabs(bind_source):
+            raise ValueError("bind_source must be an absolute path")
 
     entry = {
         "id": mount_id,
         "display_name": display_name or mount_id,
+        "mount_type": mount_type,
         "enabled": enabled,
         "target_subpath": target_subpath,
         "smb_host": smb_host,
         "smb_share": smb_share,
         "smb_subpath": smb_subpath,
         "smb_port": smb_port,
+        "nfs_server": nfs_server,
+        "nfs_export": nfs_export,
+        "nfs_subpath": nfs_subpath,
+        "nfs_version": nfs_version,
+        "bind_source": bind_source,
         "guest": guest,
         "read_only": read_only,
         "vers": vers,
@@ -234,18 +267,21 @@ def _prepare_native_mount_entry(
     }
 
     password = payload.get("password")
-    if guest:
-        entry["credentials_file"] = existing_entry.get("credentials_file", "")
-    else:
-        if not username:
-            raise ValueError("username is required when guest is false")
-        if password is not None:
-            filestore = config.get("filestore", "/data/retronas")
-            entry["credentials_file"] = write_credentials_file(filestore, mount_id, username, str(password))
-        else:
+    if mount_type == "cifs":
+        if guest:
             entry["credentials_file"] = existing_entry.get("credentials_file", "")
-            if not entry["credentials_file"]:
-                raise ValueError("password is required for new non-guest mounts")
+        else:
+            if not username:
+                raise ValueError("username is required when guest is false")
+            if password is not None:
+                filestore = config.get("filestore", "/mnt/filestorefs")
+                entry["credentials_file"] = write_credentials_file(filestore, mount_id, username, str(password))
+            else:
+                entry["credentials_file"] = existing_entry.get("credentials_file", "")
+                if not entry["credentials_file"]:
+                    raise ValueError("password is required for new non-guest mounts")
+    else:
+        entry["credentials_file"] = ""
 
     return entry
 
@@ -253,12 +289,18 @@ def _prepare_native_mount_entry(
 def _native_mount_runtime_fields(entry: dict | None) -> dict:
     entry = entry or {}
     return {
+        "mount_type": entry.get("mount_type", "cifs"),
         "enabled": bool(entry.get("enabled", True)),
         "target_subpath": entry.get("target_subpath", ""),
         "smb_host": entry.get("smb_host", ""),
         "smb_share": entry.get("smb_share", ""),
         "smb_subpath": entry.get("smb_subpath", ""),
         "smb_port": entry.get("smb_port"),
+        "nfs_server": entry.get("nfs_server", ""),
+        "nfs_export": entry.get("nfs_export", ""),
+        "nfs_subpath": entry.get("nfs_subpath", ""),
+        "nfs_version": entry.get("nfs_version", "4.1"),
+        "bind_source": entry.get("bind_source", ""),
         "guest": bool(entry.get("guest", False)),
         "read_only": bool(entry.get("read_only", False)),
         "vers": entry.get("vers", "3.0"),
@@ -693,8 +735,8 @@ def api_source_paths(path: str):
     try:
         import logging
         from pathlib import Path as PathLib
-        from sourcepath import get_source_path, get_transform_pipeline_for_file
-        from pathutils import get_client, get_system_info
+        from vfs.sourcepath import get_source_path, get_transform_pipeline_for_file
+        from vfs.pathutils import get_client, get_system_info
         
         logger = logging.getLogger("api")
         config = read_clients_config()
@@ -733,13 +775,14 @@ def api_source_paths(path: str):
                             if system_info:
                                 virtual_folder = rel_parts[2]
                                 real_filename = os.path.basename(source_path)
-                                cache_config = config.get("cache", {}) if isinstance(config, dict) else {}
+                                cache_raw = config.get("cache", {}) if isinstance(config, dict) else {}
+                                cache_config = cache_raw if isinstance(cache_raw, dict) else {}
                                 pipeline = get_transform_pipeline_for_file(
-                                    logger,
-                                    system_info,
-                                    real_filename,
-                                    virtual_folder,
-                                    cache_config,
+                                    logger=logger,
+                                    system_info=system_info,
+                                    filename=real_filename,
+                                    virtual_folder=str(virtual_folder),
+                                    cache_config=cache_config,
                                 )
                                 if pipeline:
                                     transform_info = {
@@ -782,7 +825,7 @@ def api_browse_directory(path: str):
     
     # Validate path is within allowed directories
     _app_cfg = read_app_config()
-    _filestore = _app_cfg.get("filestore", "/data/retronas")
+    _filestore = _app_cfg.get("filestore", "/mnt/filestorefs")
     _mountpoint = _app_cfg.get("mountpoint", "/mnt/transfs")
     allowed_prefixes = [_filestore, _mountpoint]
     if not any(path.startswith(prefix) for prefix in allowed_prefixes):
@@ -801,7 +844,7 @@ def api_browse_directory(path: str):
     # For virtual paths, determine supports_zaparoo flag from system config
     supports_zaparoo = None
     if path.startswith("/mnt/transfs"):
-        from pathutils import get_client, get_system_info, find_software_archive_entry, find_map_entry, get_map_config
+        from vfs.pathutils import get_client, get_system_info, find_software_archive_entry, find_map_entry, get_map_config
         from pathlib import Path as PathLib
         
         config = read_config()
@@ -842,7 +885,7 @@ def api_browse_directory(path: str):
             return {"error": "Archive file does not exist"}
         
         try:
-            from zippath import listdir_with_info
+            from archive.zippath import listdir_with_info
             items = listdir_with_info(f"{path}#{archive_inner_path}")
             entries = []
             for item in items:
@@ -871,6 +914,109 @@ def api_browse_directory(path: str):
     # The FUSE filesystem handles all directory composition and file listing logic.
     
     try:
+        def _load_mount_sources() -> dict[str, str]:
+            """Return mountpoint -> source mapping from /proc/self/mountinfo."""
+            mount_sources: dict[str, str] = {}
+            try:
+                with open("/proc/self/mountinfo", "r", encoding="utf-8") as mountinfo:
+                    for raw_line in mountinfo:
+                        line = raw_line.strip()
+                        if not line or " - " not in line:
+                            continue
+                        left, right = line.split(" - ", 1)
+                        left_parts = left.split()
+                        right_parts = right.split()
+                        if len(left_parts) < 5 or len(right_parts) < 2:
+                            continue
+                        mountpoint = left_parts[4]
+                        source = right_parts[1]
+                        mount_sources[mountpoint] = source
+            except OSError:
+                pass
+            return mount_sources
+
+        def _normalize_rel_path(value: str) -> str:
+            return (value or "").replace("\\", "/").strip("/")
+
+        def _mount_entry_source(entry: dict) -> str:
+            try:
+                return build_source_path(entry)
+            except (ValueError, TypeError):
+                return ""
+
+        def _mount_entry_failure(entry: dict) -> str | None:
+            last_error = str(entry.get("last_error") or "").strip()
+            if last_error:
+                return last_error
+
+            mount_type = str(entry.get("mount_type") or "cifs").strip().lower()
+            if mount_type not in {"cifs", "smb"}:
+                return None
+            if bool(entry.get("guest", False)):
+                return None
+
+            username = str(entry.get("username") or "").strip()
+            if not username:
+                return "Missing SMB username"
+
+            credentials_file = str(entry.get("credentials_file") or "").strip()
+            if credentials_file and not os.path.exists(credentials_file):
+                return f"Missing credentials file: {credentials_file}"
+
+            password = entry.get("password")
+            if password is not None and str(password) != "":
+                return None
+            if credentials_file:
+                try:
+                    with open(credentials_file, "r", encoding="utf-8") as fh:
+                        for raw_line in fh:
+                            if raw_line.startswith("password="):
+                                if raw_line.split("=", 1)[1].rstrip("\n") != "":
+                                    return None
+                                break
+                except OSError:
+                    return f"Missing credentials file: {credentials_file}"
+            return "Missing SMB password"
+
+        managed_mount_targets: list[dict[str, object]] = []
+        for mount_entry in (_app_cfg.get("native_external_mounts") or []):
+            if not isinstance(mount_entry, dict):
+                continue
+            if not bool(mount_entry.get("enabled", True)):
+                continue
+            target_rel = _normalize_rel_path(str(mount_entry.get("target_subpath") or ""))
+            if not target_rel:
+                continue
+            source = _mount_entry_source(mount_entry)
+            if not source:
+                continue
+            target_paths = {
+                os.path.join(_filestore.rstrip("/"), *target_rel.split("/")),
+                os.path.join(_filestore.rstrip("/"), "Native", *target_rel.split("/")),
+            }
+            mount_status = get_mount_status(_app_cfg, mount_entry)
+            failure_reason = None if mount_status.get("mounted") else _mount_entry_failure(mount_entry)
+            state = "mounted" if mount_status.get("mounted") else ("failed" if failure_reason else "configured")
+            managed_mount_targets.append({
+                "target_paths": tuple(sorted(target_paths)),
+                "source": source,
+                "state": state,
+                "error": failure_reason,
+            })
+
+        def _managed_mount_metadata_for_ancestor(entry_path: str) -> Mapping[str, str | None] | None:
+            prefix = entry_path.rstrip("/") + "/"
+            for mount_meta in managed_mount_targets:
+                for target_abs in mount_meta["target_paths"]:
+                    if target_abs.startswith(prefix):
+                        return {
+                            "source": str(mount_meta["source"] or ""),
+                            "state": str(mount_meta["state"] or "configured"),
+                            "error": str(mount_meta["error"] or "") or None,
+                        }
+            return None
+
+        mount_sources = _load_mount_sources()
         # Standard method for all paths (including /mnt/transfs) to accurately
         # reflect the live FUSE layer.
         entries = []
@@ -885,11 +1031,36 @@ def api_browse_directory(path: str):
                 # This avoids 3500+ FUSE getattr() calls for is_dir() checks
                 name = entry.name
                 is_probably_dir = '.' not in name
+                is_symlink = entry.is_symlink()
+                symlink_target = None
+                if is_symlink:
+                    try:
+                        symlink_target = os.readlink(entry.path)
+                    except (PermissionError, OSError):
+                        symlink_target = None
+                mount_source = mount_sources.get(entry.path) if mount_sources else None
+                mount_kind = "direct"
+                mount_state = "mounted" if mount_source is not None else None
+                mount_error = None
+                if mount_source is None:
+                    mount_meta = _managed_mount_metadata_for_ancestor(entry.path)
+                    if mount_meta is not None:
+                        mount_source = mount_meta.get("source")
+                        mount_kind = "descendant"
+                        mount_state = mount_meta.get("state")
+                        mount_error = mount_meta.get("error")
                 entries.append({
                     "name": name,
                     "type": "directory" if is_probably_dir else "file",
                     "size": None,  # Skip size for performance
-                    "supports_zaparoo": supports_zaparoo
+                    "supports_zaparoo": supports_zaparoo,
+                    "is_symlink": is_symlink,
+                    "symlink_target": symlink_target,
+                    "is_mount": mount_state == "mounted",
+                    "mount_source": mount_source,
+                    "mount_kind": mount_kind,
+                    "mount_state": mount_state,
+                    "mount_error": mount_error,
                 })
         else:
             # Normal path for smaller directories - full stat information
@@ -897,11 +1068,29 @@ def api_browse_directory(path: str):
                 try:
                     # Use DirEntry methods which may use cached data from readdir
                     is_dir = entry.is_dir(follow_symlinks=False)
+                    is_symlink = entry.is_symlink()
+                    symlink_target = None
+                    if is_symlink:
+                        try:
+                            symlink_target = os.readlink(entry.path)
+                        except (PermissionError, OSError):
+                            symlink_target = None
+                    mount_source = mount_sources.get(entry.path) if mount_sources else None
+                    mount_kind = "direct"
+                    mount_state = "mounted" if mount_source is not None else None
+                    mount_error = None
+                    if mount_source is None:
+                        mount_meta = _managed_mount_metadata_for_ancestor(entry.path)
+                        if mount_meta is not None:
+                            mount_source = mount_meta.get("source")
+                            mount_kind = "descendant"
+                            mount_state = mount_meta.get("state")
+                            mount_error = mount_meta.get("error")
                     
                     # Check if this is a 7z/zip archive file
                     is_archive = False
                     if not is_dir:
-                        from zippath import is_supported_archive_name
+                        from archive.zippath import is_supported_archive_name
                         is_archive = is_supported_archive_name(entry.name)
                     
                     size = None
@@ -916,7 +1105,14 @@ def api_browse_directory(path: str):
                         "name": entry.name,
                         "type": entry_type,
                         "size": size,
-                        "supports_zaparoo": supports_zaparoo
+                        "supports_zaparoo": supports_zaparoo,
+                        "is_symlink": is_symlink,
+                        "symlink_target": symlink_target,
+                        "is_mount": mount_state == "mounted",
+                        "mount_source": mount_source,
+                        "mount_kind": mount_kind,
+                        "mount_state": mount_state,
+                        "mount_error": mount_error,
                     })
                 except (PermissionError, OSError):
                     # Skip entries we can't access
@@ -1034,7 +1230,7 @@ async def metadata_dat_upload(
 
         service = DatImportService(config_dir="config")
         target_folder = os.path.normpath((folder or "").strip() or service.default_dat_folder())
-        _filestore = read_app_config().get("filestore", "/data/retronas")
+        _filestore = read_app_config().get("filestore", "/mnt/filestorefs")
         if not target_folder.startswith(_filestore):
             return {"error": f"Folder must be inside {_filestore}"}
 
@@ -1169,7 +1365,7 @@ def metadata_scan_preview(req: MetadataScanRequest):
     """Scan a folder and preview metadata matches from a selected provider."""
     try:
         folder = os.path.normpath(req.folder)
-        _filestore = read_app_config().get("filestore", "/data/retronas")
+        _filestore = read_app_config().get("filestore", "/mnt/filestorefs")
         if not folder.startswith(_filestore):
             return {"error": f"Folder must be inside {_filestore}"}
         if not os.path.isdir(folder):
@@ -1193,7 +1389,7 @@ def metadata_apply(req: MetadataScanRequest):
     """Apply metadata matches from a selected provider to database metadata tables."""
     try:
         folder = os.path.normpath(req.folder)
-        _filestore = read_app_config().get("filestore", "/data/retronas")
+        _filestore = read_app_config().get("filestore", "/mnt/filestorefs")
         if not folder.startswith(_filestore):
             return {"error": f"Folder must be inside {_filestore}"}
         if not os.path.isdir(folder):
@@ -1291,7 +1487,6 @@ def metadata_entries(
             conditions.append(
                 "EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = f.file_id AND ft.tag_value = %s)"
             )
-            params.append(tag)
         if provider:
             conditions.append("fm.metadata_provider = %s")
             params.append(provider)
@@ -1718,9 +1913,9 @@ def metadata_clear_all(req: MetadataClearAllRequest):
 def cache_status(path: str):
     """Get cache status for a given path."""
     try:
-        from dirlisting import get_cached_stat
+        from vfs.dirlisting import get_cached_stat
         _app_cfg = read_app_config()
-        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas'))
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/mnt/filestorefs'))
         cached = get_cached_stat(cache_path, os.path.dirname(cache_path))
         return {"cached": cached is not None, "path": cache_path}
     except Exception as e:  # pylint: disable=broad-except
@@ -1730,11 +1925,11 @@ def cache_status(path: str):
 def cache_clear(path: str | None = None):
     """Clear stat cache for a specific path or all stat cache entries."""
     try:
-        from dirlisting import clear_stat_cache_path
+        from vfs.dirlisting import clear_stat_cache_path
         _app_cfg = read_app_config()
-        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas')) if path else None
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/mnt/filestorefs')) if path else None
         if cache_path is None:
-            from dirlisting import clear_stat_cache
+            from vfs.dirlisting import clear_stat_cache
             return clear_stat_cache()
         return clear_stat_cache_path(cache_path)
     except Exception as e:  # pylint: disable=broad-except
@@ -1745,9 +1940,9 @@ def cache_clear(path: str | None = None):
 def cache_status_all(path: str | None = None):
     """Get comprehensive status for the stat cache."""
     try:
-        from dirlisting import get_all_cache_status
+        from vfs.dirlisting import get_all_cache_status
         _app_cfg = read_app_config()
-        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/data/retronas')) if path else None
+        cache_path = path.replace(_app_cfg.get('mountpoint', '/mnt/transfs'), _app_cfg.get('filestore', '/mnt/filestorefs')) if path else None
         return get_all_cache_status(cache_path)
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1757,7 +1952,7 @@ def cache_status_all(path: str | None = None):
 def cache_clear_getattr():
     """Clear the stat cache (legacy getattr endpoint)."""
     try:
-        from dirlisting import clear_stat_cache
+        from vfs.dirlisting import clear_stat_cache
         return clear_stat_cache()
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1767,7 +1962,7 @@ def cache_clear_getattr():
 def cache_clear_all():
     """Clear all caches (stat cache only)."""
     try:
-        from dirlisting import clear_all_caches
+        from vfs.dirlisting import clear_all_caches
         return clear_all_caches()
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -1876,7 +2071,7 @@ async def db_sync(path: str | None = None, stream: bool = False, client: str | N
         from sync_database import DatabaseSync
         from db.connection import init_database
         
-        filestore_path = config.get("filestore", "/data/retronas")
+        filestore_path = config.get("filestore", "/mnt/filestorefs")
         
         if client and system:
             logger.info(f"Starting database sync for client '{client}', system '{system}'")
@@ -1996,7 +2191,7 @@ def fuse_start():
 def cache_config_get():
     """Get current cache configuration."""
     try:
-        from dirlisting import get_cache_config
+        from vfs.dirlisting import get_cache_config
         return {"cache": get_cache_config()}
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2013,7 +2208,7 @@ def cache_config_set(
 ):
     """Update cache configuration at runtime."""
     try:
-        from dirlisting import set_cache_config, get_cache_config
+        from vfs.dirlisting import set_cache_config, get_cache_config
         current = get_cache_config()
         if stat_cache_enabled is not None:
             current['stat_cache_enabled'] = stat_cache_enabled
@@ -2037,7 +2232,7 @@ def cache_config_set(
 def cache_info():
     """Get detailed cache information for the dashboard."""
     try:
-        from dirlisting import get_cache_info
+        from vfs.dirlisting import get_cache_info
         return get_cache_info()
     except Exception as e:  # pylint: disable=broad-except
         return {"error": str(e)}
@@ -2069,12 +2264,12 @@ def config_get(fields: str | None = None):
                     elif field == 'mountpoint':
                         result['mountpoint'] = app_config.get('mountpoint', '/mnt/transfs')
                     elif field == 'filestore':
-                        result['filestore'] = app_config.get('filestore', '/data/retronas')
+                        result['filestore'] = app_config.get('filestore', '/mnt/filestorefs')
                     elif field == 'database':
                         result['database'] = app_config.get('database', {
                             'enabled': True,
                             'mode': 'hybrid',
-                            'path': f"{app_config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
+                            'path': f"{app_config.get('filestore', '/mnt/filestorefs')}/.transfs_metadata.db",
                             'auto_sync': False,
                             'sync_on_startup': False
                         })
@@ -2088,13 +2283,13 @@ def config_get(fields: str | None = None):
         config = read_config()
         return {
             "mountpoint": config.get("mountpoint", "/mnt/transfs"),
-            "filestore": config.get("filestore", "/data/retronas"),
+            "filestore": config.get("filestore", "/mnt/filestorefs"),
             "web_api": config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
             "ui": config.get("ui", {"advanced_options": False, "show_real_path_tooltips": True}),
             "database": config.get("database", {
                 "enabled": True,
                 "mode": "hybrid",
-                "path": f"{config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
+                "path": f"{config.get('filestore', '/mnt/filestorefs')}/.transfs_metadata.db",
                 "auto_sync": False,
                 "sync_on_startup": False
             }),
@@ -2119,12 +2314,18 @@ class ConfigUpdate(BaseModel):
 class NativeMountRequest(BaseModel):
     id: str | None = None
     display_name: str | None = None
+    mount_type: str = "cifs"
     enabled: bool = True
     target_subpath: str
-    smb_host: str
-    smb_share: str
+    smb_host: str | None = None
+    smb_share: str | None = None
     smb_subpath: str | None = None
     smb_port: int | None = None
+    nfs_server: str | None = None
+    nfs_export: str | None = None
+    nfs_subpath: str | None = None
+    nfs_version: str | None = None
+    bind_source: str | None = None
     guest: bool = False
     username: str | None = None
     password: str | None = None
@@ -2136,12 +2337,18 @@ class NativeMountRequest(BaseModel):
 
 class NativeMountUpdateRequest(BaseModel):
     display_name: str | None = None
+    mount_type: str | None = None
     enabled: bool | None = None
     target_subpath: str | None = None
     smb_host: str | None = None
     smb_share: str | None = None
     smb_subpath: str | None = None
     smb_port: int | None = None
+    nfs_server: str | None = None
+    nfs_export: str | None = None
+    nfs_subpath: str | None = None
+    nfs_version: str | None = None
+    bind_source: str | None = None
     guest: bool | None = None
     username: str | None = None
     password: str | None = None
@@ -2210,13 +2417,13 @@ def config_set(config_update: ConfigUpdate):
             "updated": True,
             "config": {
                 "mountpoint": app_config.get("mountpoint", "/mnt/transfs"),
-                "filestore": app_config.get("filestore", "/data/retronas"),
+                "filestore": app_config.get("filestore", "/mnt/filestorefs"),
                 "web_api": app_config.get("web_api", {"host": "0.0.0.0", "port": 8000}),
                 "ui": app_config.get("ui", {"advanced_options": False}),
                 "database": app_config.get("database", {
                     "enabled": True,
                     "mode": "hybrid",
-                    "path": f"{app_config.get('filestore', '/data/retronas')}/.transfs_metadata.db",
+                    "path": f"{app_config.get('filestore', '/mnt/filestorefs')}/.transfs_metadata.db",
                     "auto_sync": False,
                     "sync_on_startup": False
                 }),
@@ -2230,7 +2437,7 @@ def config_set(config_update: ConfigUpdate):
 
 @app.get("/native-mounts", tags=["Config"])
 def get_native_mounts():
-    """List managed Native external SMB mounts with runtime status."""
+    """List managed external mounts with runtime status."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2244,7 +2451,7 @@ def get_native_mounts():
 
 @app.post("/native-mounts", tags=["Config"])
 def create_native_mount(request: NativeMountRequest):
-    """Create a managed Native external SMB mount entry and persist it."""
+    """Create a managed external mount entry and persist it."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2278,7 +2485,7 @@ def create_native_mount(request: NativeMountRequest):
 
 @app.patch("/native-mounts/{mount_id}", tags=["Config"])
 def update_native_mount(mount_id: str, request: NativeMountUpdateRequest):
-    """Update a managed Native external SMB mount entry and persist it."""
+    """Update a managed external mount entry and persist it."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2360,7 +2567,7 @@ def delete_native_mount(mount_id: str):
 
 @app.post("/native-mounts/{mount_id}/mount", tags=["Config"])
 def mount_native_mount(mount_id: str):
-    """Manually mount a managed Native external SMB mount."""
+    """Manually mount a managed external mount."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2389,7 +2596,7 @@ def mount_native_mount(mount_id: str):
 
 @app.post("/native-mounts/{mount_id}/unmount", tags=["Config"])
 def unmount_native_mount(mount_id: str):
-    """Manually unmount a managed Native external SMB mount."""
+    """Manually unmount a managed external mount."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2415,7 +2622,7 @@ def unmount_native_mount(mount_id: str):
 
 @app.post("/native-mounts/reconcile", tags=["Config"])
 def reconcile_native_mounts():
-    """Attempt to mount all enabled auto-reconnect managed Native external mounts."""
+    """Attempt to mount all enabled auto-reconnect managed external mounts."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2450,14 +2657,14 @@ def validate_native_mount(request: NativeMountRequest):
         payload = request.dict()
         entry = _prepare_native_mount_entry(config, payload)
         target = normalize_target_subpath(entry.get("target_subpath", ""))
-        target_path = os.path.join(config.get("filestore", "/data/retronas"), "Native", target)
-        unc_path = build_unc_path(entry)
+        target_path = os.path.join("/mnt/filestore", target)
+        source_path = build_source_path(entry)
         probe = probe_entry(config, entry)
         return {
             "valid": True,
             "target_subpath": target,
             "target_path": target_path,
-            "unc_path": unc_path,
+            "source_path": source_path,
             "guest": bool(entry.get("guest", False)),
             "probe": probe,
         }
@@ -2467,7 +2674,7 @@ def validate_native_mount(request: NativeMountRequest):
 
 @app.post("/native-mounts/{mount_id}/probe", tags=["Config"])
 def probe_native_mount(mount_id: str):
-    """Probe a saved Native external SMB mount without attempting a kernel mount."""
+    """Probe a saved external mount without attempting a kernel mount."""
     try:
         config = read_config()
         app_config = _read_app_yaml()
@@ -2660,7 +2867,7 @@ def _detect_retronas() -> dict:
     mister_cifs_available = os.path.isfile(_RETRONAS_MISTER_CIFS_PLAYBOOK)
 
     # Read retronas_path and other vars if installed
-    retronas_path = "/data/retronas"
+    retronas_path = "/mnt/filestorefs"
     retronas_user = "retronas"
     if installed:
         try:
@@ -2860,6 +3067,7 @@ def reload_fuse_config_endpoint():
 # Global storage for test runs (in production, use a database)
 _test_runs = {}
 _snapshot_baseline_dir = Path("/tests/snapshots/locked")
+_MAX_TEST_OUTPUT_CHARS = 2_000_000
 
 
 def _safe_snapshot_name(name: str) -> str:
@@ -3208,39 +3416,87 @@ def run_tests(test_type: str = "snapshot"):
         }
         
         test_file = test_files.get(test_type, test_files["snapshot"])
+
+        # Support multiple runtime layouts:
+        # - standalone/dev containers with /tests mounted
+        # - RetroNAS plugin runtime under /opt/transfs/tests
+        # - local package layout under /app/tests
+        if test_file.startswith("/"):
+            def _path_exists_or_matches(pattern: str) -> bool:
+                if any(ch in pattern for ch in "*?[]"):
+                    return len(glob.glob(pattern)) > 0
+                return os.path.exists(pattern)
+
+            if not _path_exists_or_matches(test_file):
+                candidates = [
+                    test_file.replace("/tests/", "/opt/transfs/tests/"),
+                    test_file.replace("/tests/", "/app/tests/"),
+                ]
+                test_file = next((p for p in candidates if _path_exists_or_matches(p)), test_file)
         
+        # Resolve a working directory that exists across runtime layouts.
+        # RetroNAS plugin runtime uses /opt/transfs, while dev containers may use /app.
+        pytest_cwd_candidates = ["/app", "/opt/transfs", os.getcwd()]
+        pytest_cwd = next((p for p in pytest_cwd_candidates if p and os.path.isdir(p)), os.getcwd())
+
         # Start pytest in a background subprocess
-        pytest_args = ["python", "-m", "pytest", test_file, "-vv", "--tb=short", "-rs"]
+        pytest_args = [sys.executable, "-m", "pytest", test_file, "-vv", "--tb=short", "-rs"]
         if test_type == "performance":
             # Allow PERF lines to appear in stdout for UI parsing
             pytest_args.append("-s")
 
         test_process = subprocess.Popen(
-              pytest_args,
+            pytest_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            cwd="/app"
+            bufsize=1,
+            cwd=pytest_cwd
         )
-        
-        _test_runs[task_id] = {
+
+        run_state = {
             "status": "running",
             "process": test_process,
             "output": "",
             "summary": {"total": 0, "passed": 0, "failed": 0},
             "progress": 0,
-            "test_type": test_type
+            "test_type": test_type,
+            "started_at": time.time(),
+            "last_update": time.time(),
+            "output_truncated": False,
         }
+        _test_runs[task_id] = run_state
+
+        def _drain_test_output():
+            try:
+                stdout = test_process.stdout
+                if stdout is None:
+                    return
+                for line in iter(stdout.readline, ""):
+                    run_state["output"] += line
+                    run_state["last_update"] = time.time()
+                    if len(run_state["output"]) > _MAX_TEST_OUTPUT_CHARS:
+                        run_state["output"] = run_state["output"][-_MAX_TEST_OUTPUT_CHARS:]
+                        run_state["output_truncated"] = True
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning(f"Test output drain failed for {task_id}: {exc}")
+
+        threading.Thread(target=_drain_test_output, daemon=True).start()
         
         return {"task_id": task_id, "status": "running"}
     except Exception as e:  # pylint: disable=broad-except
-        return {"error": str(e)}
+        return {"status": "error", "error": str(e)}
 
 
 @app.get("/test-results/{task_id}")
 def get_test_results(task_id: str):
     """Get the status and results of a test run."""
     try:
+        if task_id == "last":
+            # Keep backward compatibility even if this dynamic route matches
+            # before the dedicated /test-results/last handler.
+            return get_last_test_results()
+
         if task_id not in _test_runs:
             return {"status": "not_found", "error": f"Task {task_id} not found"}
         
@@ -3248,35 +3504,38 @@ def get_test_results(task_id: str):
         
         # Check if process is still running
         if run["process"].poll() is None:
-            # Process still running, read any available output
-            try:
-                line = run["process"].stdout.readline()
-                if line:
-                    run["output"] += line
-            except:
-                pass
-            
             return {
                 "status": "running",
                 "progress": 50,  # Placeholder progress
                 "summary": run["summary"],
-                "results": {"stdout": run["output"]},
+                "results": {
+                    "stdout": run["output"],
+                    "output_truncated": run.get("output_truncated", False),
+                },
                 "task_id": task_id
             }
         else:
             # Process completed, read remaining output
-            remaining = run["process"].stdout.read()
-            run["output"] += remaining
+            try:
+                stdout = run["process"].stdout
+                if stdout is not None:
+                    remaining = stdout.read()
+                    if remaining:
+                        run["output"] += remaining
+            except Exception:
+                pass
             
             # Parse individual tests from output
             import re
             tests_list = []
             
-            # Pattern for test start line (may have PERF lines after on same line)
-            # Supports tests paths emitted as tests/..., ../tests/..., app/tests/..., ../app/tests/...
-            # Match: path/to/test_file.py::ClassName::test_name[param] PERF|...
-            # Stop at PERF or status keywords
-            test_start_pattern = r'^((?:(?:\.\./)?(?:app/)?tests|/(?:app/)?tests)/[^\s:]+\.py)::(.+?)(?:\s+(?:PERF|PASSED|FAILED|SKIPPED|XPASS|XFAIL))'
+            # Pattern for test start lines, including pytest's rewritten form:
+            # ../../tests/test_file.py::Class::test <- ../opt/transfs/tests/test_file.py PASSED [  6%]
+            test_start_pattern = (
+                r'^\s*([^\s:]+\.py)::([^\s]+)'
+                r'(?:\s+<-\s+[^\s]+)?'
+                r'\s+(PASSED|FAILED|SKIPPED|XPASS|XFAIL)'
+            )
             status_pattern = r'^\s*(PASSED|FAILED|SKIPPED|XPASS|XFAIL)(?:\s+(.*))?$'
             perf_pattern = r'PERF\|test=(.+?)\|op=(.+?)\|path=(.+?)\|actual=([\d.]+)\|target=([\d.]+)'
             ansi_escape_pattern = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -3317,6 +3576,7 @@ def get_test_results(task_id: str):
                 if test_match:
                     test_file = test_match.group(1).strip()
                     test_name = test_match.group(2).strip()
+                    inline_status = test_match.group(3).strip()
                     
                     test_key = f"{test_file}::{test_name}"
                     current_test = test_key
@@ -3332,7 +3592,7 @@ def get_test_results(task_id: str):
                         inline_reason = (inline_status_match.group(2) or "").strip()
                     else:
                         # Look ahead for status on next lines
-                        status = None
+                        status = inline_status
                         inline_reason = ""
                         j = i + 1
                         while j < len(lines) and j < i + 10:  # Look ahead max 10 lines
@@ -3611,6 +3871,7 @@ def get_test_results(task_id: str):
                     "stdout": run["output"],
                     "return_code": return_code,
                     "tests": tests_list,
+                    "output_truncated": run.get("output_truncated", False),
                     "task_id": task_id
                 },
                 "task_id": task_id
@@ -3921,7 +4182,7 @@ def file_metadata(path: str):
         config = read_config()
         
         _app_cfg = read_app_config()
-        _filestore = _app_cfg.get("filestore", "/data/retronas")
+        _filestore = _app_cfg.get("filestore", "/mnt/filestorefs")
         _mountpoint = _app_cfg.get("mountpoint", "/mnt/transfs")
         if not path.startswith(_mountpoint) and not path.startswith(_filestore):
             return {"error": "Invalid path"}
@@ -3976,7 +4237,7 @@ def file_metadata(path: str):
                 if not file_row:
                     # Final fallback: resolve virtual path to real source path(s) and try again
                     try:
-                        from sourcepath import get_source_path
+                        from vfs.sourcepath import get_source_path
 
                         source_path = get_source_path(logger, config, "/mnt/transfs", path)
                         resolved_paths = []
@@ -4031,7 +4292,7 @@ def file_metadata(path: str):
                         resolved_size = None
                         resolved_mtime = None
                         try:
-                            from sourcepath import get_source_path
+                            from vfs.sourcepath import get_source_path
 
                             source_path = get_source_path(logger, config, "/mnt/transfs", path)
                             if isinstance(source_path, str):
@@ -4780,6 +5041,9 @@ async def api_install_packs(client_name: str, system_name: str, req: PackInstall
                                     yield f"      ⚠ Source file not found: {from_name}\n"
                     
                     elif source_type == "mega":
+                        if Mega is None:
+                            yield f"   ✗ MEGA downloader unavailable: {MEGA_IMPORT_ERROR}\n"
+                            continue
                         for idx, url_entry in enumerate(url_entries, 1):
                             url = url_entry["url"]
                             folder = url_entry["folder"]
@@ -5529,6 +5793,9 @@ async def api_download_stream(req: DownloadRequest):
                             yield f"Failed to download {url}: {e}\n"
                     
                     elif source_type == "mega":
+                        if Mega is None:
+                            yield f"MEGA downloader unavailable: {MEGA_IMPORT_ERROR}\n"
+                            continue
                         try:
                             yield f"Starting MEGA download: {url}\n"
                             mega_client = Mega()

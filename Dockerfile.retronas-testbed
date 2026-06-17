@@ -4,10 +4,67 @@
 
 FROM retronas-docker:latest
 
+# Ensure external mount helpers are available in the testbed runtime.
+# - cifs-utils: mount.cifs helper used by Native External Mounts (CIFS/SMB)
+# - smbclient: diagnostics/probe support for clearer SMB error reporting
+# - nfs-common: mount.nfs helper for NFS external mounts
+RUN apt-get update && \
+   apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      libfuse3-dev \
+      python3-dev \
+      python3-venv \
+      cifs-utils \
+      smbclient \
+      nfs-common && \
+	rm -rf /var/lib/apt/lists/*
+
 # --- PR files: mirror the RetroNAS repo layout ---
 # These are the only files we are contributing; drop them straight on top.
 COPY 3rd-party/retronas/config/ /opt/retronas/config/
 COPY 3rd-party/retronas/ansible/ /opt/retronas/ansible/
+
+# --- Pre-install TransFS runtime so it survives container recreation ---
+# The app/ dir is bind-mounted at runtime, so only the venv and platform
+# scripts need to be baked into the image.
+COPY requirements.txt /opt/transfs/requirements.txt
+COPY app/ /opt/transfs/app/
+COPY tools/ /opt/transfs/tools/
+
+RUN set -eu \
+    # Create the runtime virtualenv and install all Python dependencies
+ && python3 -m venv /opt/transfs/.venv \
+ && grep -v '^mega\.py' /opt/transfs/requirements.txt > /tmp/transfs-reqs.txt \
+ && echo "tenacity>=8.0" >> /tmp/transfs-reqs.txt \
+ && /opt/transfs/.venv/bin/pip install --no-cache-dir -r /tmp/transfs-reqs.txt \
+ && /opt/transfs/.venv/bin/pip install --no-cache-dir --no-deps mega.py \
+ && /opt/transfs/.venv/bin/pip install --no-cache-dir pycryptodome \
+ && rm /tmp/transfs-reqs.txt \
+    # Render the platform runtime scripts from Jinja2 templates
+ && mkdir -p /opt/transfs/platform/retronas /var/log/transfs \
+ && python3 /opt/transfs/app/build_scripts/render_platform_scripts.py \
+    # Write the runtime environment file
+ && printf 'TRANSFS_ROOT=/opt/transfs\nTRANSFS_APP_DIR=/opt/transfs/app\nTRANSFS_LOG_DIR=/var/log/transfs\nTRANSFS_PYTHON_BIN=/opt/transfs/.venv/bin/python\n' \
+        > /etc/default/transfs-retronas \
+    # Run configure to write correct app.yaml settings
+ && TRANSFS_APP_DIR=/opt/transfs/app \
+    TRANSFS_CONFIG_PATH=/opt/transfs/app/config/app.yaml \
+    TRANSFS_SMB_MODE=transfs_managed \
+    TRANSFS_WEB_PREFERRED_PORT=8000 TRANSFS_WEB_FALLBACK_PORTS=8001,8080,18000 \
+    TRANSFS_WEB_HOST=0.0.0.0 TRANSFS_WEB_STRICT_STANDARD_PORT=false \
+    TRANSFS_SMB_PREFERRED_PORT=445 TRANSFS_SMB_FALLBACK_PORTS=3445,1445,2445 \
+    TRANSFS_SMB_STRICT_STANDARD_PORT=false \
+    TRANSFS_ENABLE_PORT_AUTO_CLAIM=true \
+    TRANSFS_RUNTIME_PROFILE=retronas-baremetal \
+    TRANSFS_FILESTORE_PATH=/data/retronas \
+    /opt/transfs/platform/retronas/configure_retronas.sh \
+    # Generate RetroNAS client configs if the importer is present
+ && ( test -f /opt/transfs/tools/import_mister_cifs.py \
+      && /opt/transfs/.venv/bin/python /opt/transfs/tools/import_mister_cifs.py \
+         --retronas-root /opt/retronas --all \
+         --output-dir /opt/transfs/app/config/clients/retronas \
+      || echo "Importer not present during build, skipping client config generation" )
 
 # Use the standard RetroNAS entrypoint — no bootstrap wrapper needed
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/retronas/docker-entrypoint.sh"]

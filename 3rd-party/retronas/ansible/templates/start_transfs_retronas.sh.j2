@@ -4,6 +4,13 @@ set -euo pipefail
 # Bare-metal and container startup runner for RetroNAS/systemd deployments.
 # Deployed by the TransFS Ansible installer (install_transfs.yml).
 
+# Load runtime defaults generated during image/config setup.
+if [ -f /etc/default/transfs-retronas ]; then
+    set -a
+    . /etc/default/transfs-retronas
+    set +a
+fi
+
 TRANSFS_ROOT="${TRANSFS_ROOT:-/opt/transfs}"
 APP_DIR="${TRANSFS_APP_DIR:-${TRANSFS_ROOT}/app}"
 
@@ -11,6 +18,28 @@ LOG_DIR="${TRANSFS_LOG_DIR:-/var/log/transfs}"
 PYTHON_BIN="${TRANSFS_PYTHON_BIN:-python3}"
 
 mkdir -p "${LOG_DIR}"
+
+ensure_python_dependency() {
+    local import_name="$1"
+    local package_name="$2"
+    if "${PYTHON_BIN}" -c "import ${import_name}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Missing Python dependency '${package_name}' (import '${import_name}'); installing into runtime venv..."
+    if ! "${PYTHON_BIN}" -m pip install --disable-pip-version-check --quiet "${package_name}"; then
+        echo "ERROR: failed to install '${package_name}' into runtime environment" >&2
+        exit 1
+    fi
+
+    if ! "${PYTHON_BIN}" -c "import ${import_name}" >/dev/null 2>&1; then
+        echo "ERROR: '${package_name}' installed but import '${import_name}' still fails" >&2
+        exit 1
+    fi
+}
+
+# Ensure mega.py import path works on every startup even if venv drifted.
+ensure_python_dependency "Crypto" "pycryptodome"
 
 # --- FUSE and mountpoint checks ---
 MOUNTPOINT="$(${PYTHON_BIN} -c "from config import read_app_config; cfg=read_app_config() or {}; print(cfg.get('mountpoint', '/mnt/transfs'))" 2>/dev/null || echo "/mnt/transfs")"
@@ -26,6 +55,61 @@ if [ ! -c /dev/fuse ]; then
 fi
 
 cd "${APP_DIR}"
+
+# Bridge RetroNAS canonical data into configured filestore when they differ.
+# This is common in testbed/dev profiles where app.yaml may point at
+# /mnt/filestorefs while RetroNAS stores data under /data/retronas.
+${PYTHON_BIN} - <<'PY'
+from pathlib import Path
+
+import yaml
+
+
+def read_yaml(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except Exception:
+        return {}
+
+
+app_cfg = read_yaml(Path("config/app.yaml"))
+filestore = Path(str(app_cfg.get("filestore") or "/mnt/filestorefs")).resolve()
+
+rn_cfg = read_yaml(Path("/opt/retronas/ansible/retronas_vars.yml"))
+retronas_path = Path(str(rn_cfg.get("retronas_path") or "/data/retronas")).resolve()
+
+target_native = retronas_path / "Native"
+link_native = filestore / "Native"
+
+try:
+    filestore.mkdir(parents=True, exist_ok=True)
+except Exception as exc:
+    print(f"WARNING: unable to create filestore root {filestore}: {exc}")
+
+if target_native.is_dir():
+    if not link_native.exists() and not link_native.is_symlink():
+        try:
+            link_native.symlink_to(target_native, target_is_directory=True)
+            print(f"Created Native bridge symlink: {link_native} -> {target_native}")
+        except Exception as exc:
+            print(f"WARNING: failed to create Native bridge symlink {link_native} -> {target_native}: {exc}")
+    elif link_native.is_symlink():
+        try:
+            resolved = link_native.resolve()
+        except Exception:
+            resolved = None
+        if resolved == target_native:
+            print(f"Native bridge symlink already present: {link_native} -> {target_native}")
+        else:
+            print(f"WARNING: Native bridge symlink points elsewhere: {link_native} -> {resolved}")
+    else:
+        print(f"Native bridge skipped: {link_native} already exists and is not a symlink")
+else:
+    print(f"Native bridge skipped: RetroNAS Native path missing at {target_native}")
+PY
 
 SMB_MANAGED=1
 TRANSFS_PID=""

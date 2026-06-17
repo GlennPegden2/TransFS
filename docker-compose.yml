@@ -78,6 +78,9 @@ services:
     entrypoint: ["/entrypoint.sh"]
 
   retronas-testbed-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.retronas-testbed
     image: retronas:testbed
     container_name: retronas-testbed
     profiles:
@@ -89,10 +92,13 @@ services:
         condition: service_healthy
     cap_add:
       - SYS_ADMIN
+      - DAC_READ_SEARCH
+      - SETPCAP
     devices:
       - /dev/fuse
     security_opt:
       - apparmor:unconfined
+      - seccomp:unconfined
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -106,6 +112,12 @@ services:
       - "137:137/udp"   # NetBIOS name service
       - "138:138/udp"   # NetBIOS datagram
       - "8000:8000"     # TransFS web API
+    command: ["/opt/transfs/platform/retronas/start_transfs_retronas.sh"]
+    volumes:
+      - ./app:/opt/transfs/app
+      - ./tests:/opt/transfs/tests
+      - ./tools:/opt/transfs/tools
+      - ./requirements.txt:/opt/transfs/requirements.txt:ro
 
 volumes:
   postgres_data:

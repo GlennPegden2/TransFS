@@ -117,6 +117,24 @@
 - `local_base_path` and source `base_path` values are normalized at load time to `Systems/...` for compatibility.
 - Legacy paths under `Native/<Manufacturer>/<System>` are supported during migration through config normalization and staged data move.
 
+### 11.1.1 Browse Native Mount Diagnostics
+
+- **Browse Native now annotates symlinks and native mount-backed folders** directly in the name column.
+- A non-clickable `🔗` icon is shown for:
+  - real symlinks, with tooltip `Symlink target: ...`
+  - direct native mounts, with tooltip `Mount source: ...`
+  - ancestor folders that contain a configured descendant native mount, with tooltip `Contains mount source: ...`
+- A non-clickable `⚠` icon is shown when a configured native mount has not come up successfully but still affects a visible folder in `Browse Native`.
+- Failed mount tooltips include both the configured source and the current error, for example missing credentials or auth failures.
+- This works for RetroNAS bridge-backed paths as well as plain filestore-native paths, so `Native/...` browse views still expose mount diagnostics even when the underlying configured target lives outside the visible bridge root.
+
+### 11.1.2 RetroNAS Native Bridge
+
+- In RetroNAS-oriented runtimes, TransFS can create a bridge symlink from the configured filestore root to the RetroNAS canonical Native tree:
+  - `/mnt/filestorefs/Native -> /data/retronas/Native`
+- This keeps `Browse Native` and TransFS-managed SMB access aligned with the RetroNAS data root without bypassing the native browse model.
+- The bridge is created at startup when the target Native directory exists and the link does not already point elsewhere.
+
 ### 11.2 Metadata Scanner + Browser (Web UI)
 
 - **Scan workflow moved to Browse Native**: The scanner now runs directly from the **Browse Native** tab so users scan the folder they are already browsing.
